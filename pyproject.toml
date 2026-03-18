@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gotta"
+version = "0.2.0"
+description = "Session-rooted CLI for evidence retrieval, durable investigation state, and linked peer workflows"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+dependencies = [
+    "platformdirs>=4.3",
+]
+keywords = [
+    "cli",
+    "evidence",
+    "investigation",
+    "retrieval",
+    "session",
+    "workflow",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/anthonyrisinger/gotta"
+Repository = "https://github.com/anthonyrisinger/gotta"
+Issues = "https://github.com/anthonyrisinger/gotta/issues"
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "lizard>=1.21",
+    "pytest>=8.4",
+    "radon>=6.0",
+    "ruff>=0.11",
+    "vulture>=2.0",
+]
+
+[project.scripts]
+gotta = "gotta.main:main"
+
+[project.entry-points."gotta.plugins"]
+ask = "gotta.builtin:ask_plugin"
+confluence = "gotta.builtin:confluence_plugin"
+read = "gotta.builtin:read_plugin"
+oops = "gotta.builtin:oops_plugin"
+todo = "gotta.builtin:todo_plugin"
+gdocs = "gotta.builtin:gdocs_plugin"
+gsheets = "gotta.builtin:gsheets_plugin"
+gdrive = "gotta.builtin:gdrive_plugin"
+github = "gotta.builtin:github_plugin"
+jira = "gotta.builtin:jira_plugin"
+logs = "gotta.builtin:logs_plugin"
+notes = "gotta.builtin:notes_plugin"
+peer = "gotta.builtin:peer_plugin"
+session = "gotta.builtin:session_plugin"
+slack = "gotta.builtin:slack_plugin"
+want = "gotta.builtin:want_plugin"
+goal = "gotta.builtin:goal_plugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["gotta*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"

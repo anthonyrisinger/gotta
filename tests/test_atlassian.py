@@ -1,0 +1,1025 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from gotta.plugins import confluence, jira
+from gotta.providers import atlassian
+
+
+def test_site_root_normalizes_confluence_base_urls() -> None:
+    assert atlassian.site_root("https://example.atlassian.net/wiki") == (
+        "https://example.atlassian.net"
+    )
+    assert atlassian.site_root("https://example.atlassian.net/wiki/") == (
+        "https://example.atlassian.net"
+    )
+    assert atlassian.site_root("https://example.atlassian.net") == (
+        "https://example.atlassian.net"
+    )
+
+
+def test_discover_cloud_id_prefers_matching_base_url(monkeypatch) -> None:
+    monkeypatch.setattr(
+        atlassian,
+        "api_json",
+        lambda method, url, token: [
+            {"id": "other", "url": "https://other.atlassian.net"},
+            {"id": "wanted", "url": "https://example.atlassian.net"},
+        ],
+    )
+
+    assert (
+        atlassian.discover_cloud_id(
+            "token",
+            "https://example.atlassian.net/wiki",
+            base_url_env="GOTTA_CONFLUENCE_BASE_URL",
+        )
+        == "wanted"
+    )
+
+
+def test_discover_cloud_id_reports_env_name_when_ambiguous(monkeypatch) -> None:
+    monkeypatch.setattr(
+        atlassian,
+        "api_json",
+        lambda method, url, token: [
+            {"id": "a", "url": "https://a.atlassian.net"},
+            {"id": "b", "url": "https://b.atlassian.net"},
+        ],
+    )
+
+    with pytest.raises(atlassian.AtlassianError, match="GOTTA_JIRA_BASE_URL"):
+        atlassian.discover_cloud_id("", "", base_url_env="GOTTA_JIRA_BASE_URL")
+
+
+def test_discover_cloud_id_dedupes_identical_site_urls(monkeypatch) -> None:
+    monkeypatch.setattr(
+        atlassian,
+        "api_json",
+        lambda method, url, token: [
+            {"id": "a", "url": "https://example.atlassian.net"},
+            {"id": "b", "url": "https://example.atlassian.net/wiki"},
+        ],
+    )
+
+    assert (
+        atlassian.discover_cloud_id(
+            "token",
+            "",
+            base_url_env="GOTTA_CONFLUENCE_BASE_URL",
+        )
+        == "a"
+    )
+
+
+def test_resolve_accessible_resource_uses_cached_cloud_id(monkeypatch) -> None:
+    monkeypatch.setattr(
+        atlassian,
+        "api_json",
+        lambda method, url, token: [
+            {"id": "other", "url": "https://other.atlassian.net"},
+            {"id": "wanted", "url": "https://example.atlassian.net/wiki"},
+        ],
+    )
+
+    assert atlassian.resolve_accessible_resource(
+        "token",
+        "",
+        base_url_env="GOTTA_CONFLUENCE_BASE_URL",
+        cloud_id="wanted",
+    ) == ("wanted", "https://example.atlassian.net")
+
+
+def test_load_token_uses_cached_oauth_state_when_present(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(atlassian, "TOKEN_FILE", tmp_path / "oauth.json")
+    monkeypatch.setattr(
+        atlassian,
+        "load_cached_oauth_json",
+        lambda: {"access_token": "oauth-token", "expires_at": 9999999999.0},
+    )
+
+    assert atlassian.load_token(
+        auth_command="confluence",
+        base_url_env="GOTTA_CONFLUENCE_BASE_URL",
+    ) == (
+        "oauth-token"
+    )
+
+
+def test_atlassian_next_step_prefers_native_refresh_before_auth() -> None:
+    next_step = atlassian._next_atlassian_step(
+        {
+            "credentialsConfigured": True,
+            "sessionStatus": "expired",
+            "tokenPreflight": "invalid",
+            "hasRefreshToken": True,
+            "baseUrl": "https://example.atlassian.net",
+        },
+        auth_command="jira",
+    )
+
+    assert "rerun a native jira command first" in next_step
+    assert "`gotta jira auth` only if refresh does not recover the session" in next_step
+
+
+def test_atlassian_missing_credentials_message_points_to_gotta_config(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_ATLASSIAN_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOTTA_ATLASSIAN_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.setattr(atlassian, "load_atlassian_config_env", lambda: {})
+
+    with pytest.raises(
+        atlassian.AtlassianError,
+        match=r"\[providers\.atlassian\.env\].*gotta\.toml",
+    ):
+        atlassian.load_client_credentials()
+
+
+def test_jira_bare_issue_requires_base_url(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_JIRA_BASE_URL", raising=False)
+    monkeypatch.setattr(jira, "load_atlassian_config_env", lambda: {})
+
+    with pytest.raises(jira.ToolError, match="missing Jira base URL"):
+        jira.parse_issue_ref("PROJ-123")
+
+
+def test_confluence_page_ref_accepts_bare_and_prefixed_page_ids(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+
+    bare = confluence.parse_page_ref("10101")
+    prefixed = confluence.parse_page_ref("confluence:10101")
+    query_url = confluence.parse_page_ref(
+        "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=20202"
+    )
+    short_url = confluence.parse_page_ref("https://example.atlassian.net/wiki/x/1J0AAA")
+
+    assert bare.page_id == "10101"
+    assert bare.base_url == ""
+    assert prefixed.page_id == "10101"
+    assert prefixed.base_url == ""
+    assert query_url.page_id == "20202"
+    assert short_url.page_id == "40404"
+
+
+def test_confluence_get_comment_locator_falls_back_from_page_lookup(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    seen_urls: list[str] = []
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        seen_urls.append(url)
+        if "/pages/30303?" in url:
+            raise confluence.ToolError(f"{method} {url} failed with 404: no page")
+        if "/footer-comments/30303?" in url:
+            return {
+                "id": "30303",
+                "pageId": "10101",
+                "body": {"storage": {"value": "<p>Generic comment body</p>"}},
+                "version": {"number": 3, "createdAt": "2026-03-17T20:36:03Z"},
+            }
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert confluence.main(["get", "confluence:30303", "--output", "markdown"]) == 0
+    rendered = capsys.readouterr().out
+    assert "# Confluence Comment" in rendered
+    assert "- Comment ID: 30303" in rendered
+    assert "Generic comment body" in rendered
+    assert any("/pages/30303?" in url for url in seen_urls)
+    assert any("/footer-comments/30303?" in url for url in seen_urls)
+
+
+def test_confluence_get_focused_comment_url_prefers_comment_identity(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    seen_urls: list[str] = []
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        seen_urls.append(url)
+        if "/footer-comments/30303?" in url:
+            return {
+                "id": "30303",
+                "pageId": "10101",
+                "status": "current",
+                "body": {"storage": {"value": "<p>Focused comment body</p>"}},
+                "version": {"number": 2, "createdAt": "2026-03-17T20:36:03Z"},
+            }
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+    url = (
+        "https://example.atlassian.net/wiki/spaces/ENG/pages/10101/Page"
+        "?focusedCommentId=30303"
+    )
+
+    assert confluence.canonical_locator(["get", url]) == "confluence:30303"
+    assert confluence.main(["get", url, "--output", "meta"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["id"] == "30303"
+    assert payload["type"] == "comment"
+    assert payload["pageId"] == "10101"
+    assert any("/footer-comments/30303?" in url for url in seen_urls)
+    assert not any("/pages/10101?" in url for url in seen_urls)
+
+
+def test_confluence_resolve_page_reports_missing_child(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if "/wiki/api/v2/pages?" in url:
+            return {"results": [], "_links": {}}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "resolve-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["found"] is False
+    assert payload["matchCount"] == 0
+    assert payload["target"]["parentId"] == "10101"
+    assert payload["target"]["spaceId"] == "20202"
+
+
+def test_confluence_resolve_page_reports_exact_child(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if "/wiki/api/v2/pages?" in url:
+            return {
+                "results": [
+                    {
+                        "id": "30303",
+                        "title": "Evidence Dossier",
+                        "status": "current",
+                        "spaceId": "20202",
+                        "parentId": "10101",
+                    }
+                ],
+                "_links": {},
+            }
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "resolve-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["found"] is True
+    assert payload["matchCount"] == 1
+    assert payload["matches"][0]["id"] == "30303"
+    assert payload["matches"][0]["url"] == (
+        "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=30303"
+    )
+
+
+def test_confluence_create_page_dry_run_from_markdown_reports_target(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    markdown_path = tmp_path / "dossier.md"
+    markdown_path.write_text("# Evidence dossier\n", encoding="utf-8")
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(confluence, "render_markdown_to_storage", lambda markdown: "<h1>Evidence</h1>")
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if "/wiki/api/v2/pages?" in url:
+            return {"results": [], "_links": {}}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "create-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--from-markdown",
+                str(markdown_path),
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "dry-run"
+    assert payload["bodySource"] == "markdown"
+    assert payload["siblingExists"] is False
+    assert payload["target"]["apiUrl"] == (
+        "https://api.atlassian.com/ex/confluence/cloud/wiki/api/v2/pages"
+    )
+    assert payload["target"]["parentId"] == "10101"
+    assert payload["target"]["spaceId"] == "20202"
+    assert payload["bodyPreview"]["preview"] == "<h1>Evidence</h1>"
+
+
+def test_confluence_create_page_apply_posts_storage_body(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    markdown_path = tmp_path / "dossier.md"
+    markdown_path.write_text("# Evidence dossier\n", encoding="utf-8")
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(confluence, "render_markdown_to_storage", lambda markdown: "<h1>Evidence</h1>")
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    seen_payloads: list[dict[str, object]] = []
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if method == "GET" and "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if method == "GET" and "/wiki/api/v2/pages?" in url:
+            return {"results": [], "_links": {}}
+        if method == "POST" and url.endswith("/wiki/api/v2/pages"):
+            assert isinstance(payload, dict)
+            seen_payloads.append(payload)
+            return {
+                "id": "30303",
+                "title": "Evidence Dossier",
+                "status": "current",
+                "spaceId": "20202",
+                "parentId": "10101",
+            }
+        if method == "GET" and "/pages/30303?" in url:
+            return {
+                "id": "30303",
+                "title": "Evidence Dossier",
+                "status": "current",
+                "spaceId": "20202",
+                "parentId": "10101",
+                "version": {"number": 1},
+                "body": {"storage": {"value": "<h1>Evidence</h1>"}},
+            }
+        raise AssertionError(f"{method} {url}")
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "create-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--from-markdown",
+                str(markdown_path),
+                "--apply",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "created"
+    assert payload["id"] == "30303"
+    assert payload["parentId"] == "10101"
+    assert seen_payloads == [
+        {
+            "spaceId": "20202",
+            "status": "current",
+            "title": "Evidence Dossier",
+            "parentId": "10101",
+            "body": {"representation": "storage", "value": "<h1>Evidence</h1>"},
+        }
+    ]
+
+
+def test_confluence_create_page_from_html_uses_verbatim_storage(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    html_path = tmp_path / "dossier.body.html"
+    html_path.write_text("<p>Rendered storage body</p>", encoding="utf-8")
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if "/wiki/api/v2/pages?" in url:
+            return {"results": [], "_links": {}}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "create-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--from-html",
+                str(html_path),
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bodySource"] == "html"
+    assert payload["bodyPreview"]["preview"] == "<p>Rendered storage body</p>"
+
+
+def test_confluence_create_page_apply_rejects_existing_sibling(
+    monkeypatch, tmp_path: Path
+) -> None:
+    html_path = tmp_path / "dossier.body.html"
+    html_path.write_text("<p>Rendered storage body</p>", encoding="utf-8")
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if "/wiki/api/v2/pages?" in url:
+            return {
+                "results": [
+                    {
+                        "id": "30303",
+                        "title": "Evidence Dossier",
+                        "status": "current",
+                        "spaceId": "20202",
+                        "parentId": "10101",
+                    }
+                ],
+                "_links": {},
+            }
+        if method == "POST":
+            raise AssertionError("create should not run when sibling exists")
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    with pytest.raises(
+        confluence.ToolError,
+        match=r"a sibling page with the same title already exists.*confluence:30303",
+    ):
+        confluence.main(
+            [
+                "create-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--from-html",
+                str(html_path),
+                "--apply",
+            ]
+        )
+
+
+def test_jira_and_confluence_get_default_to_markdown() -> None:
+    assert jira.build_parser().parse_args(["get", "PROJ-123"]).output == "markdown"
+    assert confluence.build_parser().parse_args(["get", "10101"]).output == "markdown"
+
+
+def test_atlassian_status_defaults_to_summary() -> None:
+    assert jira.build_parser().parse_args(["status"]).output == "summary"
+    assert jira.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+    assert confluence.build_parser().parse_args(["status"]).output == "summary"
+    assert confluence.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+
+
+def test_jira_search_rejects_obvious_raw_jql() -> None:
+    with pytest.raises(jira.ToolError) as excinfo:
+        jira.main(["search", 'project = OPS AND text ~ "ABC"'])
+
+    message = str(excinfo.value)
+    assert "`gotta jira search` accepts plain-text only" in message
+    assert "gotta jira jql 'project = OPS AND text ~ \"ABC\"'" in message
+
+
+def test_jira_search_keeps_plain_text_queries_plain(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_search_jira(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "query": kwargs["jql"],
+            "limit": kwargs["limit"],
+            "requestedNext": kwargs["cursor"],
+            "next": "",
+            "size": 0,
+            "results": [],
+        }
+
+    monkeypatch.setattr(jira, "search_jira", fake_search_jira)
+
+    result = jira.main(["search", "service continuity and ownership", "--output", "json"])
+
+    assert result == 0
+    assert captured["jql"] == jira.build_plaintext_jql("service continuity and ownership")
+    payload = capsys.readouterr().out
+    assert '"size": 0' in payload
+
+
+def test_jira_and_confluence_search_use_next_for_continuation_tokens() -> None:
+    jira_args = jira.build_parser().parse_args(["search", "service outage", "--next", "abc123"])
+    confluence_args = confluence.build_parser().parse_args(
+        ["cql", "text ~ \"service\"", "--next", "def456"]
+    )
+
+    assert jira_args.next == "abc123"
+    assert confluence_args.next == "def456"
+
+
+def test_jira_search_resolves_exact_issue_keys_directly(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        jira,
+        "fetch_issue",
+        lambda issue_ref, *, fields: captured.update(
+            {"issue_key": issue_ref.issue_key, "base_url": issue_ref.base_url, "fields": fields}
+        )
+        or {
+            "key": issue_ref.issue_key,
+            "summary": "Direct issue match",
+            "status": {"name": "Done"},
+            "issueType": {"name": "Task"},
+            "project": {"key": "OPS"},
+            "priority": {"name": "Medium"},
+            "assignee": {"displayName": "Alex"},
+            "labels": ["continuity"],
+            "created": "2026-03-01T10:00:00Z",
+            "updated": "2026-03-02T12:00:00Z",
+            "issueUrl": f"{issue_ref.base_url}/browse/{issue_ref.issue_key}",
+        },
+    )
+
+    result = jira.main(
+        ["search", "proj-123", "--base-url", "https://example.atlassian.net", "--output", "json"]
+    )
+
+    assert result == 0
+    assert captured["issue_key"] == "PROJ-123"
+    payload = capsys.readouterr().out
+    assert '"size": 1' in payload
+    assert '"key": "PROJ-123"' in payload
+
+
+def test_confluence_markdown_projection_strips_wide_layout_artifacts() -> None:
+    markdown = (
+        "wide760kubectl -n tunnel-proxy port-forward svc/example 10000:10000\n"
+        "wide760127.0.0.1 tunnel-proxy1-internal\n"
+        "normal line\n"
+    )
+
+    assert confluence._clean_markdown_projection(markdown) == (
+        "kubectl -n tunnel-proxy port-forward svc/example 10000:10000\n"
+        "127.0.0.1 tunnel-proxy1-internal\n"
+        "normal line\n"
+    )
+
+
+def test_confluence_storage_sanitization_strips_confluence_markup_noise() -> None:
+    storage_html = (
+        '<table data-table-width="760" ac:local-id="abc">'
+        '<tr><td data-layout="default">1333 448fe996-a791-4657-88e4-5815764847c3 '
+        'incomplete <span class="placeholder-inline-tasks"> </span></td></tr>'
+        '<tr><td><a href="https://example.com" data-card-appearance="inline">x</a></td></tr>'
+        "</table>"
+    )
+
+    cleaned = confluence._sanitize_storage_html_for_markdown(storage_html)
+
+    assert 'ac:local-id=' not in cleaned
+    assert 'data-table-width=' not in cleaned
+    assert 'data-layout=' not in cleaned
+    assert 'data-card-appearance=' not in cleaned
+    assert 'placeholder-inline-tasks' not in cleaned
+    assert 'incomplete' not in cleaned
+    assert '<a href="https://example.com">x</a>' in cleaned
+
+
+def test_confluence_render_page_markdown_includes_created_and_updated() -> None:
+    rendered = confluence.render_page_markdown(
+        {
+            "id": "10101",
+            "title": "Architecture Overview",
+            "createdAt": "2025-09-29T18:58:25.400Z",
+            "spaceId": "50505",
+            "version": {
+                "number": 126,
+                "createdAt": "2026-03-12T23:23:06.334Z",
+            },
+            "body": {"storage": {"value": "<p>Hello</p>"}},
+        },
+        confluence.Session(
+            token="token",
+            cloud_id="cloud-123",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    assert "- Created: 2025-09-29T18:58:25.400Z" in rendered
+    assert "- Updated: 2026-03-12T23:23:06.334Z" in rendered
+    assert "- Version: 126" in rendered
+
+
+def test_confluence_render_page_markdown_marks_lossy_projection() -> None:
+    original = confluence.render_storage_to_markdown
+    confluence.render_storage_to_markdown = lambda storage_html: (
+        "<table><tr><td>x</td></tr></table>\nUntitled Diagram-1772055155063.drawio\n"
+    )
+    try:
+        rendered = confluence.render_page_markdown(
+            {
+                "id": "4373708801",
+                "title": "Architecture Overview",
+                "createdAt": "2026-02-19T16:29:02.479Z",
+                "version": {"number": 43, "createdAt": "2026-03-11T16:48:50.034Z"},
+                "body": {"storage": {"value": "<table><tr><td>x</td></tr></table>"}},
+            },
+            confluence.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            ),
+        )
+    finally:
+        confluence.render_storage_to_markdown = original
+
+    assert "Projection: approximate markdown" in rendered
+    assert "gotta confluence get 4373708801 --output body" in rendered
+    assert "embedded diagrams, tables, or macros matter" in rendered
+
+
+def test_jira_auth_prefers_reuse_or_refresh(monkeypatch, capsys) -> None:
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url: jira.Session(
+            token="token",
+            cloud_id="cloud-123",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    monkeypatch.setattr(
+        jira,
+        "atlassian_status_payload",
+        lambda **kwargs: {
+            "baseUrl": "https://example.atlassian.net",
+            "expiresAt": 123.0,
+        },
+    )
+    monkeypatch.setattr(
+        jira,
+        "run_oauth_bootstrap",
+        lambda **kwargs: pytest.fail("full bootstrap should not run by default"),
+    )
+    monkeypatch.setattr(jira, "persist_selected_base_urls", lambda base_url: persisted.append(base_url))
+
+    result = jira.main(["auth"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert persisted == ["https://example.atlassian.net"]
+    assert '"authenticated": true' in captured.out
+    assert '"base_url": "https://example.atlassian.net"' in captured.out
+    assert '"cloud_id": "cloud-123"' in captured.out
+    assert '"expires_at": 123.0' in captured.out
+    assert '"token_file":' in captured.out
+
+
+def test_jira_auth_full_forces_browser_bootstrap(monkeypatch, capsys) -> None:
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url: pytest.fail("default refresh path should be bypassed with --full"),
+    )
+    monkeypatch.setattr(
+        jira,
+        "run_oauth_bootstrap",
+        lambda **kwargs: {
+            "base_url": "https://example.atlassian.net",
+            "cloud_id": "cloud-456",
+            "expires_at": 456.0,
+        },
+    )
+    monkeypatch.setattr(jira, "persist_selected_base_urls", lambda base_url: persisted.append(base_url))
+
+    result = jira.main(["auth", "--full"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert persisted == ["https://example.atlassian.net"]
+    assert '"authenticated": true' in captured.out
+    assert '"base_url": "https://example.atlassian.net"' in captured.out
+    assert '"cloud_id": "cloud-456"' in captured.out
+    assert '"expires_at": 456.0' in captured.out
+    assert '"token_file":' in captured.out
+
+
+def test_confluence_auth_prefers_reuse_or_refresh(monkeypatch, capsys) -> None:
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref: confluence.Session(
+            token="token",
+            cloud_id="cloud-123",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    monkeypatch.setattr(
+        confluence,
+        "atlassian_status_payload",
+        lambda **kwargs: {
+            "baseUrl": "https://example.atlassian.net",
+            "expiresAt": 123.0,
+        },
+    )
+    monkeypatch.setattr(
+        confluence,
+        "run_oauth_bootstrap",
+        lambda **kwargs: pytest.fail("full bootstrap should not run by default"),
+    )
+    monkeypatch.setattr(
+        confluence,
+        "persist_selected_base_urls",
+        lambda base_url: persisted.append(base_url),
+    )
+
+    result = confluence.main(["auth"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert persisted == ["https://example.atlassian.net/wiki"]
+    assert '"authenticated": true' in captured.out
+    assert '"base_url": "https://example.atlassian.net/wiki"' in captured.out
+    assert '"cloud_id": "cloud-123"' in captured.out
+    assert '"expires_at": 123.0' in captured.out
+    assert '"token_file":' in captured.out
+
+
+def test_confluence_auth_full_forces_browser_bootstrap(monkeypatch, capsys) -> None:
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref: pytest.fail("default refresh path should be bypassed with --full"),
+    )
+    monkeypatch.setattr(
+        confluence,
+        "run_oauth_bootstrap",
+        lambda **kwargs: {
+            "base_url": "https://example.atlassian.net",
+            "cloud_id": "cloud-456",
+            "expires_at": 456.0,
+        },
+    )
+    monkeypatch.setattr(
+        confluence,
+        "persist_selected_base_urls",
+        lambda base_url: persisted.append(base_url),
+    )
+
+    result = confluence.main(["auth", "--full"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert persisted == ["https://example.atlassian.net/wiki"]
+    assert '"authenticated": true' in captured.out
+    assert '"base_url": "https://example.atlassian.net/wiki"' in captured.out
+    assert '"cloud_id": "cloud-456"' in captured.out
+    assert '"expires_at": 456.0' in captured.out
+    assert '"token_file":' in captured.out
+
+
+def test_confluence_search_defaults_to_page_first_markdown() -> None:
+    args = confluence.build_parser().parse_args(["search", "Architecture"])
+    assert args.type == "page"
+    assert args.output == "markdown"
+
+
+def test_confluence_cql_shares_output_contract_with_search() -> None:
+    args = confluence.build_parser().parse_args(
+        ["cql", 'text ~ "Architecture"', "--output", "json"]
+    )
+    assert args.output == "json"
+
+
+def test_jira_jql_shares_output_contract_with_search() -> None:
+    args = jira.build_parser().parse_args(
+        ["jql", 'project = OPS AND text ~ "Architecture"', "--output", "json"]
+    )
+    assert args.output == "json"
+
+
+def test_confluence_search_markdown_is_readable() -> None:
+    rendered = confluence.render_search_markdown(
+        {
+            "cql": 'text ~ "Architecture" AND type = page',
+            "type": "page",
+            "size": 1,
+            "results": [
+                {
+                    "title": "Architecture Overview",
+                    "id": "10101",
+                    "type": "page",
+                    "url": "https://example.atlassian.net/wiki/spaces/ENG/pages/10101",
+                    "spaceKey": "ENG",
+                    "lastModified": "2026-03-10T11:30:00Z",
+                    "excerptHtml": "<p>WireGuard <strong>overlay</strong> notes</p>",
+                }
+            ],
+        }
+    )
+
+    assert "### Confluence Search:" in rendered
+    assert "- Updated: 2026-03-10T11:30:00Z" in rendered
+    assert "locator `confluence:10101`" in rendered
+    assert "space `ENG`" in rendered
+    assert "WireGuard overlay notes" in rendered
+
+
+def test_confluence_cql_markdown_is_readable(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref: object(),
+    )
+    monkeypatch.setattr(
+        confluence,
+        "search_confluence",
+        lambda session, cql, limit, cursor: {
+            "cql": cql,
+            "type": "page",
+            "size": 1,
+            "results": [
+                {
+                    "title": "Architecture Overview",
+                    "id": "10101",
+                    "type": "page",
+                    "url": "https://example.atlassian.net/wiki/spaces/ENG/pages/10101",
+                    "spaceKey": "ENG",
+                    "lastModified": "2026-03-10T11:30:00Z",
+                    "excerptHtml": "<p>WireGuard <strong>overlay</strong> notes</p>",
+                }
+            ],
+        },
+    )
+
+    assert confluence.main(["cql", 'text ~ "Architecture"', "--output", "markdown"]) == 0
+    rendered = capsys.readouterr().out
+    assert "### Confluence Search:" in rendered
+    assert "locator `confluence:10101`" in rendered
