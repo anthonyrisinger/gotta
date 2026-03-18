@@ -42,6 +42,8 @@ ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
 DEFAULT_REDIRECT_URI = "http://localhost:8080/callback"
 DEFAULT_OAUTH_SCOPE = (
     "offline_access read:jira-work write:jira-work"
+    " read:board-scope:jira-software read:sprint:jira-software"
+    " write:sprint:jira-software read:project:jira"
     " read:confluence-content.all read:confluence-space.summary"
     " read:confluence-props search:confluence read:page:confluence"
     " read:space:confluence read:attachment:confluence"

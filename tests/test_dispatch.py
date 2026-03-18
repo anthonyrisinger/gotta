@@ -300,11 +300,22 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
         == "jira:issue-types --project OPS"
     )
     assert (
+        dispatch.canonical_locator("jira", ["sprints", "--project", "OPS"])
+        == "jira:sprints --project OPS"
+    )
+    assert (
         dispatch.canonical_locator(
             "jira",
             ["fields", "--project", "OPS", "--type", "Service Request"],
         )
         == "jira:fields --project OPS --type 'Service Request'"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "jira",
+            ["add-to-sprint", "OPS-42", "--current", "--project", "OPS"],
+        )
+        == "jira:add-to-sprint OPS-42 --current --project OPS"
     )
     assert (
         dispatch.canonical_locator("jira", ["transitions", "OPS-42"])
@@ -936,6 +947,11 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "search",
         "Architecture",
     ]
+    assert plugin_api.get_plugin("jira").route_target("jira:sprints --project OPS") == [
+        "sprints",
+        "--project",
+        "OPS",
+    ]
     assert plugin_api.get_plugin("jira").route_target("jira:issue-types --project OPS") == [
         "issue-types",
         "--project",
@@ -953,6 +969,15 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
     assert plugin_api.get_plugin("jira").route_target("jira:transitions OPS-42") == [
         "transitions",
         "OPS-42",
+    ]
+    assert plugin_api.get_plugin(
+        "jira"
+    ).route_target("jira:add-to-sprint OPS-42 --current --project OPS") == [
+        "add-to-sprint",
+        "OPS-42",
+        "--current",
+        "--project",
+        "OPS",
     ]
     assert plugin_api.get_plugin("confluence").route_target("confluence:10101") == [
         "get",

@@ -247,6 +247,21 @@ def canonical_locator(argv: list[str]) -> str:
         return f"jira:{_issue_key_for_locator(args.issue)}"
     if args.command == "projects":
         return "jira:projects"
+    if args.command == "sprints":
+        if args.board is not None:
+            return f"jira:{shlex.join(['sprints', '--board', str(args.board)])}"
+        return f"jira:{shlex.join(['sprints', '--project', args.project])}"
+    if args.command == "add-to-sprint":
+        parts = ["add-to-sprint", _issue_key_for_locator(args.issue)]
+        if args.current:
+            parts.append("--current")
+        if args.project:
+            parts.extend(["--project", args.project])
+        if args.board is not None:
+            parts.extend(["--board", str(args.board)])
+        if args.sprint is not None:
+            parts.extend(["--sprint", str(args.sprint)])
+        return f"jira:{shlex.join(parts)}"
     if args.command == "issue-types":
         return f"jira:{shlex.join(['issue-types', '--project', args.project])}"
     if args.command == "fields":
@@ -275,6 +290,13 @@ def preferred_name(argv: list[str], options: object) -> str:
         return f"{issue_key}.{_output_extension(args.output)}"
     if args.command == "projects":
         return f"jira-projects.{_output_extension(args.output)}"
+    if args.command == "sprints":
+        if args.board is not None:
+            return f"jira-sprints-board-{args.board}.{_output_extension(args.output)}"
+        return f"jira-sprints-{_slug(args.project, fallback='jira')}.{_output_extension(args.output)}"
+    if args.command == "add-to-sprint":
+        issue_key = _issue_key_for_locator(args.issue)
+        return f"{issue_key}-add-to-sprint.{_output_extension(args.output)}"
     if args.command == "issue-types":
         suffix = _slug(args.project, fallback="jira")
         return f"jira-issue-types-{suffix}.{_output_extension(args.output)}"
@@ -334,7 +356,7 @@ def route_target(target: str) -> list[str] | None:
             return None
         if len(argv) == 1 and ISSUE_KEY_RE.fullmatch(argv[0]):
             return ["get", normalize_issue_key(argv[0])]
-        if argv[0] in {"get", "issue-types", "fields", "transitions"}:
+        if argv[0] in {"get", "issue-types", "fields", "transitions", "sprints", "add-to-sprint"}:
             return argv
         return None
     return None
@@ -490,6 +512,63 @@ def jira_remote_link_api_url(session: Session, issue_key: str) -> str:
     return (
         f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/api/3/issue/"
         f"{urllib.parse.quote(issue_key)}/remotelink"
+    )
+
+
+def jira_boards_api_url(
+    session: Session,
+    *,
+    start_at: int = 0,
+    max_results: int = 50,
+    project_key_or_id: str = "",
+    board_type: str = "",
+) -> str:
+    params: dict[str, str | int] = {"startAt": start_at, "maxResults": max_results}
+    if project_key_or_id:
+        params["projectKeyOrId"] = project_key_or_id
+    if board_type:
+        params["type"] = board_type
+    return (
+        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/agile/1.0/board?"
+        f"{urllib.parse.urlencode(params)}"
+    )
+
+
+def jira_board_api_url(session: Session, board_id: int) -> str:
+    return (
+        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/agile/1.0/board/"
+        f"{board_id}"
+    )
+
+
+def jira_board_sprints_api_url(
+    session: Session,
+    board_id: int,
+    *,
+    start_at: int = 0,
+    max_results: int = 50,
+    state: str = "",
+) -> str:
+    params: dict[str, str | int] = {"startAt": start_at, "maxResults": max_results}
+    if state:
+        params["state"] = state
+    return (
+        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/agile/1.0/board/"
+        f"{board_id}/sprint?{urllib.parse.urlencode(params)}"
+    )
+
+
+def jira_sprint_api_url(session: Session, sprint_id: int) -> str:
+    return (
+        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/agile/1.0/sprint/"
+        f"{sprint_id}"
+    )
+
+
+def jira_add_issues_to_sprint_api_url(session: Session, sprint_id: int) -> str:
+    return (
+        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/agile/1.0/sprint/"
+        f"{sprint_id}/issue"
     )
 
 
@@ -687,6 +766,230 @@ def fetch_transitions(issue_ref: IssueRef) -> tuple[Session, list[dict[str, Any]
             }
         )
     return session, transitions
+
+
+def normalize_board(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "id": str(payload.get("id") or ""),
+        "name": str(payload.get("name") or ""),
+        "type": str(payload.get("type") or ""),
+    }
+
+
+def normalize_sprint(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "id": str(payload.get("id") or ""),
+        "name": str(payload.get("name") or ""),
+        "state": str(payload.get("state") or ""),
+        "goal": str(payload.get("goal") or ""),
+        "startDate": str(payload.get("startDate") or ""),
+        "endDate": str(payload.get("endDate") or ""),
+        "completeDate": str(payload.get("completeDate") or ""),
+        "originBoardId": str(payload.get("originBoardId") or ""),
+    }
+
+
+def fetch_scrum_boards(
+    base_url: str,
+    *,
+    project_key_or_id: str = "",
+) -> tuple[Session, list[dict[str, Any]]]:
+    session = load_session(site_root(base_url))
+    start_at = 0
+    boards: list[dict[str, Any]] = []
+    while True:
+        payload = api_json(
+            "GET",
+            jira_boards_api_url(
+                session,
+                start_at=start_at,
+                max_results=50,
+                project_key_or_id=project_key_or_id,
+                board_type="scrum",
+            ),
+            session.token,
+        )
+        if not isinstance(payload, dict):
+            raise ToolError("unexpected Jira board response")
+        values = payload.get("values")
+        if not isinstance(values, list):
+            values = []
+        boards.extend(normalize_board(item) for item in values if isinstance(item, dict))
+        if bool(payload.get("isLast")):
+            break
+        start_at += int(payload.get("maxResults") or len(values) or 50)
+        if not values:
+            break
+    return session, [board for board in boards if board.get("id")]
+
+
+def fetch_board(session: Session, board_id: int) -> dict[str, Any]:
+    payload = api_json("GET", jira_board_api_url(session, board_id), session.token)
+    if not isinstance(payload, dict):
+        raise ToolError("unexpected Jira board response")
+    board = normalize_board(payload)
+    if board.get("type") and board["type"] != "scrum":
+        raise ToolError(
+            f"board {board_id} is type {board['type']}; sprint operations require a scrum board"
+        )
+    return board
+
+
+def fetch_board_sprints(
+    session: Session,
+    board_id: int,
+    *,
+    state: str = "",
+) -> list[dict[str, Any]]:
+    start_at = 0
+    sprints: list[dict[str, Any]] = []
+    while True:
+        payload = api_json(
+            "GET",
+            jira_board_sprints_api_url(
+                session,
+                board_id,
+                start_at=start_at,
+                max_results=50,
+                state=state,
+            ),
+            session.token,
+        )
+        if not isinstance(payload, dict):
+            raise ToolError("unexpected Jira sprint response")
+        values = payload.get("values")
+        if not isinstance(values, list):
+            values = []
+        sprints.extend(normalize_sprint(item) for item in values if isinstance(item, dict))
+        if bool(payload.get("isLast")):
+            break
+        start_at += int(payload.get("maxResults") or len(values) or 50)
+        if not values:
+            break
+    return [sprint for sprint in sprints if sprint.get("id")]
+
+
+def fetch_sprint(session: Session, sprint_id: int) -> dict[str, Any]:
+    payload = api_json("GET", jira_sprint_api_url(session, sprint_id), session.token)
+    if not isinstance(payload, dict):
+        raise ToolError("unexpected Jira sprint response")
+    sprint = normalize_sprint(payload)
+    if not sprint.get("id"):
+        raise ToolError(f"unexpected Jira sprint response for sprint {sprint_id}")
+    return sprint
+
+
+def collect_board_sprints(
+    base_url: str,
+    *,
+    project_key_or_id: str = "",
+    board_id: int | None = None,
+    state: str = "",
+) -> tuple[Session, list[dict[str, Any]]]:
+    if board_id is not None:
+        session = load_session(site_root(base_url))
+        board = fetch_board(session, board_id)
+        boards = [board]
+        if project_key_or_id:
+            _, project_boards = fetch_scrum_boards(base_url, project_key_or_id=project_key_or_id)
+            if board["id"] not in {item["id"] for item in project_boards}:
+                raise ToolError(
+                    f"board {board_id} is not a scrum board for project {project_key_or_id}"
+                )
+    else:
+        session, boards = fetch_scrum_boards(base_url, project_key_or_id=project_key_or_id)
+        if project_key_or_id and not boards:
+            raise ToolError(f"no scrum boards found for project {project_key_or_id}")
+    board_sprints: list[dict[str, Any]] = []
+    for board in boards:
+        sprints = fetch_board_sprints(session, int(board["id"]), state=state)
+        board_sprints.append({**board, "sprints": sprints})
+    return session, board_sprints
+
+
+def format_board_label(board: dict[str, Any]) -> str:
+    return f"{board.get('name') or ''} ({board.get('id') or ''})".strip()
+
+
+def format_sprint_label(sprint: dict[str, Any]) -> str:
+    return f"{sprint.get('name') or ''} ({sprint.get('id') or ''})".strip()
+
+
+def resolve_current_sprint(
+    base_url: str,
+    *,
+    project_key_or_id: str,
+    board_id: int | None = None,
+) -> tuple[Session, dict[str, Any], dict[str, Any]]:
+    session, board_sprints = collect_board_sprints(
+        base_url,
+        project_key_or_id=project_key_or_id,
+        board_id=board_id,
+        state="active",
+    )
+    active_pairs = [
+        (board, sprint)
+        for board in board_sprints
+        for sprint in board.get("sprints", [])
+        if isinstance(sprint, dict) and str(sprint.get("state") or "").casefold() == "active"
+    ]
+    if not active_pairs:
+        if board_id is not None:
+            raise ToolError(f"no active sprint found for board {board_id}")
+        raise ToolError(f"no active sprint found for project {project_key_or_id}")
+    if len(active_pairs) > 1:
+        rendered = "; ".join(
+            f"{format_board_label(board)} -> {format_sprint_label(sprint)}"
+            for board, sprint in active_pairs
+        )
+        raise ToolError(
+            "multiple active sprints match the requested context: "
+            + rendered
+            + ". Likely next step: rerun with --board or --sprint"
+        )
+    board, sprint = active_pairs[0]
+    return session, board, sprint
+
+
+def resolve_assignment_sprint(
+    base_url: str,
+    *,
+    project_key_or_id: str = "",
+    board_id: int | None = None,
+    sprint_id: int | None = None,
+    current: bool = False,
+) -> tuple[Session, dict[str, Any], dict[str, Any]]:
+    if current:
+        if not project_key_or_id and board_id is None:
+            raise ToolError("--current requires --project or --board")
+        return resolve_current_sprint(
+            base_url,
+            project_key_or_id=project_key_or_id,
+            board_id=board_id,
+        )
+    if sprint_id is None:
+        raise ToolError("choose exactly one of --current or --sprint")
+    session = load_session(site_root(base_url))
+    sprint = fetch_sprint(session, sprint_id)
+    origin_board_id = int(str(sprint.get("originBoardId") or "0") or "0")
+    if not origin_board_id:
+        raise ToolError(f"sprint {sprint_id} did not report an origin board")
+    board = fetch_board(session, origin_board_id)
+    if board_id is not None and str(board_id) != board["id"]:
+        raise ToolError(
+            f"sprint {sprint_id} belongs to board {board['id']}, not board {board_id}"
+        )
+    if project_key_or_id:
+        _, project_boards = fetch_scrum_boards(base_url, project_key_or_id=project_key_or_id)
+        if board["id"] not in {item["id"] for item in project_boards}:
+            raise ToolError(
+                f"sprint {sprint_id} does not belong to a scrum board for project {project_key_or_id}"
+            )
+    return session, board, sprint
 
 
 def field_lookup_map(fields: dict[str, dict[str, Any]]) -> dict[str, str]:
@@ -1667,6 +1970,44 @@ def render_transitions_summary(issue_key: str, transitions: list[dict[str, Any]]
     return "\n".join(lines) + "\n"
 
 
+def render_sprints_summary(
+    *,
+    project_key_or_id: str = "",
+    board_sprints: list[dict[str, Any]],
+) -> str:
+    state_order = {"active": 0, "future": 1, "closed": 2}
+    lines: list[str] = []
+    if project_key_or_id:
+        lines.append(f"project: {project_key_or_id}")
+    lines.append(f"boards: {len(board_sprints)}")
+    for board in board_sprints:
+        lines.append(f"- board {board.get('id') or ''}: {board.get('name') or ''}")
+        sprints = board.get("sprints")
+        if not isinstance(sprints, list) or not sprints:
+            lines.append("  - no sprints")
+            continue
+        for sprint in sorted(
+            sprints,
+            key=lambda item: (
+                state_order.get(str(item.get("state") or "").lower(), 9),
+                str(item.get("name") or "").casefold(),
+            ),
+        ):
+            if not isinstance(sprint, dict):
+                continue
+            state = str(sprint.get("state") or "").lower()
+            state_label = state or "unknown"
+            line = (
+                f"  - sprint {sprint.get('id') or ''}: {sprint.get('name') or ''}"
+                f" [{state_label}]"
+            )
+            goal = str(sprint.get("goal") or "")
+            if goal:
+                line += f" - goal {goal}"
+            lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
 def required_missing_fields(fields: dict[str, dict[str, Any]], payload_fields: dict[str, Any]) -> list[str]:
     missing: list[str] = []
     for field_id, meta in fields.items():
@@ -1728,6 +2069,18 @@ def preview_markdown_block(markdown: str, *, limit: int = 800) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[:limit] + "\n..."
+
+
+def add_issues_to_sprint(session: Session, sprint_id: int, *, issue_keys: list[str]) -> None:
+    try:
+        api_json(
+            "POST",
+            jira_add_issues_to_sprint_api_url(session, sprint_id),
+            session.token,
+            payload={"issues": issue_keys},
+        )
+    except ToolError as exc:
+        raise ToolError(normalize_api_error_message(exc)) from exc
 
 
 def create_issue(
@@ -2032,6 +2385,16 @@ def render_write_preview_summary(payload: dict[str, Any]) -> str:
             lines.append(f"project: {target['project']}")
         if target.get("issueType"):
             lines.append(f"issue_type: {target['issueType']}")
+        if target.get("board"):
+            lines.append(f"board: {target['board']}")
+        if target.get("boardName"):
+            lines.append(f"board_name: {target['boardName']}")
+        if target.get("sprint"):
+            lines.append(f"sprint: {target['sprint']}")
+        if target.get("sprintName"):
+            lines.append(f"sprint_name: {target['sprintName']}")
+        if target.get("sprintState"):
+            lines.append(f"sprint_state: {target['sprintState']}")
     title = str(payload.get("title") or "")
     if title:
         lines.append(f"title: {title}")
@@ -2245,6 +2608,85 @@ def cmd_transitions(args: argparse.Namespace) -> int:
         print_json({"issue": issue_ref.issue_key, "transitions": transitions})
         return 0
     sys.stdout.write(render_transitions_summary(issue_ref.issue_key, transitions))
+    return 0
+
+
+def cmd_sprints(args: argparse.Namespace) -> int:
+    if not args.project and args.board is None:
+        raise ToolError("sprint discovery requires --project or --board")
+    _, board_sprints = collect_board_sprints(
+        args.base_url,
+        project_key_or_id=args.project or "",
+        board_id=args.board,
+    )
+    payload = {
+        "project": args.project or "",
+        "boards": board_sprints,
+    }
+    if args.output == "json":
+        print_json(payload)
+        return 0
+    sys.stdout.write(
+        render_sprints_summary(
+            project_key_or_id=args.project or "",
+            board_sprints=board_sprints,
+        )
+    )
+    return 0
+
+
+def cmd_add_to_sprint(args: argparse.Namespace) -> int:
+    issue_ref = parse_issue_ref(args.issue, base_url_override=args.base_url)
+    if bool(args.current) == bool(args.sprint is not None):
+        raise ToolError("choose exactly one of --current or --sprint")
+    session, board, sprint = resolve_assignment_sprint(
+        issue_ref.base_url,
+        project_key_or_id=args.project or "",
+        board_id=args.board,
+        sprint_id=args.sprint,
+        current=args.current,
+    )
+    preview = {
+        "action": "add-to-sprint",
+        "mode": "preview",
+        "ready": True,
+        "target": {
+            "issue": issue_ref.issue_key,
+            "project": args.project or "",
+            "board": board.get("id") or "",
+            "boardName": board.get("name") or "",
+            "sprint": sprint.get("id") or "",
+            "sprintName": sprint.get("name") or "",
+            "sprintState": sprint.get("state") or "",
+            "apiUrl": jira_add_issues_to_sprint_api_url(session, int(sprint["id"])),
+        },
+        "payload": {"issues": [issue_ref.issue_key]},
+    }
+    if not args.apply:
+        return write_preview_or_json(preview, output=args.output)
+    add_issues_to_sprint(session, int(sprint["id"]), issue_keys=[issue_ref.issue_key])
+    result = {
+        "action": "add-to-sprint",
+        "mode": "applied",
+        "issue": issue_ref.issue_key,
+        "board": board,
+        "sprint": sprint,
+    }
+    if args.output == "json":
+        print_json(result)
+        return 0
+    sys.stdout.write(
+        "\n".join(
+            [
+                "action: add-to-sprint",
+                "mode: applied",
+                f"issue: {issue_ref.issue_key}",
+                f"board: {board.get('id') or ''}",
+                f"sprint: {sprint.get('id') or ''}",
+            ]
+        )
+        + "\n"
+    )
     return 0
 
 
@@ -2727,6 +3169,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_projects)
 
     p = sub.add_parser(
+        "sprints",
+        help="list scrum boards and sprints available for a project or board",
+    )
+    p.add_argument("--project", help="project key or ID used to resolve scrum boards")
+    p.add_argument("--board", type=positive_int, help="explicit scrum board ID")
+    p.add_argument(
+        "--base-url",
+        default=default_base_url(),
+        help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
+    )
+    p.add_argument("--output", choices=["summary", "json"], default="summary")
+    p.set_defaults(func=cmd_sprints)
+
+    p = sub.add_parser(
         "issue-types",
         help="list Jira issue types available for issue creation in a project",
     )
@@ -2772,6 +3228,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_transitions)
+
+    p = sub.add_parser(
+        "add-to-sprint",
+        help="preview or add an issue to a Jira sprint without custom field plumbing",
+    )
+    p.add_argument("issue", help="issue key or URL")
+    target_mode = p.add_mutually_exclusive_group(required=True)
+    target_mode.add_argument(
+        "--current",
+        action="store_true",
+        help="resolve the unique active sprint for the requested project or board",
+    )
+    target_mode.add_argument("--sprint", type=positive_int, help="explicit sprint ID")
+    p.add_argument("--project", help="project key or ID used to resolve sprint context")
+    p.add_argument("--board", type=positive_int, help="explicit scrum board ID")
+    p.add_argument("--apply", action="store_true", help="add the issue to the sprint; default is preview only")
+    p.add_argument(
+        "--base-url",
+        default=default_base_url(),
+        help=f"Jira base URL override for bare issue keys (default: {JIRA_BASE_URL_ENV})",
+    )
+    p.add_argument("--output", choices=["summary", "json"], default="summary")
+    p.set_defaults(func=cmd_add_to_sprint)
 
     p = sub.add_parser(
         "create",

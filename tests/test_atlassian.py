@@ -1533,6 +1533,163 @@ def test_jira_transition_preview_reports_missing_required_fields(monkeypatch, ca
     assert payload["missingRequiredFields"] == ["Rollout plan (customfield_20000)"]
 
 
+def test_atlassian_default_scope_includes_jira_software_sprint_scopes() -> None:
+    assert "read:board-scope:jira-software" in atlassian.DEFAULT_OAUTH_SCOPE
+    assert "read:sprint:jira-software" in atlassian.DEFAULT_OAUTH_SCOPE
+    assert "write:sprint:jira-software" in atlassian.DEFAULT_OAUTH_SCOPE
+
+
+def test_jira_sprints_summary_lists_scrum_boards_and_sprints(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        jira,
+        "collect_board_sprints",
+        lambda base_url, project_key_or_id="", board_id=None, state="": (
+            jira.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            ),
+            [
+                {
+                    "id": "21",
+                    "name": "Delivery Board",
+                    "type": "scrum",
+                    "sprints": [
+                        {"id": "31", "name": "Sprint 31", "state": "active", "goal": ""},
+                        {"id": "32", "name": "Sprint 32", "state": "future", "goal": ""},
+                    ],
+                }
+            ],
+        ),
+    )
+
+    assert jira.main(["sprints", "--project", "OPS"]) == 0
+    rendered = capsys.readouterr().out
+    assert "project: OPS" in rendered
+    assert "- board 21: Delivery Board" in rendered
+    assert "sprint 31: Sprint 31 [active]" in rendered
+    assert "sprint 32: Sprint 32 [future]" in rendered
+
+
+def test_jira_add_to_sprint_preview_resolves_current_sprint(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_assignment_sprint",
+        lambda base_url, project_key_or_id="", board_id=None, sprint_id=None, current=False: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+
+    assert (
+        jira.main(
+            [
+                "add-to-sprint",
+                "OPS-6994",
+                "--current",
+                "--project",
+                "OPS",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "add-to-sprint"
+    assert payload["target"]["issue"] == "OPS-6994"
+    assert payload["target"]["board"] == "21"
+    assert payload["target"]["boardName"] == "Delivery Board"
+    assert payload["target"]["sprint"] == "31"
+    assert payload["target"]["sprintName"] == "Sprint 31"
+    assert payload["target"]["sprintState"] == "active"
+
+
+def test_jira_add_to_sprint_apply_posts_issue_to_resolved_sprint(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    seen: list[tuple[int, list[str]]] = []
+    monkeypatch.setattr(
+        jira,
+        "resolve_assignment_sprint",
+        lambda base_url, project_key_or_id="", board_id=None, sprint_id=None, current=False: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+    monkeypatch.setattr(
+        jira,
+        "add_issues_to_sprint",
+        lambda session, sprint_id, *, issue_keys: seen.append((sprint_id, issue_keys)),
+    )
+
+    assert (
+        jira.main(
+            [
+                "add-to-sprint",
+                "OPS-6994",
+                "--current",
+                "--project",
+                "OPS",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--apply",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert seen == [(31, ["OPS-6994"])]
+    assert payload["issue"] == "OPS-6994"
+    assert payload["sprint"]["id"] == "31"
+
+
+def test_jira_resolve_current_sprint_requires_disambiguation(monkeypatch) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "collect_board_sprints",
+        lambda base_url, project_key_or_id="", board_id=None, state="": (
+            session,
+            [
+                {
+                    "id": "21",
+                    "name": "Delivery Board",
+                    "type": "scrum",
+                    "sprints": [{"id": "31", "name": "Sprint 31", "state": "active"}],
+                },
+                {
+                    "id": "22",
+                    "name": "Platform Board",
+                    "type": "scrum",
+                    "sprints": [{"id": "41", "name": "Sprint 41", "state": "active"}],
+                },
+            ],
+        ),
+    )
+
+    with pytest.raises(jira.ToolError, match="multiple active sprints.*--board or --sprint"):
+        jira.resolve_current_sprint("https://example.atlassian.net", project_key_or_id="OPS")
+
+
 def test_confluence_search_markdown_is_readable() -> None:
     rendered = confluence.render_search_markdown(
         {
