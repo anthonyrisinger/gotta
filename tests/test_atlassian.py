@@ -422,6 +422,130 @@ def test_confluence_create_page_dry_run_from_markdown_reports_target(
     assert payload["bodyPreview"]["preview"] == "<h1>Evidence</h1>"
 
 
+def test_confluence_create_page_from_markdown_strips_matching_leading_h1(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    markdown_path = tmp_path / "dossier.md"
+    markdown_path.write_text("# Evidence Dossier\n\nBody paragraph.\n", encoding="utf-8")
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    seen_markdown: list[str] = []
+    monkeypatch.setattr(
+        confluence,
+        "render_markdown_to_storage",
+        lambda markdown: seen_markdown.append(markdown) or "<p>Body paragraph.</p>",
+    )
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if "/wiki/api/v2/pages?" in url:
+            return {"results": [], "_links": {}}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "create-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--from-markdown",
+                str(markdown_path),
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    assert seen_markdown == ["Body paragraph.\n"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bodyPreview"]["preview"] == "<p>Body paragraph.</p>"
+
+
+def test_confluence_create_page_from_markdown_keeps_nonmatching_leading_h1(
+    monkeypatch, tmp_path: Path
+) -> None:
+    markdown_path = tmp_path / "dossier.md"
+    markdown_path.write_text("# Alternate Heading\n\nBody paragraph.\n", encoding="utf-8")
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    seen_markdown: list[str] = []
+    monkeypatch.setattr(
+        confluence,
+        "render_markdown_to_storage",
+        lambda markdown: seen_markdown.append(markdown) or "<p>Body paragraph.</p>",
+    )
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        if "/pages/10101?" in url:
+            return {
+                "id": "10101",
+                "title": "Parent Page",
+                "spaceId": "20202",
+                "version": {"number": 7},
+                "body": {"storage": {"value": "<p>Parent</p>"}},
+            }
+        if "/wiki/api/v2/pages?" in url:
+            return {"results": [], "_links": {}}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "create-page",
+                "--parent",
+                "10101",
+                "--title",
+                "Evidence Dossier",
+                "--from-markdown",
+                str(markdown_path),
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    assert seen_markdown == ["# Alternate Heading\n\nBody paragraph.\n"]
+
+
+def test_strip_matching_leading_h1_supports_setext_titles() -> None:
+    markdown = "Evidence Dossier\n================\n\nBody paragraph.\n"
+
+    stripped = confluence.strip_matching_leading_h1(markdown, title="Evidence Dossier")
+
+    assert stripped == "Body paragraph.\n"
+
+
 def test_confluence_create_page_apply_posts_storage_body(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:

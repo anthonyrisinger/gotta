@@ -1093,6 +1093,32 @@ def render_markdown_to_storage(markdown: str) -> str:
     return proc.stdout
 
 
+def _normalize_heading_title(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip()).casefold()
+
+
+def strip_matching_leading_h1(markdown: str, *, title: str) -> str:
+    title_norm = _normalize_heading_title(title)
+    if not title_norm:
+        return markdown
+
+    atx_match = re.match(
+        r"^(?:[ \t]*\r?\n)*[ \t]{0,3}#(?!#)[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*(?:\r?\n|$)",
+        markdown,
+    )
+    if atx_match and _normalize_heading_title(str(atx_match.group("title") or "")) == title_norm:
+        return markdown[atx_match.end() :].lstrip("\r\n")
+
+    setext_match = re.match(
+        r"^(?:[ \t]*\r?\n)*(?P<title>[^\r\n]+)\r?\n[ \t]*=+[ \t]*(?:\r?\n|$)",
+        markdown,
+    )
+    if setext_match and _normalize_heading_title(str(setext_match.group("title") or "")) == title_norm:
+        return markdown[setext_match.end() :].lstrip("\r\n")
+
+    return markdown
+
+
 def _clean_markdown_projection(markdown: str) -> str:
     cleaned = re.sub(r"(?m)^wide760", "", markdown)
     cleaned = re.sub(
@@ -1364,6 +1390,7 @@ def format_created_page_result(page: dict[str, Any], session: Session) -> dict[s
 def load_create_page_body(args: argparse.Namespace) -> tuple[str, str]:
     if args.from_markdown:
         markdown = read_text(Path(args.from_markdown))
+        markdown = strip_matching_leading_h1(markdown, title=args.title)
         return render_markdown_to_storage(markdown), "markdown"
     if args.from_html:
         return read_text(Path(args.from_html)), "html"
@@ -1891,7 +1918,10 @@ def build_parser() -> argparse.ArgumentParser:
     body_group = p.add_mutually_exclusive_group(required=True)
     body_group.add_argument(
         "--from-markdown",
-        help="markdown file to render to Confluence storage HTML before create",
+        help=(
+            "markdown file to render to Confluence storage HTML before create; "
+            "a leading H1 that matches --title is stripped before render"
+        ),
     )
     body_group.add_argument(
         "--from-html",
