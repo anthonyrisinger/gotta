@@ -2690,6 +2690,33 @@ def cmd_add_to_sprint(args: argparse.Namespace) -> int:
     return 0
 
 
+def sprint_request_enabled(
+    *,
+    current_sprint: bool = False,
+    sprint_id: int | None = None,
+) -> bool:
+    return current_sprint or sprint_id is not None
+
+
+def resolve_requested_sprint(
+    base_url: str,
+    *,
+    current_sprint: bool,
+    sprint_id: int | None,
+    project_key_or_id: str = "",
+    board_id: int | None = None,
+) -> tuple[Session, dict[str, Any], dict[str, Any]] | None:
+    if not sprint_request_enabled(current_sprint=current_sprint, sprint_id=sprint_id):
+        return None
+    return resolve_assignment_sprint(
+        base_url,
+        project_key_or_id=project_key_or_id,
+        board_id=board_id,
+        sprint_id=sprint_id,
+        current=current_sprint,
+    )
+
+
 def cmd_create(args: argparse.Namespace) -> int:
     session, project = resolve_project(args.base_url, args.project)
     project_key = str(project.get("key") or args.project)
@@ -2706,12 +2733,35 @@ def cmd_create(args: argparse.Namespace) -> int:
         project_key=project_key,
         issue_type_id=str(issue_type.get("id") or ""),
     )
+    sprint_target = resolve_requested_sprint(
+        session.base_url,
+        current_sprint=args.current_sprint,
+        sprint_id=args.sprint,
+        project_key_or_id=project_key,
+        board_id=args.board,
+    )
     missing = required_missing_fields(fields, payload_fields)
+    preview_target = {
+        "project": project_key,
+        "issueType": issue_type.get("name") or "",
+        "apiUrl": jira_create_issue_api_url(session),
+    }
+    if sprint_target is not None:
+        _, sprint_board, sprint = sprint_target
+        preview_target.update(
+            {
+                "board": sprint_board.get("id") or "",
+                "boardName": sprint_board.get("name") or "",
+                "sprint": sprint.get("id") or "",
+                "sprintName": sprint.get("name") or "",
+                "sprintState": sprint.get("state") or "",
+            }
+        )
     preview = {
         "action": "create",
         "mode": "preview",
         "ready": not missing,
-        "target": {"project": project_key, "issueType": issue_type.get("name") or "", "apiUrl": jira_create_issue_api_url(session)},
+        "target": preview_target,
         "title": args.title,
         "fieldValues": payload_fields,
         "bodyMarkdown": body_markdown,
@@ -2743,6 +2793,13 @@ def cmd_create(args: argparse.Namespace) -> int:
         created = create_issue(session, payload_fields=payload_fields)
     except ToolError as exc:
         raise ToolError(normalize_api_error_message(exc)) from exc
+    if sprint_target is not None:
+        sprint_session, _, sprint = sprint_target
+        add_issues_to_sprint(
+            sprint_session,
+            int(sprint["id"]),
+            issue_keys=[created["key"]],
+        )
     if args.relates:
         link_type = resolved_link_type or {"name": resolved_link_type_name}
         for target in args.relates:
@@ -2768,6 +2825,10 @@ def cmd_create(args: argparse.Namespace) -> int:
         "linkedIssues": [normalize_issue_key(item) for item in args.relates],
         "remoteLinks": list(args.remote_link),
     }
+    if sprint_target is not None:
+        _, sprint_board, sprint = sprint_target
+        result["board"] = sprint_board
+        result["sprint"] = sprint
     if args.output == "json":
         print_json(result)
         return 0
@@ -2789,13 +2850,34 @@ def cmd_update(args: argparse.Namespace) -> int:
     if isinstance(current.get("descriptionAdf"), dict):
         current_markdown = render_adf_block(current["descriptionAdf"]).strip()
     payload_fields, body_markdown = build_update_fields(args, fields, current_markdown=current_markdown)
-    if not payload_fields:
+    current_project_key = str(((current.get("project") or {}).get("key") or args.project or ""))
+    sprint_target = resolve_requested_sprint(
+        issue_ref.base_url,
+        current_sprint=args.current_sprint,
+        sprint_id=args.sprint,
+        project_key_or_id=current_project_key,
+        board_id=args.board,
+    )
+    if not payload_fields and sprint_target is None:
         raise ToolError("nothing to update; pass field edits or a description operation")
+    preview_target = {"issue": issue_ref.issue_key}
+    if sprint_target is not None:
+        _, sprint_board, sprint = sprint_target
+        preview_target.update(
+            {
+                "project": current_project_key,
+                "board": sprint_board.get("id") or "",
+                "boardName": sprint_board.get("name") or "",
+                "sprint": sprint.get("id") or "",
+                "sprintName": sprint.get("name") or "",
+                "sprintState": sprint.get("state") or "",
+            }
+        )
     preview = {
         "action": "update",
         "mode": "preview",
         "ready": True,
-        "target": {"issue": issue_ref.issue_key},
+        "target": preview_target,
         "title": payload_fields.get("summary") or current.get("summary") or "",
         "fieldValues": payload_fields,
         "bodyMarkdown": body_markdown,
@@ -2803,8 +2885,23 @@ def cmd_update(args: argparse.Namespace) -> int:
     }
     if not args.apply:
         return write_preview_or_json(preview, output=args.output)
-    updated = update_issue_fields(session, issue_ref.issue_key, payload_fields=payload_fields)
+    updated = current
+    if payload_fields:
+        updated = update_issue_fields(session, issue_ref.issue_key, payload_fields=payload_fields)
+    if sprint_target is not None:
+        sprint_session, _, sprint = sprint_target
+        add_issues_to_sprint(
+            sprint_session,
+            int(sprint["id"]),
+            issue_keys=[issue_ref.issue_key],
+        )
+        if not payload_fields:
+            updated = fetch_issue(issue_ref, fields=DEFAULT_GET_FIELDS)
     result = {"action": "update", "mode": "applied", "issue": meta_issue(updated)}
+    if sprint_target is not None:
+        _, sprint_board, sprint = sprint_target
+        result["board"] = sprint_board
+        result["sprint"] = sprint
     if args.output == "json":
         print_json(result)
         return 0
@@ -3262,6 +3359,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--body", help="inline Markdown description")
     p.add_argument("--body-file", help="read Markdown description from a file")
     p.add_argument("--stdin", action="store_true", help="read Markdown description from stdin")
+    sprint_mode = p.add_mutually_exclusive_group()
+    sprint_mode.add_argument(
+        "--current-sprint",
+        action="store_true",
+        help="resolve the unique active sprint for the target project or board",
+    )
+    sprint_mode.add_argument("--sprint", type=positive_int, help="explicit sprint ID")
+    p.add_argument("--board", type=positive_int, help="explicit scrum board ID for sprint resolution")
     p.add_argument("--priority", help="priority name or ID")
     p.add_argument("--assignee", help="assignee account ID")
     p.add_argument("--parent", help="parent issue key")
@@ -3321,10 +3426,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="preview or update Jira fields and description content for an existing issue",
     )
     p.add_argument("issue", help="issue key or URL")
+    p.add_argument(
+        "--project",
+        help="project key or ID used to resolve sprint context; defaults to the issue project",
+    )
     p.add_argument("--summary", help="replace the issue summary/title")
     p.add_argument("--body", help="inline Markdown body used for description updates")
     p.add_argument("--body-file", help="read Markdown body from a file for description updates")
     p.add_argument("--stdin", action="store_true", help="read Markdown body from stdin for description updates")
+    sprint_mode = p.add_mutually_exclusive_group()
+    sprint_mode.add_argument(
+        "--current-sprint",
+        action="store_true",
+        help="resolve the unique active sprint for the issue project or requested board",
+    )
+    sprint_mode.add_argument("--sprint", type=positive_int, help="explicit sprint ID")
+    p.add_argument("--board", type=positive_int, help="explicit scrum board ID for sprint resolution")
     description_mode = p.add_mutually_exclusive_group()
     description_mode.add_argument(
         "--replace-description",

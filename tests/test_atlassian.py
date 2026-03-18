@@ -1340,6 +1340,159 @@ def test_jira_create_apply_creates_issue_and_links(monkeypatch, capsys) -> None:
     assert payload["issue"]["key"] == "OPS-101"
 
 
+def test_jira_create_preview_resolves_current_sprint(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_project",
+        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_issue_type",
+        lambda session, project_key, raw: {"id": "20000", "name": "Task"},
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_create_fields",
+        lambda session, project_key, issue_type_id: {
+            "summary": jira.normalize_field_metadata(
+                "summary",
+                {"name": "Summary", "required": True, "schema": {"type": "string"}},
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_requested_sprint",
+        lambda base_url, *, current_sprint, sprint_id, project_key_or_id="", board_id=None: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+
+    assert (
+        jira.main(
+            [
+                "create",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--project",
+                "OPS",
+                "--type",
+                "Task",
+                "--title",
+                "Service handoff",
+                "--current-sprint",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["target"]["project"] == "OPS"
+    assert payload["target"]["board"] == "21"
+    assert payload["target"]["boardName"] == "Delivery Board"
+    assert payload["target"]["sprint"] == "31"
+    assert payload["target"]["sprintName"] == "Sprint 31"
+    assert payload["target"]["sprintState"] == "active"
+
+
+def test_jira_create_apply_assigns_created_issue_to_sprint(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    seen_assignments: list[tuple[int, list[str]]] = []
+    monkeypatch.setattr(
+        jira,
+        "resolve_project",
+        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_issue_type",
+        lambda session, project_key, raw: {"id": "20000", "name": "Task"},
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_create_fields",
+        lambda session, project_key, issue_type_id: {
+            "summary": jira.normalize_field_metadata(
+                "summary",
+                {"name": "Summary", "required": True, "schema": {"type": "string"}},
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_requested_sprint",
+        lambda base_url, *, current_sprint, sprint_id, project_key_or_id="", board_id=None: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+    monkeypatch.setattr(
+        jira,
+        "create_issue",
+        lambda session, *, payload_fields: {
+            "siteUrl": session.base_url,
+            "issueUrl": f"{session.base_url}/browse/OPS-101",
+            "id": "10101",
+            "key": "OPS-101",
+            "summary": payload_fields["summary"],
+            "status": {"name": "To Do"},
+            "issueType": {"name": "Task"},
+            "project": {"key": "OPS", "name": "Operations"},
+            "priority": payload_fields.get("priority"),
+            "assignee": None,
+            "reporter": None,
+            "labels": [],
+            "created": "2026-03-18T00:00:00Z",
+            "updated": "2026-03-18T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        jira,
+        "add_issues_to_sprint",
+        lambda session, sprint_id, *, issue_keys: seen_assignments.append((sprint_id, issue_keys)),
+    )
+
+    assert (
+        jira.main(
+            [
+                "create",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--project",
+                "OPS",
+                "--type",
+                "Task",
+                "--title",
+                "Service handoff",
+                "--current-sprint",
+                "--apply",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert seen_assignments == [(31, ["OPS-101"])]
+    assert payload["issue"]["key"] == "OPS-101"
+    assert payload["board"]["id"] == "21"
+    assert payload["sprint"]["id"] == "31"
+
+
 def test_jira_update_preview_upserts_markdown_section(monkeypatch, capsys) -> None:
     session = jira.Session(
         token="token",
@@ -1409,6 +1562,150 @@ def test_jira_update_preview_upserts_markdown_section(monkeypatch, capsys) -> No
     assert "## References" in payload["bodyMarkdown"]
     assert "https://example.invalid/spec" in payload["bodyMarkdown"]
     assert payload["fieldValues"]["description"]["type"] == "doc"
+
+
+def test_jira_update_preview_supports_sprint_only_change(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: session,
+    )
+    monkeypatch.setattr(jira, "fetch_edit_fields", lambda issue_ref: (session, {}))
+    monkeypatch.setattr(
+        jira,
+        "fetch_issue",
+        lambda issue_ref, *, fields: {
+            "siteUrl": session.base_url,
+            "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+            "id": "9090",
+            "key": issue_ref.issue_key,
+            "summary": "Existing issue",
+            "status": {"name": "To Do"},
+            "issueType": {"name": "Task"},
+            "project": {"key": "OPS", "name": "Operations"},
+            "priority": None,
+            "assignee": None,
+            "reporter": None,
+            "labels": [],
+            "created": "2026-03-18T00:00:00Z",
+            "updated": "2026-03-18T00:00:00Z",
+            "descriptionAdf": None,
+        },
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_requested_sprint",
+        lambda base_url, *, current_sprint, sprint_id, project_key_or_id="", board_id=None: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+
+    assert (
+        jira.main(
+            [
+                "update",
+                "OPS-9",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--current-sprint",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "update"
+    assert payload["target"]["issue"] == "OPS-9"
+    assert payload["target"]["project"] == "OPS"
+    assert payload["target"]["board"] == "21"
+    assert payload["target"]["sprint"] == "31"
+
+
+def test_jira_update_apply_sprint_only_assigns_without_field_update(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    seen_assignments: list[tuple[int, list[str]]] = []
+    fetch_calls: list[str] = []
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: session,
+    )
+    monkeypatch.setattr(jira, "fetch_edit_fields", lambda issue_ref: (session, {}))
+
+    def fake_fetch_issue(issue_ref, *, fields):
+        fetch_calls.append(issue_ref.issue_key)
+        return {
+            "siteUrl": session.base_url,
+            "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+            "id": "9090",
+            "key": issue_ref.issue_key,
+            "summary": "Existing issue",
+            "status": {"name": "To Do"},
+            "issueType": {"name": "Task"},
+            "project": {"key": "OPS", "name": "Operations"},
+            "priority": None,
+            "assignee": None,
+            "reporter": None,
+            "labels": [],
+            "created": "2026-03-18T00:00:00Z",
+            "updated": "2026-03-18T00:00:00Z",
+            "descriptionAdf": None,
+        }
+
+    monkeypatch.setattr(jira, "fetch_issue", fake_fetch_issue)
+    monkeypatch.setattr(
+        jira,
+        "resolve_requested_sprint",
+        lambda base_url, *, current_sprint, sprint_id, project_key_or_id="", board_id=None: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+
+    def fail_update_issue_fields(session, issue_key, *, payload_fields):
+        raise AssertionError("update_issue_fields should not run for sprint-only updates")
+
+    monkeypatch.setattr(jira, "update_issue_fields", fail_update_issue_fields)
+    monkeypatch.setattr(
+        jira,
+        "add_issues_to_sprint",
+        lambda session, sprint_id, *, issue_keys: seen_assignments.append((sprint_id, issue_keys)),
+    )
+
+    assert (
+        jira.main(
+            [
+                "update",
+                "OPS-9",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--current-sprint",
+                "--apply",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert seen_assignments == [(31, ["OPS-9"])]
+    assert fetch_calls == ["OPS-9", "OPS-9"]
+    assert payload["issue"]["key"] == "OPS-9"
+    assert payload["board"]["id"] == "21"
+    assert payload["sprint"]["id"] == "31"
 
 
 def test_jira_comment_preview_renders_markdown_to_adf(monkeypatch, capsys) -> None:
