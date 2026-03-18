@@ -42,7 +42,7 @@ README_CANDIDATES = (
     "readme.rst",
 )
 
-USAGE = """usage: gotta github [status [--output json|summary] | search [--global] [--type repo|issue|pr] [--repo owner/repo] [--limit N] [--output json|summary|markdown] <query...> | [--output json|summary|markdown] [--limit N] <github_url>]
+USAGE = """usage: gotta github [status [--output json|summary] | search [--global] [--type repo|issue|pr|code] [--repo owner/repo] [--filename NAME] [--extension EXT] [--language LANG] [--match file|path] [--limit N] [--output json|summary|markdown] <query...> | [--output json|summary|markdown] [--limit N] <github_url>]
 
 Supported URL shapes:
   - repository root
@@ -68,6 +68,7 @@ Search:
   repo      repository discovery (default)
   issue     issue search
   pr        pull request search
+  code      code and file discovery
 
 Unscoped search is owned-scope by default: the authenticated user plus visible
 organizations only. Use `--global` to search the wider GitHub corpus while
@@ -76,7 +77,7 @@ excluding those owned-scope results.
 Use --help-all for the same long-form usage output.
 """
 
-SEARCH_USAGE = """usage: gotta github search [--global] [--type repo|issue|pr] [--repo owner/repo] [--limit N] [--output json|summary|markdown] <query...>
+SEARCH_USAGE = """usage: gotta github search [--global] [--type repo|issue|pr|code] [--repo owner/repo] [--filename NAME] [--extension EXT] [--language LANG] [--match file|path] [--limit N] [--output json|summary|markdown] <query...>
 
 Search:
   default             owned-scope only (authenticated user + visible orgs)
@@ -84,12 +85,18 @@ Search:
   --type repo         repository discovery (default)
   --type issue        issue search
   --type pr           pull request search
+  --type code         code and file discovery
   --repo owner/repo   narrow search to one repository
+  --filename NAME     code search only; narrow by filename
+  --extension EXT     code search only; narrow by extension
+  --language LANG     code search only; narrow by language
+  --match file|path   code search only; restrict matches to content or path
 
 Examples:
   gotta github search ABC
   gotta github search --global ABC
   gotta github search --type pr --repo acme/widgets auth proxy
+  gotta github search --type code --repo acme/widgets --filename package.json lint
 """
 
 
@@ -98,9 +105,14 @@ class ParsedArgs:
     command: str
     output: str
     url: str = ""
+    fragment: str = ""
     query: str = ""
     search_type: str = "repo"
     repo: str = ""
+    filename: str = ""
+    extension: str = ""
+    language: str = ""
+    match: str = ""
     limit: int | None = None
     global_search: bool = False
 
@@ -118,6 +130,14 @@ def _normalize_search_locator_tail(parsed: ParsedArgs) -> list[str]:
         args.extend(["--type", parsed.search_type])
     if parsed.repo:
         args.extend(["--repo", parsed.repo])
+    if parsed.filename:
+        args.extend(["--filename", parsed.filename])
+    if parsed.extension:
+        args.extend(["--extension", parsed.extension])
+    if parsed.language:
+        args.extend(["--language", parsed.language])
+    if parsed.match:
+        args.extend(["--match", parsed.match])
     args.append(parsed.query)
     return args
 
@@ -136,13 +156,22 @@ def _search_route(rest: str) -> list[str] | None:
     return query_route(
         "search",
         " ".join(split_locator_tail(tail)),
-        valued_flags=("--type", "--repo", "--limit", "--output"),
+        valued_flags=(
+            "--type",
+            "--repo",
+            "--filename",
+            "--extension",
+            "--language",
+            "--match",
+            "--limit",
+            "--output",
+        ),
         boolean_flags=("--global",),
     )
 
 
 def _supported_url_route(target: str) -> list[str] | None:
-    target = strip_http_url_fragment(target)
+    normalized = strip_http_url_fragment(target)
     if any(char.isspace() for char in target):
         return None
     for pattern in (
@@ -157,7 +186,7 @@ def _supported_url_route(target: str) -> list[str] | None:
         RELEASES_RE,
         REPO_RE,
     ):
-        if pattern.match(target):
+        if pattern.match(normalized):
             return [target]
     return None
 
@@ -171,7 +200,10 @@ def route_target(target: str) -> list[str] | None:
         if search_args is not None:
             return search_args
         if rest.startswith("github.com/"):
-            return _supported_url_route(f"https://{rest}")
+            routed = _supported_url_route(f"https://{rest}")
+            if routed is None:
+                return None
+            return [f"https://{rest}"]
     return None
 
 
@@ -685,6 +717,40 @@ def _normalize_issue_search_item(item: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _normalize_code_search_item(item: dict[str, object]) -> dict[str, object]:
+    repository = item.get("repository")
+    if not isinstance(repository, dict):
+        repository = {}
+    text_matches = item.get("textMatches")
+    fragments: list[str] = []
+    if isinstance(text_matches, list):
+        for entry in text_matches:
+            if not isinstance(entry, dict):
+                continue
+            fragment = str(entry.get("fragment") or "").strip()
+            if fragment:
+                fragments.append(fragment)
+    return {
+        "kind": "code",
+        "repository": str(repository.get("nameWithOwner") or ""),
+        "repositoryUrl": str(repository.get("url") or ""),
+        "path": str(item.get("path") or ""),
+        "sha": str(item.get("sha") or ""),
+        "url": str(item.get("url") or ""),
+        "textMatches": fragments,
+    }
+
+
+def _code_search_item_owner(item: dict[str, object]) -> str:
+    repository = item.get("repository")
+    if not isinstance(repository, dict):
+        return ""
+    name_with_owner = str(repository.get("nameWithOwner") or "").strip()
+    if "/" not in name_with_owner:
+        return ""
+    return name_with_owner.split("/", 1)[0]
+
+
 def _search_page_size(limit: int, *, repo: str) -> int:
     if repo:
         return min(max(limit, 1), 50)
@@ -803,6 +869,8 @@ def _search_item_owner(item: dict[str, object], *, search_type: str) -> str:
         if isinstance(owner, dict):
             return str(owner.get("login") or "").strip()
         return ""
+    if search_type == "code":
+        return _code_search_item_owner(item)
     repository = _issue_repository_name(item)
     if "/" in repository:
         return repository.split("/", 1)[0].strip()
@@ -966,6 +1034,155 @@ def search_issueish_payload(
     }
 
 
+def _code_search_cli_args(
+    *,
+    query: str,
+    limit: int,
+    repo: str = "",
+    owner: str = "",
+    filename: str = "",
+    extension: str = "",
+    language: str = "",
+    match: str = "",
+) -> list[str]:
+    args = [
+        "search",
+        "code",
+        query,
+        "--json",
+        "path,repository,sha,textMatches,url",
+        "--limit",
+        str(limit),
+    ]
+    if repo:
+        args.extend(["--repo", repo])
+    if owner:
+        args.extend(["--owner", owner])
+    if filename:
+        args.extend(["--filename", filename])
+    if extension:
+        args.extend(["--extension", extension])
+    if language:
+        args.extend(["--language", language])
+    if match:
+        args.extend(["--match", match])
+    return args
+
+
+def _code_search_items(
+    gh: str,
+    *,
+    query: str,
+    limit: int,
+    repo: str = "",
+    owner: str = "",
+    filename: str = "",
+    extension: str = "",
+    language: str = "",
+    match: str = "",
+) -> list[dict[str, object]]:
+    payload = gh_json_value(
+        gh,
+        _code_search_cli_args(
+            query=query,
+            limit=limit,
+            repo=repo,
+            owner=owner,
+            filename=filename,
+            extension=extension,
+            language=language,
+            match=match,
+        ),
+    )
+    if not isinstance(payload, list):
+        raise RuntimeError("GitHub CLI returned unexpected code search payload")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def search_code_payload(
+    gh: str,
+    *,
+    query: str,
+    repo: str,
+    limit: int,
+    global_search: bool,
+    filename: str = "",
+    extension: str = "",
+    language: str = "",
+    match: str = "",
+) -> dict[str, object]:
+    accessible_targets = [] if repo else _accessible_owner_targets(gh)
+    accessible_owners = {login.casefold() for _, login in accessible_targets}
+    scoped_items: list[dict[str, object]] = []
+    if accessible_targets and not global_search:
+        seen: set[str] = set()
+        for qualifier, owner in accessible_targets:
+            if qualifier != "user" and qualifier != "org":
+                continue
+            candidates = _code_search_items(
+                gh,
+                query=query,
+                limit=limit,
+                owner=owner,
+                filename=filename,
+                extension=extension,
+                language=language,
+                match=match,
+            )
+            for item in candidates:
+                identity = str(item.get("url") or "")
+                if not identity or identity in seen:
+                    continue
+                seen.add(identity)
+                scoped_items.append(item)
+                if len(scoped_items) >= limit:
+                    break
+            if len(scoped_items) >= limit:
+                break
+    global_items: list[dict[str, object]] = []
+    if repo or global_search:
+        global_items = _code_search_items(
+            gh,
+            query=query,
+            limit=limit,
+            repo=repo,
+            filename=filename,
+            extension=extension,
+            language=language,
+            match=match,
+        )
+        if global_search and not repo:
+            global_items = _exclude_owner_items(
+                global_items,
+                excluded_owners=accessible_owners,
+                search_type="code",
+            )
+    items = scoped_items if not (repo or global_search) else global_items
+    results = [_normalize_code_search_item(item) for item in items[:limit]]
+    if repo:
+        search_plan = "repo-scope"
+    elif global_search:
+        search_plan = "global-excluding-owned"
+    else:
+        search_plan = "owned-only"
+    return {
+        "surface": "github",
+        "type": "code",
+        "query": query,
+        "scopeRepo": repo,
+        "filename": filename,
+        "extension": extension,
+        "language": language,
+        "match": match,
+        "searchPlan": search_plan,
+        "accessibleOwners": sorted(accessible_owners),
+        "scopedResultCount": len(scoped_items[:limit]),
+        "globalResultCount": len(global_items[:limit]),
+        "resultCount": len(results),
+        "results": results,
+    }
+
+
 def markdown_search(payload: dict[str, object], *, include_details: bool) -> str:
     search_type = str(payload.get("type") or "repo")
     results = payload.get("results")
@@ -995,6 +1212,18 @@ def markdown_search(payload: dict[str, object], *, include_details: bool) -> str
             lines.append("- _Search scope_: global GitHub excluding owned-scope results")
             if global_result_count:
                 lines.append(f"- _Global hits_: {global_result_count}")
+    filename = str(payload.get("filename") or "")
+    extension = str(payload.get("extension") or "")
+    language = str(payload.get("language") or "")
+    match = str(payload.get("match") or "")
+    if filename:
+        lines.append(f"- _Filename_: `{filename}`")
+    if extension:
+        lines.append(f"- _Extension_: `{extension}`")
+    if language:
+        lines.append(f"- _Language_: `{language}`")
+    if match:
+        lines.append(f"- _Match_: `{match}`")
     lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
     lines.append("")
     if search_type == "repo":
@@ -1026,6 +1255,30 @@ def markdown_search(payload: dict[str, object], *, include_details: bool) -> str
             description = str(item.get("description") or "").strip()
             if include_details and description:
                 lines.append(f"  - {description}")
+        return "\n".join(lines) + "\n"
+    if search_type == "code":
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            repository = str(item.get("repository") or "")
+            path = str(item.get("path") or "")
+            url = str(item.get("url") or "")
+            label = f"{repository}:{path}" if repository and path else (path or repository or "code result")
+            line = f"- [{label}]({url})" if url else f"- {label}"
+            sha = str(item.get("sha") or "")
+            if sha:
+                line += f" - sha `{sha[:7]}`"
+            lines.append(line)
+            if include_details:
+                text_matches = item.get("textMatches")
+                if isinstance(text_matches, list):
+                    for fragment in text_matches[:2]:
+                        if not isinstance(fragment, str):
+                            continue
+                        excerpt = fragment.strip()
+                        if not excerpt:
+                            continue
+                        lines.append(f"  - `{excerpt}`")
         return "\n".join(lines) + "\n"
     for item in results:
         if not isinstance(item, dict):
@@ -1104,6 +1357,16 @@ def decode_content_blob(payload: dict[str, object]) -> bytes:
         return base64.b64decode(content)
     except ValueError as exc:
         raise RuntimeError(f"invalid base64 blob from GitHub API: {exc}") from exc
+
+
+def normalize_fragment_hint(fragment: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", fragment.casefold())
+
+
+def split_render_url(url: str) -> tuple[str, str]:
+    parsed = urllib.parse.urlparse(url)
+    base = urllib.parse.urlunparse(parsed._replace(query="", fragment=""))
+    return base, parsed.fragment
 
 
 def normalize_ref_path(path: str | None) -> str:
@@ -1201,6 +1464,101 @@ def load_directory_readme(
     return readme_path, decode_content_blob(payload)
 
 
+def resolve_directory_fragment_entry(
+    entries: list[dict[str, object]],
+    *,
+    fragment: str,
+) -> dict[str, object] | None:
+    hint = normalize_fragment_hint(fragment)
+    if not hint:
+        return None
+    if hint == "readme":
+        return find_readme_entry(entries)
+    matches: list[dict[str, object]] = []
+    for entry in entries:
+        if str(entry.get("type") or "") != "file":
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        tokens = {
+            normalize_fragment_hint(name),
+            normalize_fragment_hint(Path(name).stem),
+        }
+        if hint in tokens:
+            matches.append(entry)
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def load_directory_fragment_file(
+    gh: str,
+    *,
+    owner: str,
+    repo: str,
+    ref: str,
+    entries: list[dict[str, object]],
+    fragment: str,
+) -> tuple[str, bytes] | None:
+    entry = resolve_directory_fragment_entry(entries, fragment=fragment)
+    if entry is None:
+        return None
+    path = str(entry.get("path") or "")
+    if not path:
+        return None
+    payload = fetch_content_file(gh, owner=owner, repo=repo, ref=ref, path=path)
+    return path, decode_content_blob(payload)
+
+
+def readme_excerpt(data: bytes, *, limit: int = 240) -> str:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines and lines[0].startswith("#"):
+        lines = lines[1:]
+    if not lines:
+        return ""
+    excerpt = re.sub(r"\s+", " ", " ".join(lines)).strip()
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[: limit - 1].rstrip() + "…"
+
+
+def readme_rollup(
+    gh: str,
+    *,
+    owner: str,
+    repo: str,
+    ref: str,
+    entries: list[dict[str, object]],
+    path: str = "",
+) -> tuple[str, str]:
+    entry = find_readme_entry(entries)
+    if entry is None:
+        return "", ""
+    readme_path = str(entry.get("path") or "")
+    if not readme_path:
+        return "", ""
+    try:
+        loaded = load_directory_readme(
+            gh,
+            owner=owner,
+            repo=repo,
+            ref=ref,
+            path=path,
+            entries=entries,
+        )
+    except RuntimeError:
+        return readme_path, ""
+    if loaded is None:
+        return readme_path, ""
+    _, blob = loaded
+    return readme_path, readme_excerpt(blob)
+
+
 def markdown_directory(
     *,
     owner: str,
@@ -1208,11 +1566,17 @@ def markdown_directory(
     ref: str,
     path: str,
     entries: list[dict[str, object]],
+    readme_path: str = "",
+    readme_summary: str = "",
 ) -> str:
     display_path = path or "."
     lines = [f"# {owner}/{repo}:{display_path}", ""]
     lines.append(f"- **URL:** {github_tree_url(owner, repo, ref, path)}")
     lines.append(f"- **Ref:** `{ref}`")
+    if readme_path:
+        lines.append(f"- **README:** [{Path(readme_path).name}]({github_blob_url(owner, repo, ref, readme_path)})")
+    if readme_summary:
+        lines.append(f"- **README excerpt:** {readme_summary}")
     lines.extend(["", "## Contents", ""])
     for entry in sorted(entries, key=lambda item: (str(item.get("type") or ""), str(item.get("name") or "").casefold())):
         name = str(entry.get("name") or "")
@@ -1228,6 +1592,30 @@ def markdown_directory(
             continue
         lines.append(f"- `{name}`")
     return "\n".join(lines) + "\n"
+
+
+def markdown_repo_directory(
+    payload: dict[str, object],
+    *,
+    owner: str,
+    repo: str,
+    ref: str,
+    entries: list[dict[str, object]],
+    readme_path: str = "",
+    readme_summary: str = "",
+) -> str:
+    repo_markdown = markdown_repo(payload).rstrip()
+    directory_markdown = markdown_directory(
+        owner=owner,
+        repo=repo,
+        ref=ref,
+        path="",
+        entries=entries,
+        readme_path=readme_path,
+        readme_summary=readme_summary,
+    ).splitlines()
+    contents = directory_markdown[4:] if len(directory_markdown) >= 4 else directory_markdown
+    return "\n".join([repo_markdown, "", *contents]).rstrip() + "\n"
 
 
 def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
@@ -1284,6 +1672,10 @@ def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
         output = "markdown"
         search_type = "repo"
         repo = ""
+        filename = ""
+        extension = ""
+        language = ""
+        match = ""
         limit = 10
         global_search = False
         query_parts: list[str] = []
@@ -1302,7 +1694,7 @@ def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
                 if index + 1 >= len(args):
                     raise SystemExit(die(USAGE))
                 search_type = args[index + 1]
-                if search_type not in {"repo", "issue", "pr"}:
+                if search_type not in {"repo", "issue", "pr", "code"}:
                     raise SystemExit(die(USAGE))
                 index += 2
                 continue
@@ -1311,6 +1703,38 @@ def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
                     raise SystemExit(die(USAGE))
                 repo = args[index + 1].strip()
                 if not re.fullmatch(r"[^/\s]+/[^/\s]+", repo):
+                    raise SystemExit(die(USAGE))
+                index += 2
+                continue
+            if token == "--filename":
+                if index + 1 >= len(args):
+                    raise SystemExit(die(USAGE))
+                filename = args[index + 1].strip()
+                if not filename:
+                    raise SystemExit(die(USAGE))
+                index += 2
+                continue
+            if token == "--extension":
+                if index + 1 >= len(args):
+                    raise SystemExit(die(USAGE))
+                extension = args[index + 1].strip()
+                if not extension:
+                    raise SystemExit(die(USAGE))
+                index += 2
+                continue
+            if token == "--language":
+                if index + 1 >= len(args):
+                    raise SystemExit(die(USAGE))
+                language = args[index + 1].strip()
+                if not language:
+                    raise SystemExit(die(USAGE))
+                index += 2
+                continue
+            if token == "--match":
+                if index + 1 >= len(args):
+                    raise SystemExit(die(USAGE))
+                match = args[index + 1].strip()
+                if match not in {"file", "path"}:
                     raise SystemExit(die(USAGE))
                 index += 2
                 continue
@@ -1328,17 +1752,24 @@ def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
         query = " ".join(part.strip() for part in query_parts if part.strip()).strip()
         if not query:
             raise SystemExit(die(USAGE))
+        if search_type != "code" and any((filename, extension, language, match)):
+            raise SystemExit(die(USAGE))
         return ParsedArgs(
             command="search",
             output=output,
             query=query,
             search_type=search_type,
             repo=repo,
+            filename=filename,
+            extension=extension,
+            language=language,
+            match=match,
             limit=limit,
             global_search=global_search,
         )
     output = "markdown"
     url = ""
+    fragment = ""
     limit: int | None = None
     index = 0
     while index < len(args):
@@ -1374,7 +1805,9 @@ def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
         index += 1
     if not url:
         raise SystemExit(die(USAGE))
-    return ParsedArgs(command="render", output=output, url=url, limit=limit)
+    parsed_url = urllib.parse.urlparse(url)
+    fragment = parsed_url.fragment
+    return ParsedArgs(command="render", output=output, url=url, fragment=fragment, limit=limit)
 
 
 def canonical_locator(argv: list[str]) -> str:
@@ -1405,13 +1838,24 @@ def preferred_name(argv: list[str], options: Any) -> str:
             "repo": "repos",
             "issue": "issues",
             "pr": "prs",
+            "code": "code",
         }.get(parsed.search_type, parsed.search_type)
         scope = ""
         if parsed.repo:
             scope = f"-{_slug(parsed.repo)}"
         elif parsed.global_search:
             scope = "-global"
-        return f"github-search-{search_type}{scope}-{_slug(parsed.query)}.{extension}"
+        filter_parts: list[str] = []
+        if parsed.filename:
+            filter_parts.append(f"file-{_slug(parsed.filename)}")
+        if parsed.extension:
+            filter_parts.append(f"ext-{_slug(parsed.extension)}")
+        if parsed.language:
+            filter_parts.append(f"lang-{_slug(parsed.language)}")
+        if parsed.match:
+            filter_parts.append(f"match-{_slug(parsed.match)}")
+        filter_suffix = ("-" + "-".join(filter_parts)) if filter_parts else ""
+        return f"github-search-{search_type}{scope}{filter_suffix}-{_slug(parsed.query)}.{extension}"
     return _preferred_render_name(parsed, extension)
 
 
@@ -1449,6 +1893,18 @@ def main(argv: list[str]) -> int:
                     limit=parsed.limit,
                     global_search=parsed.global_search,
                 )
+            elif parsed.search_type == "code":
+                payload = search_code_payload(
+                    gh,
+                    query=parsed.query,
+                    repo=parsed.repo,
+                    limit=parsed.limit,
+                    global_search=parsed.global_search,
+                    filename=parsed.filename,
+                    extension=parsed.extension,
+                    language=parsed.language,
+                    match=parsed.match,
+                )
             else:
                 payload = search_issueish_payload(
                     gh,
@@ -1465,7 +1921,7 @@ def main(argv: list[str]) -> int:
             return 0
         emit_markdown(markdown_search(payload, include_details=(parsed.output == "markdown")))
         return 0
-    url = parsed.url.split("#", 1)[0].split("?", 1)[0]
+    url, fragment = split_render_url(parsed.url)
 
     if match := BLOB_RE.match(url):
         if parsed.limit is not None:
@@ -1582,22 +2038,41 @@ def main(argv: list[str]) -> int:
         if parsed.output == "summary":
             emit_markdown(markdown_directory(owner=owner, repo=repo, ref=ref, path=path, entries=entries))
             return 0
-        try:
-            readme = load_directory_readme(
-                gh,
+        if fragment:
+            try:
+                hinted = load_directory_fragment_file(
+                    gh,
+                    owner=owner,
+                    repo=repo,
+                    ref=ref,
+                    entries=entries,
+                    fragment=fragment,
+                )
+            except RuntimeError as exc:
+                return die(str(exc), code=1)
+            if hinted is not None:
+                hinted_path, blob = hinted
+                render_content(blob, hinted_path)
+                return 0
+        readme_path, readme_summary = readme_rollup(
+            gh,
+            owner=owner,
+            repo=repo,
+            ref=ref,
+            entries=entries,
+            path=path,
+        )
+        emit_markdown(
+            markdown_directory(
                 owner=owner,
                 repo=repo,
                 ref=ref,
                 path=path,
                 entries=entries,
+                readme_path=readme_path,
+                readme_summary=readme_summary,
             )
-        except RuntimeError as exc:
-            return die(str(exc), code=1)
-        if readme is not None:
-            readme_path, blob = readme
-            render_content(blob, readme_path)
-            return 0
-        emit_markdown(markdown_directory(owner=owner, repo=repo, ref=ref, path=path, entries=entries))
+        )
         return 0
 
     if match := PULL_RE.match(url):
@@ -1799,19 +2274,6 @@ def main(argv: list[str]) -> int:
                 default_branch = str(default_branch_ref.get("name") or "")
             if default_branch:
                 try:
-                    readme = load_directory_readme(
-                        gh,
-                        owner=owner,
-                        repo=repo,
-                        ref=default_branch,
-                    )
-                except RuntimeError as exc:
-                    return die(str(exc), code=1)
-                if readme is not None:
-                    readme_path, blob = readme
-                    render_content(blob, readme_path)
-                    return 0
-                try:
                     entries = list_directory_entries(
                         gh,
                         owner=owner,
@@ -1821,13 +2283,39 @@ def main(argv: list[str]) -> int:
                     )
                 except RuntimeError as exc:
                     return die(str(exc), code=1)
+                if fragment:
+                    try:
+                        hinted = load_directory_fragment_file(
+                            gh,
+                            owner=owner,
+                            repo=repo,
+                            ref=default_branch,
+                            entries=entries,
+                            fragment=fragment,
+                        )
+                    except RuntimeError as exc:
+                        return die(str(exc), code=1)
+                    if hinted is not None:
+                        hinted_path, blob = hinted
+                        render_content(blob, hinted_path)
+                        return 0
+                readme_path, readme_summary = readme_rollup(
+                    gh,
+                    owner=owner,
+                    repo=repo,
+                    ref=default_branch,
+                    entries=entries,
+                    path="",
+                )
                 emit_markdown(
-                    markdown_directory(
+                    markdown_repo_directory(
+                        payload,
                         owner=owner,
                         repo=repo,
                         ref=default_branch,
-                        path="",
                         entries=entries,
+                        readme_path=readme_path,
+                        readme_summary=readme_summary,
                     )
                 )
                 return 0

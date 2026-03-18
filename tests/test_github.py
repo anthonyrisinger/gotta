@@ -71,6 +71,32 @@ def test_parse_args_supports_search_surface() -> None:
         repo="acme/widgets",
         limit=5,
     )
+    assert github.parse_args(
+        [
+            "search",
+            "--type",
+            "code",
+            "--repo",
+            "acme/widgets",
+            "--filename",
+            "package.json",
+            "--extension",
+            "json",
+            "--match",
+            "path",
+            "lint",
+        ]
+    ) == github.ParsedArgs(
+        command="search",
+        output="markdown",
+        query="lint",
+        search_type="code",
+        repo="acme/widgets",
+        filename="package.json",
+        extension="json",
+        match="path",
+        limit=10,
+    )
 
 
 def test_parse_args_supports_search_help(capsys) -> None:
@@ -99,6 +125,24 @@ def test_github_search_canonical_locator_and_preferred_name() -> None:
         github.preferred_name(["search", "--global", "ABC"], options)
         == "github-search-repos-global-abc.md"
     )
+    code_argv = [
+        "search",
+        "--type",
+        "code",
+        "--repo",
+        "acme/widgets",
+        "--filename",
+        "package.json",
+        "lint",
+    ]
+    assert (
+        github.canonical_locator(code_argv)
+        == "github:search --type code --repo acme/widgets --filename package.json lint"
+    )
+    assert (
+        github.preferred_name(code_argv, options)
+        == "github-search-code-acme-widgets-file-package.json-lint.md"
+    )
 
 
 def test_github_preferred_name_is_specific_for_rendered_object_urls() -> None:
@@ -126,14 +170,14 @@ def test_route_target_accepts_clean_supported_github_urls() -> None:
     url = "https://github.com/acme/widgets/commits/main"
 
     assert github.route_target(url) == [url]
-    assert github.route_target(f"{url}#history") == [url]
+    assert github.route_target(f"{url}#history") == [f"{url}#history"]
     assert github.route_target("github:github.com/acme/widgets/commits/main") == [url]
 
 
 def test_route_target_strips_fragments_from_supported_tree_urls() -> None:
     url = "https://github.com/acme/widgets/tree/main/docs"
 
-    assert github.route_target(f"{url}#readme") == [url]
+    assert github.route_target(f"{url}#readme") == [f"{url}#readme"]
 
 
 def test_route_target_rejects_whitespace_contaminated_github_urls() -> None:
@@ -433,6 +477,61 @@ def test_main_supports_pull_request_search(monkeypatch, capsys) -> None:
     assert "[acme/widgets pr #27: Replace ABC gateway](https://github.com/acme/widgets/pull/27)" in output
 
 
+def test_main_supports_code_search(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
+    monkeypatch.setattr(
+        github,
+        "search_code_payload",
+        lambda gh, **kwargs: {
+            "surface": "github",
+            "type": "code",
+            "query": "lint",
+            "scopeRepo": "acme/widgets",
+            "filename": "package.json",
+            "extension": "",
+            "language": "",
+            "match": "",
+            "searchPlan": "repo-scope",
+            "accessibleOwners": [],
+            "scopedResultCount": 0,
+            "globalResultCount": 1,
+            "resultCount": 1,
+            "results": [
+                {
+                    "kind": "code",
+                    "repository": "acme/widgets",
+                    "path": "package.json",
+                    "sha": "abcdef123456",
+                    "url": "https://github.com/acme/widgets/blob/abcdef123456/package.json",
+                    "textMatches": ['"lint": "npm run lint"'],
+                }
+            ],
+        },
+    )
+
+    assert (
+        github.main(
+            [
+                "search",
+                "--type",
+                "code",
+                "--repo",
+                "acme/widgets",
+                "--filename",
+                "package.json",
+                "lint",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "- _Type_: `code`" in output
+    assert "- _Filename_: `package.json`" in output
+    assert "[acme/widgets:package.json](https://github.com/acme/widgets/blob/abcdef123456/package.json)" in output
+    assert '"lint": "npm run lint"' in output
+
+
 def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
     monkeypatch.setattr(github, "_accessible_owner_targets", lambda gh: [("org", "acme")])
 
@@ -571,8 +670,107 @@ def test_main_repo_markdown_falls_back_to_directory_listing(monkeypatch, capsys)
 
     assert github.main(["--output", "markdown", "https://github.com/acme/widgets"]) == 0
     output = capsys.readouterr().out
+    assert "# widgets" in output
     assert "https://github.com/acme/widgets/tree/main" in output
-    assert "README.md" in output
+    assert "- **README:** [README.md](https://github.com/acme/widgets/blob/main/README.md)" in output
+
+
+def test_main_repo_markdown_uses_fragment_to_render_root_readme(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
+    monkeypatch.setattr(
+        github,
+        "gh_json_object",
+        lambda gh, args: {
+            "name": "widgets",
+            "visibility": "private",
+            "url": "https://github.com/acme/widgets",
+            "createdAt": "2026-03-01T10:00:00Z",
+            "updatedAt": "2026-03-10T11:30:00Z",
+            "pushedAt": "2026-03-11T09:15:00Z",
+            "defaultBranchRef": {"name": "main"},
+        },
+    )
+    monkeypatch.setattr(
+        github,
+        "list_directory_entries",
+        lambda gh, *, owner, repo, ref, path="": [
+            {"name": "README.md", "path": "README.md", "type": "file"},
+            {"name": "docs", "path": "docs", "type": "dir"},
+        ],
+    )
+    monkeypatch.setattr(
+        github,
+        "fetch_content_file",
+        lambda gh, *, owner, repo, ref, path: {
+            "type": "file",
+            "encoding": "base64",
+            "content": "IyBSb290IERvY3MK",
+        },
+    )
+    monkeypatch.setattr(
+        github,
+        "render_content",
+        lambda data, path: seen.update({"data": data, "path": path}),
+    )
+
+    assert github.main(["https://github.com/acme/widgets#readme"]) == 0
+    assert seen["path"] == "README.md"
+    assert seen["data"] == b"# Root Docs\n"
+
+
+def test_main_tree_markdown_defaults_to_directory_listing_even_with_readme(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
+    monkeypatch.setattr(
+        github,
+        "list_directory_entries",
+        lambda gh, *, owner, repo, ref, path="": [
+            {"name": "README.md", "path": "docs/README.md", "type": "file"},
+            {"name": "QUICKSTART.md", "path": "docs/QUICKSTART.md", "type": "file"},
+        ],
+    )
+
+    assert github.main(["https://github.com/acme/widgets/tree/main/docs"]) == 0
+    output = capsys.readouterr().out
+    assert "# acme/widgets:docs" in output
+    assert "- **README:** [README.md](https://github.com/acme/widgets/blob/main/docs/README.md)" in output
+    assert "QUICKSTART.md" in output
+
+
+def test_main_tree_markdown_uses_fragment_to_render_matching_document(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
+    monkeypatch.setattr(
+        github,
+        "list_directory_entries",
+        lambda gh, *, owner, repo, ref, path="": [
+            {"name": "README.md", "path": "docs/README.md", "type": "file"},
+            {"name": "QUICKSTART.md", "path": "docs/QUICKSTART.md", "type": "file"},
+        ],
+    )
+    monkeypatch.setattr(
+        github,
+        "fetch_content_file",
+        lambda gh, *, owner, repo, ref, path: {
+            "type": "file",
+            "encoding": "base64",
+            "content": "IyBRdWlja3N0YXJ0CgpVc2UgaXQgZmlyc3QuCg==",
+        },
+    )
+    monkeypatch.setattr(
+        github,
+        "render_content",
+        lambda data, path: seen.update({"data": data, "path": path}),
+    )
+
+    assert github.main(["https://github.com/acme/widgets/tree/main/docs#quickstart"]) == 0
+    assert seen["path"] == "docs/QUICKSTART.md"
+    assert seen["data"] == b"# Quickstart\n\nUse it first.\n"
 
 
 def test_markdown_repo_includes_source_times() -> None:

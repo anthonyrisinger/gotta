@@ -407,6 +407,15 @@ def test_read_uses_provider_normalized_fragmentless_url_for_routed_targets() -> 
     ]
 
 
+def test_read_preserves_github_fragment_hint_while_canonicalizing_identity() -> None:
+    resolved = target.resolve_read_target(["https://github.com/acme/widgets#readme"])
+
+    assert resolved.kind == "routed"
+    assert resolved.routed_plugin == "github"
+    assert resolved.routed_argv == ["https://github.com/acme/widgets#readme"]
+    assert resolved.canonical_locator == "https://github.com/acme/widgets"
+
+
 def test_read_delegates_github_commit_history_limit_after_target(monkeypatch) -> None:
     seen: list[tuple[str, list[str]]] = []
 

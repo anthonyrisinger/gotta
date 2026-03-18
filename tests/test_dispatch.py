@@ -912,13 +912,13 @@ def test_github_route_prefers_markdown_for_common_github_targets() -> None:
 
     assert route_target("https://github.com/acme/widgets") == ["https://github.com/acme/widgets"]
     assert route_target("https://github.com/acme/widgets#readme") == [
-        "https://github.com/acme/widgets"
+        "https://github.com/acme/widgets#readme"
     ]
     assert route_target("https://github.com/acme/widgets/tree/main/docs") == [
         "https://github.com/acme/widgets/tree/main/docs"
     ]
     assert route_target("https://github.com/acme/widgets/tree/main/docs#readme") == [
-        "https://github.com/acme/widgets/tree/main/docs"
+        "https://github.com/acme/widgets/tree/main/docs#readme"
     ]
     assert route_target("https://github.com/acme/widgets/pull/42") == [
         "https://github.com/acme/widgets/pull/42"
