@@ -296,6 +296,21 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
     )
     assert dispatch.canonical_locator("jira", ["search", "Architecture"]) == "jira:search Architecture"
     assert (
+        dispatch.canonical_locator("jira", ["issue-types", "--project", "OPS"])
+        == "jira:issue-types --project OPS"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "jira",
+            ["fields", "--project", "OPS", "--type", "Service Request"],
+        )
+        == "jira:fields --project OPS --type 'Service Request'"
+    )
+    assert (
+        dispatch.canonical_locator("jira", ["transitions", "OPS-42"])
+        == "jira:transitions OPS-42"
+    )
+    assert (
         dispatch.canonical_locator("confluence", ["search", "Architecture"])
         == "confluence:search Architecture"
     )
@@ -915,9 +930,29 @@ def test_github_route_prefers_markdown_for_common_github_targets() -> None:
 
 def test_canonical_locator_routes_are_followable_through_read_contract() -> None:
     assert plugin_api.get_plugin("jira").route_target("jira:PROJ-3960") == ["get", "PROJ-3960"]
+    assert plugin_api.get_plugin("jira").route_target("jira:status") == ["status"]
+    assert plugin_api.get_plugin("jira").route_target("jira:projects") == ["projects"]
     assert plugin_api.get_plugin("jira").route_target("jira:search Architecture") == [
         "search",
         "Architecture",
+    ]
+    assert plugin_api.get_plugin("jira").route_target("jira:issue-types --project OPS") == [
+        "issue-types",
+        "--project",
+        "OPS",
+    ]
+    assert plugin_api.get_plugin(
+        "jira"
+    ).route_target("jira:fields --project OPS --type 'Service Request'") == [
+        "fields",
+        "--project",
+        "OPS",
+        "--type",
+        "Service Request",
+    ]
+    assert plugin_api.get_plugin("jira").route_target("jira:transitions OPS-42") == [
+        "transitions",
+        "OPS-42",
     ]
     assert plugin_api.get_plugin("confluence").route_target("confluence:10101") == [
         "get",

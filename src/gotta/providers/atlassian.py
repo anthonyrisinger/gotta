@@ -470,9 +470,15 @@ def api_json(
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request) as response:
-            return json.load(response)
-    except json.JSONDecodeError as exc:
-        raise AtlassianError(f"{method} {url} returned invalid JSON: {exc}") from exc
+            if getattr(response, "status", None) in {204, 205}:
+                return {}
+            body = response.read()
+            if not body.strip():
+                return {}
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise AtlassianError(f"{method} {url} returned invalid JSON: {exc}") from exc
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise AtlassianError(f"{method} {url} failed with {exc.code}: {body}") from exc

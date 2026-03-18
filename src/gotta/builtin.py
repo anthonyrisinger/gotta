@@ -321,7 +321,7 @@ def github_plugin() -> PluginSpec:
 def jira_plugin() -> PluginSpec:
     return PluginSpec(
         name="jira",
-        description="fetch and search Jira issues through Atlassian OAuth",
+        description="discover, read, and author Jira issues through Atlassian OAuth",
         runner=_runner("gotta.plugins.jira"),
         route_target=_module_attr("gotta.plugins.jira", "route_target"),
         route_priority=30,

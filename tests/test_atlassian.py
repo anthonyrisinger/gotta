@@ -1089,6 +1089,450 @@ def test_jira_jql_shares_output_contract_with_search() -> None:
     assert args.output == "json"
 
 
+def test_atlassian_api_json_accepts_success_without_body(monkeypatch) -> None:
+    class FakeResponse:
+        status = 204
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b""
+
+    monkeypatch.setattr(atlassian.urllib.request, "urlopen", lambda request: FakeResponse())
+
+    assert atlassian.api_json("PUT", "https://example.invalid/api", "token", payload={"ok": True}) == {}
+
+
+def test_jira_write_surfaces_default_to_summary_preview() -> None:
+    create_args = jira.build_parser().parse_args(
+        ["create", "--project", "OPS", "--type", "Task", "--title", "Example"]
+    )
+    update_args = jira.build_parser().parse_args(["update", "OPS-1"])
+    comment_args = jira.build_parser().parse_args(["comment", "OPS-1"])
+    link_args = jira.build_parser().parse_args(["link", "OPS-1", "OPS-2"])
+    transition_args = jira.build_parser().parse_args(["transition", "OPS-1", "--to", "Done"])
+
+    assert create_args.output == "summary"
+    assert create_args.apply is False
+    assert update_args.output == "summary"
+    assert comment_args.output == "summary"
+    assert link_args.output == "summary"
+    assert transition_args.output == "summary"
+
+
+def test_jira_fields_create_discovery_renders_json(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_project",
+        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_issue_type",
+        lambda session, project_key, raw: {"id": "20000", "name": "Task"},
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_create_fields",
+        lambda session, project_key, issue_type_id: {
+            "summary": jira.normalize_field_metadata(
+                "summary",
+                {"name": "Summary", "required": True, "schema": {"type": "string"}},
+            )
+        },
+    )
+
+    assert (
+        jira.main(
+            [
+                "fields",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--project",
+                "OPS",
+                "--type",
+                "Task",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["context"] == "create OPS/Task"
+    assert payload["fields"]["summary"]["required"] is True
+
+
+def test_jira_create_preview_reports_missing_required_fields(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_project",
+        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_issue_type",
+        lambda session, project_key, raw: {"id": "20000", "name": "Task"},
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_create_fields",
+        lambda session, project_key, issue_type_id: {
+            "summary": jira.normalize_field_metadata(
+                "summary",
+                {"name": "Summary", "required": True, "schema": {"type": "string"}},
+            ),
+            "customfield_10000": jira.normalize_field_metadata(
+                "customfield_10000",
+                {"name": "Acceptance Criteria", "required": True, "schema": {"type": "string"}},
+            ),
+        },
+    )
+
+    assert (
+        jira.main(
+            [
+                "create",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--project",
+                "ops",
+                "--type",
+                "Task",
+                "--title",
+                "Service handoff",
+                "--body",
+                "## Scope\n\n- Phase 1",
+                "--priority",
+                "High",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["target"]["project"] == "OPS"
+    assert payload["target"]["issueType"] == "Task"
+    assert "Acceptance Criteria (customfield_10000)" in payload["missingRequiredFields"]
+    assert payload["fieldValues"]["project"] == {"key": "OPS"}
+    assert payload["fieldValues"]["priority"] == {"name": "High"}
+    assert payload["bodyMarkdown"] == "## Scope\n\n- Phase 1"
+
+
+def test_jira_create_apply_creates_issue_and_links(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    created_payloads: list[dict[str, object]] = []
+    issue_links: list[tuple[str, str, str]] = []
+    remote_links: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        jira,
+        "resolve_project",
+        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_issue_type",
+        lambda session, project_key, raw: {"id": "20000", "name": "Task"},
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_create_fields",
+        lambda session, project_key, issue_type_id: {
+            "summary": jira.normalize_field_metadata(
+                "summary",
+                {"name": "Summary", "required": True, "schema": {"type": "string"}},
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        jira,
+        "create_issue",
+        lambda session, *, payload_fields: created_payloads.append(payload_fields)
+        or {
+            "siteUrl": session.base_url,
+            "issueUrl": f"{session.base_url}/browse/OPS-101",
+            "id": "10101",
+            "key": "OPS-101",
+            "summary": payload_fields["summary"],
+            "status": {"name": "To Do"},
+            "issueType": {"name": "Task"},
+            "project": {"key": "OPS", "name": "Operations"},
+            "priority": payload_fields.get("priority"),
+            "assignee": None,
+            "reporter": None,
+            "labels": [],
+            "created": "2026-03-18T00:00:00Z",
+            "updated": "2026-03-18T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_link_type",
+        lambda base_url, raw: (session, {"id": "10", "name": "Relates"}),
+    )
+    monkeypatch.setattr(
+        jira,
+        "create_issue_link",
+        lambda session, *, source_issue, target_issue, link_type: issue_links.append(
+            (source_issue, target_issue, str(link_type.get("name") or ""))
+        ),
+    )
+    monkeypatch.setattr(
+        jira,
+        "create_remote_link",
+        lambda session, issue_key, *, payload: remote_links.append(
+            {"issue": issue_key, "payload": payload}
+        )
+        or {},
+    )
+
+    assert (
+        jira.main(
+            [
+                "create",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--project",
+                "OPS",
+                "--type",
+                "Task",
+                "--title",
+                "Service handoff",
+                "--body",
+                "Initial draft",
+                "--relates",
+                "OPS-2",
+                "--remote-link",
+                "https://example.invalid/request/42",
+                "--apply",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert created_payloads[0]["project"] == {"key": "OPS"}
+    assert issue_links == [("OPS-101", "OPS-2", "Relates")]
+    assert remote_links[0]["issue"] == "OPS-101"
+    assert remote_links[0]["payload"]["object"]["url"] == "https://example.invalid/request/42"
+    assert payload["issue"]["key"] == "OPS-101"
+
+
+def test_jira_update_preview_upserts_markdown_section(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: session,
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_edit_fields",
+        lambda issue_ref: (
+            session,
+            {
+                "summary": jira.normalize_field_metadata(
+                    "summary",
+                    {"name": "Summary", "required": False, "schema": {"type": "string"}},
+                )
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_issue",
+        lambda issue_ref, *, fields: {
+            "siteUrl": session.base_url,
+            "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+            "id": "9090",
+            "key": issue_ref.issue_key,
+            "summary": "Existing issue",
+            "status": {"name": "To Do"},
+            "issueType": {"name": "Task"},
+            "project": {"key": "OPS", "name": "Operations"},
+            "priority": None,
+            "assignee": None,
+            "reporter": None,
+            "labels": [],
+            "created": "2026-03-18T00:00:00Z",
+            "updated": "2026-03-18T00:00:00Z",
+            "descriptionAdf": jira.markdown_to_adf("## Existing\n\nKeep this section."),
+        },
+    )
+
+    assert (
+        jira.main(
+            [
+                "update",
+                "OPS-9",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--upsert-section",
+                "References",
+                "--body",
+                "- [Spec](https://example.invalid/spec)",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is True
+    assert "## Existing" in payload["bodyMarkdown"]
+    assert "## References" in payload["bodyMarkdown"]
+    assert "https://example.invalid/spec" in payload["bodyMarkdown"]
+    assert payload["fieldValues"]["description"]["type"] == "doc"
+
+
+def test_jira_comment_preview_renders_markdown_to_adf(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: session,
+    )
+
+    assert (
+        jira.main(
+            [
+                "comment",
+                "OPS-9",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--body",
+                "Need **follow-up** on [spec](https://example.invalid/spec).",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    paragraph = payload["payload"]["body"]["content"][0]
+    assert paragraph["type"] == "paragraph"
+    assert payload["bodyMarkdown"] == "Need **follow-up** on [spec](https://example.invalid/spec)."
+
+
+def test_jira_link_preview_supports_remote_links(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: session,
+    )
+
+    assert (
+        jira.main(
+            [
+                "link",
+                "OPS-9",
+                "https://example.invalid/request/42",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--relationship",
+                "tracks",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "link"
+    assert payload["remoteLinks"] == [
+        {"relationship": "tracks", "url": "https://example.invalid/request/42"}
+    ]
+    assert payload["payload"]["object"]["title"] == "https://example.invalid/request/42"
+
+
+def test_jira_transition_preview_reports_missing_required_fields(monkeypatch, capsys) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: session,
+    )
+    monkeypatch.setattr(
+        jira,
+        "resolve_transition",
+        lambda issue_ref, raw: (
+            session,
+            {
+                "id": "31",
+                "name": "Start Progress",
+                "fields": {
+                    "customfield_20000": jira.normalize_field_metadata(
+                        "customfield_20000",
+                        {
+                            "name": "Rollout plan",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        },
+                    )
+                },
+            },
+        ),
+    )
+
+    assert (
+        jira.main(
+            [
+                "transition",
+                "OPS-9",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--to",
+                "Start Progress",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["missingRequiredFields"] == ["Rollout plan (customfield_20000)"]
+
+
 def test_confluence_search_markdown_is_readable() -> None:
     rendered = confluence.render_search_markdown(
         {
