@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 
+from gotta.compat import UTC, datetime
 from gotta.content import load_state_env_at_root, write_text_atomic
 from gotta.projection import append_chunk, append_jsonl, read_jsonl_records
 

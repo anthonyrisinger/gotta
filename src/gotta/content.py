@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 import hashlib
 import io
 import json
@@ -16,6 +15,7 @@ import sys
 import tempfile
 from typing import Any
 
+from gotta.compat import UTC, datetime
 from gotta.config import user_data_dir
 
 SESSION_ENV = "GOTTA_SESSION_DIR"

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import re
 from typing import Any
+
+from gotta.compat import UTC, datetime
 
 
 _SLACK_WHOLE_TS_RE = re.compile(r"^\d{16}$")

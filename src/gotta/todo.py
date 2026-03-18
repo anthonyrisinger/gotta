@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from datetime import UTC, datetime
 import hashlib
 from pathlib import Path
 import uuid
 
+from gotta.compat import UTC, datetime
 from gotta.content import load_state_env_at_root, write_text_atomic
 from gotta.peer import PEER_SESSION_ACTOR_ENV
 from gotta.projection import append_jsonl, read_jsonl_records

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
+from gotta.compat import UTC, datetime
 from gotta.content import append_activity_event, write_text_atomic
 from gotta.projection import append_chunk, append_jsonl, read_jsonl_records
 

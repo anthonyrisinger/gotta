@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -11,6 +10,7 @@ import subprocess
 import threading
 from textwrap import dedent
 
+from gotta.compat import UTC, datetime
 from gotta.actors import ACTOR_SPEAKER_ENV, resolve_actor_context
 from gotta.content import load_state_env_at_root
 from gotta.helptext import format_long_help, is_long_help_request

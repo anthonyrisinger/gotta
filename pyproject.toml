@@ -7,10 +7,11 @@ name = "gotta"
 version = "0.3.0"
 description = "Session-rooted CLI for evidence retrieval, durable investigation state, and linked peer workflows"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [
     "platformdirs>=4.3",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 keywords = [
     "cli",
@@ -27,7 +28,11 @@ classifiers = [
     "Intended Audience :: Information Technology",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities",
 ]
@@ -78,4 +83,4 @@ namespaces = true
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py310"

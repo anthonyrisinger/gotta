@@ -13,13 +13,13 @@ import socketserver
 import sys
 import threading
 import time
-import tomllib
 from typing import Any
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 
+from gotta.compat import tomllib
 from gotta.config import (
     config_file_candidates,
     display_path,

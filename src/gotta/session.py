@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -16,6 +15,7 @@ from textwrap import dedent
 from typing import Callable
 import uuid
 
+from gotta.compat import UTC, datetime
 from gotta.content import (
     CONTENT_ENV,
     SESSION_ENV,

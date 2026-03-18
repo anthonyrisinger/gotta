@@ -8,7 +8,7 @@ If you do not already have `uv`, install it first from Astral's official
 [installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv sync --python 3.13 --extra dev
+uv sync --python 3.10 --extra dev
 ```
 
 ## Before You Open A Change
@@ -22,7 +22,7 @@ uv run python -m py_compile $(find src tests -name '*.py' -print)
 uv run python -m vulture src tests --min-confidence 80
 uv run python -m radon cc src tests -s
 uv run lizard src tests
-uv build --python 3.13 --clear
+uv build --python 3.10 --clear
 uvx twine check dist/*
 ```
 
@@ -30,7 +30,7 @@ If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts:
 
 ```bash
-uv build --python 3.13 --clear
+uv build --python 3.10 --clear
 uvx twine check dist/*
 uv publish --dry-run
 ```

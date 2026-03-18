@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
-from datetime import UTC, datetime
 import io
 import os
 from pathlib import Path
@@ -13,6 +12,7 @@ import sys
 import time
 import json
 
+from gotta.compat import UTC, datetime
 from gotta.actors import seed_primary_actor_context
 from gotta.dispatch import available_plugins, print_usage, run_plugin
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate

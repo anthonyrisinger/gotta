@@ -6,9 +6,10 @@ from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
-from platformdirs import PlatformDirs
-import tomllib
 from typing import Any
+from platformdirs import PlatformDirs
+
+from gotta.compat import tomllib
 
 
 APP_NAME = "gotta"

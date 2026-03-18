@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import UTC, datetime
 import hashlib
 import json
 import os
@@ -14,6 +13,7 @@ import shlex
 import urllib.parse
 import uuid
 
+from gotta.compat import UTC, datetime
 from gotta.content import (
     CONTEXT_ID_ENV,
     CONTEXT_SOURCE_ENV,

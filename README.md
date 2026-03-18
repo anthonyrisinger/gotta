@@ -56,12 +56,12 @@ If you want to try the CLI without installing it permanently:
 uvx --from gotta gotta --help
 ```
 
-`gotta` currently targets Python `>=3.13`.
+`gotta` currently supports Python `>=3.10`.
 
 If you are developing on the repo, sync a local uv-managed environment:
 
 ```bash
-uv sync --python 3.13 --extra dev
+uv sync --python 3.10 --extra dev
 ```
 
 Installed entrypoints:
@@ -86,7 +86,7 @@ Structural pressure tools are part of the maintenance discipline:
 ```bash
 uv run python -m radon cc src tests -s
 uv run lizard src tests
-uv build --python 3.13 --clear
+uv build --python 3.10 --clear
 uvx twine check dist/*
 ```
 
@@ -424,7 +424,7 @@ for the repository baseline.
 Build and validate artifacts with `uv`:
 
 ```bash
-uv build --python 3.13 --clear
+uv build --python 3.10 --clear
 uvx twine check dist/*
 uv publish --dry-run
 uv publish

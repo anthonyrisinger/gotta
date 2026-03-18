@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 
+from gotta.compat import UTC, datetime
 from gotta.actors import PRIMARY_ACTOR, resolve_actor_context
 from gotta.peer import (
     peer_session_root,

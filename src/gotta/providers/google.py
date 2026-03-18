@@ -15,9 +15,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
-import tomllib
 from typing import Any
 
+from gotta.compat import tomllib
 from gotta.config import (
     config_file_candidates,
     env_or_config,

@@ -35,7 +35,7 @@ class SlackError(RuntimeError):
 
 
 def _iso_now() -> str:
-    return dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt.datetime.now(tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _run_command(
