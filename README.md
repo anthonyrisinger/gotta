@@ -1,7 +1,13 @@
 # Gotta
 
-`gotta` is a session-rooted CLI for evidence retrieval, durable investigation
-state, and linked peer workflows.
+`gotta` is a session-rooted CLI for evidence acquisition, operational memory,
+durable continuity, and linked peer workflows.
+
+The point is broader than retrieving one more document. `gotta` is designed to
+keep agent work coherent when terminal history, model context windows, or human
+working memory come under pressure. It pushes enough state, provenance, and
+materialized evidence into durable external form. This lets an agent rehydrate
+prior work reliably and continue from grounded context.
 
 The public surface stays small:
 
@@ -10,31 +16,60 @@ gotta <plugin> ...
 ```
 
 `gotta ...` is the canonical operator path. It binds or discovers the right
-session for the current context, hydrates the runtime environment, and dispatches
-the requested plugin with that session active. You do not need to `cd` into the
-session root first.
+session for the current context, hydrates the runtime environment, and
+dispatches the requested plugin with that session active. You do not need to
+`cd` into the session root first.
+
+## Continuity Over Context Windows
+
+Agents work in waves. They pull a few strong anchors, expand into adjacent
+evidence, synthesize the resulting web, and then eventually hit compression
+pressure. Context windows compact. Terminal history scrolls away. Thin
+summaries preserve headlines but lose the path that made those headlines
+trustworthy.
+
+`gotta` is shaped around that boundary.
+
+It externalizes the parts of the working context that should survive:
+
+- the session itself as a durable working root
+- canonical task, log, and friction state
+- materialized evidence with native reopen handles
+- synthesis surfaces such as manifest, timeline, graph, leads, and analyze
+
+That is why `gotta` is session-rooted rather than request-rooted. A request is
+ephemeral. A session can be reopened, inspected, extended, handed off, or
+compacted and rehydrated without losing the shape of the work.
+
+The medium-term bet is equally deliberate: native CLI working surfaces remain
+one of the strongest places for serious agent work. They provide room to
+inspect, correlate, transform, act on, and resume real evidence. `gotta`
+leans into that by treating retrieval, memory, and action as part of the same
+working surface.
 
 ## Why It Is Shaped This Way
 
 `gotta` is deliberately native-first:
 
 - prefer provider-native retrieval and mutation surfaces over ad hoc shell
-  workarounds
+  fallbacks
 - keep durable truth in session state, not in terminal scrollback
 - make every material read reopenable through native locators
+- preserve enough provenance that compression leads to rehydration, not loss of
+  working context
 
-The normal investigation loop expands and compresses repeatedly:
+The normal working loop expands and compresses repeatedly:
 
 1. retrieve one or two strong anchors through provider-native search or read
-2. expand outward into adjacent evidence
+2. expand outward into adjacent evidence and materialize it into the session
 3. compress that evidence web through `session manifest`, `timeline`, `graph`,
    `leads`, and `analyze`
-4. record friction and broken affordances in `oops`
+4. record friction and continuity gaps in `oops`
 5. refine the next retrieval wave from durable state instead of memory
 
 `OOPS.md` is not incidental note-taking. `state/oops.jsonl` is the canonical
 friction log, projected into `OOPS.md`, and is meant to capture operator-visible
-seams: misleading contracts, broken continuations, coverage gaps, and workflow
+seams: misleading contracts, interrupted continuations, coverage gaps, and workflow
 friction worth fixing.
 
 ## Installation
@@ -144,7 +179,8 @@ Examples:
 - macOS: `~/Library/Application Support/gotta/sessions/<session-id>/`
 - Linux: `~/.local/share/gotta/sessions/<session-id>/`
 
-Session roots are context-derived, not mission-name-derived.
+Session roots are context-derived, not mission-name-derived. They are durable
+working sets for evidence, coordination, and resumption.
 
 Each session root owns:
 
@@ -175,6 +211,11 @@ The content store is first-class:
 - `manifest.jsonl` is the append-only invocation index
 - identical bytes land in the same content object
 - repeated fetches create additional timestamped evidence links
+
+This is the continuity boundary in concrete form: the session keeps enough of
+the working set externalized that later synthesis, follow-up research, or
+downstream actions can be rebuilt from durable state instead of a lossy memory
+of prior interactions.
 
 ## Retrieval And Materialization
 
@@ -207,6 +248,22 @@ evidence under that session.
 - canonical provider locators emitted by session surfaces
 - stored content rereads by artifact or digest
 
+This surface is broader than search. It is the acquisition layer for the
+session's evidence web. Slack threads, GitHub pages, Jira issues, Google docs,
+Confluence pages, and Granola notes all become reopenable session artifacts
+rather than transient terminal output.
+
+Granola extends that same model to personal notes and transcripts through the
+local desktop session and Granola's APIs, so meeting notes and transcripts
+participate in the same durable evidence graph as repository, ticket, and chat
+artifacts.
+
+Once that context is grounded, the same native surfaces can also support
+follow-on action. The goal is not only to recover information, but also to
+preserve enough working state that research, planning, and provider-native
+actions can
+happen against the same session context.
+
 ## Session Synthesis Surfaces
 
 `gotta session` is how the raw evidence web becomes navigable:
@@ -228,7 +285,7 @@ gotta session leads artifact:ticket.md@0123deadbeef
 gotta session analyze
 ```
 
-These surfaces intentionally compress the evidence web:
+These surfaces intentionally compress the evidence web without severing it:
 
 - `manifest` summarizes what has been materialized
 - `timeline` reconstructs chronology
@@ -239,6 +296,10 @@ These surfaces intentionally compress the evidence web:
 Before the first strong anchor, empty `manifest`, `graph`, `leads`, and
 `analyze` output is normal.
 
+After compaction pressure, these are the surfaces that make rehydration cheap.
+They preserve the shape of the work so the next pass starts from durable
+structure rather than a thin summary.
+
 ## Session Coordination
 
 Scaffold the active session in place, then rewrite the operator-owned charter
@@ -247,7 +308,7 @@ surfaces explicitly:
 ```bash
 gotta session init
 gotta want --stdin <<'EOF'
-Queue retry investigation.
+Queue retry context review.
 EOF
 gotta goal --stdin <<'EOF'
 Build the execution charter for the current session from live context.
@@ -273,7 +334,8 @@ Inside the session surface:
 - `state/todo.jsonl` is canonical and projects into `TODO.md`
 - `state/logs.jsonl` is canonical and projects into `LOGS.md`
 - `state/oops.jsonl` is canonical and projects into `OOPS.md`
-- peer lifecycle state, peer notes state, and the session evidence web carry shared coordination
+- peer lifecycle state, peer notes state, and the session evidence web carry
+  shared coordination
 
 This split is deliberate:
 
@@ -286,11 +348,11 @@ Examples:
 ```bash
 gotta session init
 gotta want --stdin <<'EOF'
-Queue retry investigation.
+Queue retry context review.
 EOF
 gotta goal --stdin <<'EOF'
-Investigate retry handling from the first strong source anchor and keep the
-charter current as evidence lands.
+Trace retry handling from the first strong source anchor and keep the charter
+current as evidence lands.
 EOF
 gotta todo append <<'EOF'
 Inspect duplicate materializations in `gotta session analyze`.
@@ -341,20 +403,24 @@ Important invariants:
 - peer evidence often lands in the shared manifest, timeline, and graph before
   notes fully catch up
 
+The important property is continuity under delegation. Peers can branch, gather
+evidence, and rejoin the shared working set without flattening everything into
+a single chat transcript.
+
 ## `oops` As Canonical Alignment
 
 `gotta oops` is a first-class operator surface, not an afterthought.
 
 Use it to record:
 
-- broken or misleading contracts
+- incomplete or misleading contracts
 - native surfaces that should have been followable but were not
-- provider coverage limits that materially shaped the investigation
-- workflow friction that forced unnatural detours
+- provider coverage limits that materially shaped the working path
+- workflow friction that forced avoidable detours
 
 The point is not merely bug tracking. The point is preserving operator-visible
 misalignment in canonical shared state so the tool can be refined from observed
-breakage rather than taste or memory.
+behavior rather than taste or memory.
 
 ## Plugin Architecture
 
@@ -412,6 +478,7 @@ The project is maintained with a few deliberate rules:
 - prefer tool-observable truth to conversational assumption
 - keep friction canonical in `oops`
 - treat complexity as measurable pressure, not just aesthetic discomfort
+- preserve session continuity and reopenable evidence paths
 
 If you contribute:
 
@@ -420,8 +487,7 @@ If you contribute:
 - preserve the native evidence-first workflow
 - prefer behavior-level cleanup over compatibility ballast
 
-See [CONTRIBUTING.md](CONTRIBUTING.md)
-for the repository baseline.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository baseline.
 
 ## Release
 

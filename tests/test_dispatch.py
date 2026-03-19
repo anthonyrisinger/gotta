@@ -605,7 +605,7 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
     captured = capsys.readouterr()
     output = captured.out + captured.err
     assert "# gotta" in output
-    assert "Investigative session surfaces live under `gotta session`" in output
+    assert "Session synthesis surfaces live under `gotta session`" in output
     assert "This top-level long help shows only plugin root surfaces." in output
     assert "Use `gotta <plugin> --help-all` for recursive help within one plugin." in output
     assert "## gotta ask" in output

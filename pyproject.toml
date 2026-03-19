@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gotta"
 version = "0.8.0"
-description = "Session-rooted CLI for evidence retrieval, durable investigation state, and linked peer workflows"
+description = "Session-rooted CLI for evidence acquisition, operational memory, durable continuity, and linked peer workflows"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -16,8 +16,9 @@ dependencies = [
 keywords = [
     "cli",
     "evidence",
-    "investigation",
-    "retrieval",
+    "acquisition",
+    "memory",
+    "continuity",
     "session",
     "workflow",
 ]

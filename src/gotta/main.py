@@ -97,7 +97,7 @@ def _gotta_main(argv: list[str]) -> int:
         print("Canonical operator path: `gotta ...`")
         print("")
         print(
-            "Investigative session surfaces live under `gotta session`: "
+            "Session synthesis surfaces live under `gotta session`: "
             "`manifest`, `timeline`, `graph`, `leads`, `analyze`"
         )
         print("")
