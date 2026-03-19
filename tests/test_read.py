@@ -460,6 +460,58 @@ def test_read_can_follow_canonical_search_locator(monkeypatch) -> None:
     assert seen == [("jira", ["search", "Architecture"])]
 
 
+def test_read_can_follow_canonical_granola_document_locator(monkeypatch) -> None:
+    seen: list[tuple[str, list[str]]] = []
+
+    def fake_delegate(plugin: str, argv: list[str]) -> int:
+        seen.append((plugin, argv))
+        return 0
+
+    monkeypatch.setattr(read, "delegate", fake_delegate)
+
+    assert read.main(["granola:11111111-1111-1111-1111-111111111111"]) == 0
+    assert seen == [("granola", ["get", "11111111-1111-1111-1111-111111111111"])]
+
+
+def test_read_can_follow_canonical_granola_search_locator(monkeypatch) -> None:
+    seen: list[tuple[str, list[str]]] = []
+
+    def fake_delegate(plugin: str, argv: list[str]) -> int:
+        seen.append((plugin, argv))
+        return 0
+
+    monkeypatch.setattr(read, "delegate", fake_delegate)
+
+    assert read.main(["granola:search --limit 5 latency"]) == 0
+    assert seen == [("granola", ["search", "--limit", "5", "latency"])]
+
+
+def test_read_can_follow_canonical_granola_transcript_search_locator(monkeypatch) -> None:
+    seen: list[tuple[str, list[str]]] = []
+
+    def fake_delegate(plugin: str, argv: list[str]) -> int:
+        seen.append((plugin, argv))
+        return 0
+
+    monkeypatch.setattr(read, "delegate", fake_delegate)
+
+    assert read.main(["granola:search-transcript --all latency"]) == 0
+    assert seen == [("granola", ["search-transcript", "--all", "latency"])]
+
+
+def test_read_can_follow_canonical_granola_transcript_locator(monkeypatch) -> None:
+    seen: list[tuple[str, list[str]]] = []
+
+    def fake_delegate(plugin: str, argv: list[str]) -> int:
+        seen.append((plugin, argv))
+        return 0
+
+    monkeypatch.setattr(read, "delegate", fake_delegate)
+
+    assert read.main(["granola:transcript 11111111-1111-1111-1111-111111111111"]) == 0
+    assert seen == [("granola", ["transcript", "11111111-1111-1111-1111-111111111111"])]
+
+
 def test_read_can_follow_canonical_search_locator_with_flags(monkeypatch) -> None:
     seen: list[tuple[str, list[str]]] = []
 

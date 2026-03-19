@@ -187,6 +187,9 @@ gotta github search "service ownership"
 gotta github https://github.com/org/repo/commits/HEAD
 gotta confluence search "queue architecture"
 gotta gdocs search "incident response"
+gotta granola list --time-range last_30_days --limit 5
+gotta granola transcript 11111111-1111-1111-1111-111111111111 --query latency
+gotta granola search-transcript latency --time-range last_30_days
 gotta slack workspaces
 gotta slack auth
 gotta slack search "handoff failure"
@@ -369,6 +372,7 @@ Core currently ships these top-level plugins:
 - `confluence`
 - `gdocs`
 - `gdrive`
+- `granola`
 - `github`
 - `gsheets`
 - `jira`

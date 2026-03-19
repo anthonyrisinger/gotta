@@ -282,6 +282,18 @@ def gdocs_plugin() -> PluginSpec:
     )
 
 
+def granola_plugin() -> PluginSpec:
+    return PluginSpec(
+        name="granola",
+        description="read personal Granola notes through the local desktop session",
+        runner=_runner("gotta.plugins.granola"),
+        route_target=_module_attr("gotta.plugins.granola", "route_target"),
+        route_priority=65,
+        canonical_locator=_module_attr("gotta.plugins.granola", "canonical_locator"),
+        preferred_name=_module_attr("gotta.plugins.granola", "preferred_name"),
+    )
+
+
 def gsheets_plugin() -> PluginSpec:
     return PluginSpec(
         name="gsheets",
@@ -349,6 +361,8 @@ def slack_plugin() -> PluginSpec:
         canonical_locator=_module_attr("gotta.plugins.slack", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.slack", "preferred_name"),
     )
+
+
 def _builtin_core_plugins() -> dict[str, PluginSpec]:
     factories = (
         ask_plugin,
@@ -356,6 +370,7 @@ def _builtin_core_plugins() -> dict[str, PluginSpec]:
         gdocs_plugin,
         gdrive_plugin,
         goal_plugin,
+        granola_plugin,
         github_plugin,
         gsheets_plugin,
         jira_plugin,

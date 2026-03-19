@@ -32,6 +32,7 @@ def test_derive_preferred_name_for_delegated_read_targets() -> None:
         "https://github.com/acme/widgets#readme": "widgets.md",
         "https://github.com/acme/widgets/commits/main": "widgets-commits-main.md",
         "https://github.com/acme/widgets/pull/19": "widgets-pr-19.md",
+        "granola:11111111-1111-1111-1111-111111111111": "11111111-1111-1111-1111-111111111111.md",
         "github:search --type pr --repo acme/widgets ABC": "github-search-prs-acme-widgets-abc.md",
         "https://example.atlassian.net/wiki/spaces/ENG/pages/10101/Platform+Architecture+Overview": "10101.md",
         "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=20202": "20202.md",
@@ -62,6 +63,18 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
     assert (
         dispatch.derive_preferred_name("gdrive", ["search", "ABC"], options)
         == "gdrive-search-abc.md"
+    )
+    assert (
+        dispatch.derive_preferred_name("granola", ["search", "ABC"], options)
+        == "granola-search-abc.md"
+    )
+    assert (
+        dispatch.derive_preferred_name(
+            "granola",
+            ["list", "--sort", "created", "--order", "asc", "--offset", "10"],
+            options,
+        )
+        == "granola-list-created-asc-offset-10.md"
     )
     assert (
         dispatch.derive_preferred_name("gsheets", ["search", "ABC"], options)
@@ -174,6 +187,34 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
             ["https://github.com/acme/widgets#readme"],
         )
         == "https://github.com/acme/widgets"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "granola",
+            ["get", "11111111-1111-1111-1111-111111111111"],
+        )
+        == "granola:11111111-1111-1111-1111-111111111111"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "granola",
+            ["get", "Weekly Review"],
+        )
+        == "granola:get 'Weekly Review'"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "granola",
+            ["search", "--limit", "5", "latency"],
+        )
+        == "granola:search --limit 5 latency"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "granola",
+            ["transcript", "Weekly Review", "--query", "latency"],
+        )
+        == "granola:transcript 'Weekly Review' --query latency"
     )
     assert (
         dispatch.canonical_locator(
@@ -943,6 +984,50 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
     assert plugin_api.get_plugin("jira").route_target("jira:PROJ-3960") == ["get", "PROJ-3960"]
     assert plugin_api.get_plugin("jira").route_target("jira:status") == ["status"]
     assert plugin_api.get_plugin("jira").route_target("jira:projects") == ["projects"]
+    assert plugin_api.get_plugin("granola").route_target("granola:status") == ["status"]
+    assert plugin_api.get_plugin("granola").route_target("granola:list --limit 5") == [
+        "list",
+        "--limit",
+        "5",
+    ]
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:list --sort created --order asc --offset 10 --limit 5"
+    ) == [
+        "list",
+        "--sort",
+        "created",
+        "--order",
+        "asc",
+        "--offset",
+        "10",
+        "--limit",
+        "5",
+    ]
+    assert plugin_api.get_plugin("granola").route_target("granola:search Architecture") == [
+        "search",
+        "Architecture",
+    ]
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:search --time-range last_30_days Architecture"
+    ) == [
+        "search",
+        "--time-range",
+        "last_30_days",
+        "Architecture",
+    ]
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:transcript 11111111-1111-1111-1111-111111111111"
+    ) == ["transcript", "11111111-1111-1111-1111-111111111111"]
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:search-transcript --all latency"
+    ) == ["search-transcript", "--all", "latency"]
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:11111111-1111-1111-1111-111111111111"
+    ) == ["get", "11111111-1111-1111-1111-111111111111"]
+    assert plugin_api.get_plugin("granola").route_target("granola:get 'Weekly Review'") == [
+        "get",
+        "Weekly Review",
+    ]
     assert plugin_api.get_plugin("jira").route_target("jira:search Architecture") == [
         "search",
         "Architecture",
@@ -966,6 +1051,13 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "--type",
         "Service Request",
     ]
+
+
+def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:search --after not-a-date latency"
+    ) is None
+    assert capsys.readouterr().err == ""
     assert plugin_api.get_plugin("jira").route_target("jira:transitions OPS-42") == [
         "transitions",
         "OPS-42",
