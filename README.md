@@ -251,8 +251,13 @@ gotta jira search "retry budget"
 gotta github search "service ownership"
 gotta github https://github.com/org/repo/commits/HEAD
 gotta grafana status
+gotta grafana datasources
+gotta grafana search --type dash-db
+gotta grafana search --type dash-db baseload
 gotta grafana search "production overview"
-gotta grafana cIBgcSjkk
+gotta grafana get demo-dashboard-uid
+gotta grafana query --dashboard demo-dashboard-uid 'sum(app_up)'
+gotta grafana query --datasource prom-main 'rate(http_requests_total[5m])'
 gotta confluence search "queue architecture"
 gotta gdocs search "incident response"
 gotta granola list --time-range last_30_days --limit 5

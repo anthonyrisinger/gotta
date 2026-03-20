@@ -26,7 +26,9 @@ def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert not dispatch.should_materialize("confluence", ["search", "abc"])
     assert not dispatch.should_materialize("gdocs", ["search", "abc"])
     assert not dispatch.should_materialize("gdrive", ["search", "abc"])
+    assert not dispatch.should_materialize("grafana", ["search", "--type", "dash-db"])
     assert not dispatch.should_materialize("grafana", ["search", "abc"])
+    assert not dispatch.should_materialize("grafana", ["query", "--datasource", "prom-main", "sum(up)"])
     assert not dispatch.should_materialize("granola", ["search", "abc"])
     assert not dispatch.should_materialize("gsheets", ["search", "abc"])
     assert not dispatch.should_materialize("github", ["search", "abc"])
@@ -117,10 +119,26 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
     assert (
         dispatch.derive_preferred_name(
             "grafana",
+            ["search", "--type", "dash-db", "prod"],
+            options,
+        )
+        == "grafana-search-dash-db-prod.md"
+    )
+    assert (
+        dispatch.derive_preferred_name(
+            "grafana",
             ["search", "Production Overview"],
             options,
         )
         == "grafana-search-production-overview.md"
+    )
+    assert (
+        dispatch.derive_preferred_name(
+            "grafana",
+            ["query", "--datasource", "prom-main", "sum(up)"],
+            options,
+        )
+        == "grafana-query-sum-up.summary"
     )
 
 
@@ -263,9 +281,9 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
     assert (
         dispatch.canonical_locator(
             "grafana",
-            ["get", "cIBgcSjkk"],
+            ["get", "demo-dashboard-uid"],
         )
-        == "grafana:cIBgcSjkk"
+        == "grafana:get demo-dashboard-uid"
     )
     assert (
         dispatch.canonical_locator(
@@ -1060,9 +1078,9 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("grafana").route_target("grafana:cIBgcSjkk") == [
+    assert plugin_api.get_plugin("grafana").route_target("grafana:get demo-dashboard-uid") == [
         "get",
-        "cIBgcSjkk",
+        "demo-dashboard-uid",
     ]
     assert plugin_api.get_plugin("jira").route_target("jira:search Architecture") == [
         "search",
