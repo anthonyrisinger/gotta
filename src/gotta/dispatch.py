@@ -12,6 +12,7 @@ import sys
 from typing import Any
 
 from gotta.content import (
+    ACTOR_ID_ENV,
     CONTENT_ENV,
     ContentError,
     CommonOptions,
@@ -377,7 +378,7 @@ def _materialize_invocation(
         return None
     materialize_plugin = resolved.resolved_plugin
     materialize_argv = resolved.resolved_argv
-    actor = os.environ.get("GOTTA_ACTOR_LABEL", "").strip() or session_identity(dirs.session_dir)
+    actor = os.environ.get(ACTOR_ID_ENV, "").strip() or session_identity(dirs.session_dir)
     metadata = {
         "tool": "gotta",
         "plugin": materialize_plugin,

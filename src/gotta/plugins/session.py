@@ -147,7 +147,6 @@ def build_parser() -> argparse.ArgumentParser:
         parser_.add_argument("--content-dir", help="explicit content directory override")
 
     bind.add_argument("session_id", nargs="?", help="shared session id")
-    bind.add_argument("--actor", help="actor to bind inside that session")
     bind.add_argument("--output", choices=["summary", "json", "path"], default="summary")
 
     init.add_argument(
@@ -255,7 +254,6 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_bind(args: argparse.Namespace) -> int:
     return binding_helpers.bind_current_context(
         session_ref=getattr(args, "session_id", None),
-        actor=getattr(args, "actor", None),
         output=getattr(args, "output", "summary"),
     )
 

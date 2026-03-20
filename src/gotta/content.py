@@ -31,6 +31,8 @@ CONTEXT_ACTIVE_ENV = "GOTTA_CONTEXT_ACTIVE"
 CONTEXT_ID_ENV = "GOTTA_CONTEXT_ID"
 CONTEXT_SOURCE_ENV = "GOTTA_CONTEXT_SOURCE"
 SESSION_INITIALIZED_ENV = "GOTTA_SESSION_INITIALIZED"
+ACTOR_ID_ENV = "GOTTA_ACTOR_ID"
+ACTOR_LABEL_ENV = "GOTTA_ACTOR_LABEL"
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -219,7 +221,7 @@ def context_bound_session_root() -> Path | None:
 
 def current_actor(*, default_actor: str = "") -> str:
     fallback = (
-        os.environ.get("GOTTA_ACTOR_LABEL", "").strip()
+        os.environ.get(ACTOR_ID_ENV, "").strip()
         or default_actor.strip()
         or os.environ.get(SESSION_ACTOR_ENV, "").strip()
         or session_token(current_context_binding()[0])
@@ -324,7 +326,11 @@ def write_session_state(
     dirs: ResolvedDirs,
     updates: dict[str, str] | None = None,
 ) -> Path:
-    existing = load_state_env_at_root(dirs.session_dir)
+    existing = {
+        key: value
+        for key, value in load_state_env_at_root(dirs.session_dir).items()
+        if key not in {SESSION_ACTIVATION_ENV, CONTEXT_ID_ENV, CONTEXT_SOURCE_ENV}
+    }
     current_session_id = session_id(dirs.session_dir)
     identity = session_identity(dirs.session_dir)
     merged = {
@@ -343,9 +349,6 @@ def write_session_state(
         SESSION_ACTOR_ENV,
         SESSION_REPO_ENV,
         SESSION_CREATED_ENV,
-        SESSION_ACTIVATION_ENV,
-        CONTEXT_ID_ENV,
-        CONTEXT_SOURCE_ENV,
         SESSION_INITIALIZED_ENV,
     ]
     extras = [key for key in merged if key not in ordered]
@@ -414,7 +417,8 @@ def resolve_session_reference(
 def bound_session_root(*, include_context_session: bool = True) -> Path | None:
     discovered = discover_state_env(include_context_session=include_context_session)
     identity_raw = (
-        os.environ.get(SESSION_ACTOR_ENV, "").strip()
+        os.environ.get(ACTOR_ID_ENV, "").strip()
+        or os.environ.get(SESSION_ACTOR_ENV, "").strip()
         or str(discovered.get(SESSION_ACTOR_ENV) or "").strip()
     )
     identity = (
@@ -474,6 +478,7 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
     )
     identity_raw = (
         options.actor
+        or os.environ.get(ACTOR_ID_ENV, "").strip()
         or os.environ.get(SESSION_ACTOR_ENV, "").strip()
         or discovered.get(SESSION_ACTOR_ENV, "").strip()
     )

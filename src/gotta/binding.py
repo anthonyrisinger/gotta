@@ -8,9 +8,6 @@ from pathlib import Path
 
 from gotta.content import (
     CONTENT_ENV,
-    CONTEXT_ID_ENV,
-    CONTEXT_SOURCE_ENV,
-    SESSION_ACTIVATION_ENV,
     SESSION_CREATED_ENV,
     SESSION_ACTOR_ENV,
     SESSION_ID_ENV,
@@ -71,6 +68,19 @@ def _update_session_metadata(session_dir: Path, *, session_id: str, actor: str) 
     payload.setdefault("created_at", iso_utc())
     payload["updated_at"] = iso_utc()
     payload["members"] = sorted(dict.fromkeys(normalized_members))
+    actors = payload.get("actors")
+    if not isinstance(actors, dict):
+        actors = {}
+    actors.setdefault(
+        actor,
+        {
+            "label": actor,
+            "model": session_plugin.ACTOR_DEFAULT_MODEL,
+            "resume_uuid": "",
+            "template": "",
+        },
+    )
+    payload["actors"] = actors
     metadata_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -104,10 +114,7 @@ def ensure_actor_session(
     write_session_state(
         dirs,
         {
-            CONTEXT_ID_ENV: context_id,
-            CONTEXT_SOURCE_ENV: context_source,
             SESSION_CREATED_ENV: str(state.get(SESSION_CREATED_ENV) or "") or iso_utc(),
-            SESSION_ACTIVATION_ENV: activation,
             SESSION_ID_ENV: current_session_id,
             SESSION_ACTOR_ENV: actor,
         },
@@ -156,13 +163,12 @@ def print_payload(payload: dict[str, str], *, output: str) -> int:
 def bind_current_context(
     *,
     session_ref: str | None,
-    actor: str | None,
     output: str,
 ) -> int:
     context_id, context_source = current_context_binding()
     binding_id = topology.normalize_identity(session_id_from_context(context_id))
     current_session_id = topology.normalize_session_id(session_ref or binding_id)
-    identity = topology.normalize_identity(actor or binding_id)
+    identity = binding_id
     root = topology.session_root_for(current_session_id, identity)
     root, _created = ensure_actor_session(
         root,

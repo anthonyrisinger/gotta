@@ -372,7 +372,7 @@ Each shared session now owns its evidence web directly and carries nested
 actor-local session areas beneath it.
 
 - shared session roots live at `sessions/<session-id>/`
-- actor-local session areas live at `sessions/<session-id>/actors/<actor>/`
+- actor-local session areas live at `sessions/<session-id>/actors/<actor-id>/`
 - the active fingerprint points at one actor-local root through
   `bindings/<fingerprint>`
 - shared evidence lives under `sessions/<session-id>/content/`
@@ -385,15 +385,16 @@ Examples:
 ```bash
 gotta session bind retry-review
 gotta actor bind Claude
-gotta want --actor claude --stdin <<'EOF'
+ACTOR=<bound-actor-id>
+gotta want --actor "$ACTOR" --stdin <<'EOF'
 Trace retry ownership from the first strong source anchor.
 EOF
-gotta goal --actor claude --stdin <<'EOF'
+gotta goal --actor "$ACTOR" --stdin <<'EOF'
 Materialize the actor-local evidence contract before launch.
 EOF
-gotta actor launch Claude
-gotta notes show --actor claude
-gotta todo extend --actor claude <<'EOF'
+gotta actor launch "$ACTOR"
+gotta notes show --actor "$ACTOR"
+gotta todo extend --actor "$ACTOR" <<'EOF'
 - Compare retry behavior across the earliest design docs.
 EOF
 ```

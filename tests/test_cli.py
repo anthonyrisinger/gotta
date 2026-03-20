@@ -11,6 +11,7 @@ from gotta import builtin
 from gotta import content
 from gotta import main as cli
 from gotta.actor import SESSION_ACTOR_ENV
+from gotta import session as sessionlib
 from gotta.plugins import jira
 
 
@@ -22,6 +23,10 @@ def _set_default_session_root(monkeypatch, root: Path) -> None:
 def _grouped_root(registry: Path, context_id: str, *, identity: str | None = None) -> Path:
     fingerprint = cli._session_token(context_id)
     return registry / fingerprint / "actors" / (identity or fingerprint)
+
+
+def _actor_id(shared_root: Path, actor_ref: str) -> str:
+    return sessionlib._resolve_bound_actor_name(shared_root, actor_ref)
 
 
 def test_main_rejects_unknown_plugin(capsys) -> None:
@@ -242,13 +247,14 @@ def test_main_cross_actor_note_append_preserves_acting_actor(
     capsys.readouterr()
 
     fingerprint = cli._session_token("thread-123")
-    claude_root = registry / "demo" / "actors" / "claude"
+    claude = _actor_id(registry / "demo", "claude")
+    claude_root = registry / "demo" / "actors" / claude
     notes_records = [
         json.loads(line)
         for line in (claude_root / "state" / "notes.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert notes_records[-1]["actor"] == "claude"
+    assert notes_records[-1]["actor"] == claude
     assert notes_records[-1]["author"] == fingerprint
 
     activity_records = [
@@ -258,7 +264,37 @@ def test_main_cross_actor_note_append_preserves_acting_actor(
     ]
     assert activity_records[-1]["action"] == "append"
     assert activity_records[-1]["actor"] == fingerprint
-    assert activity_records[-1]["target_actor"] == "claude"
+    assert activity_records[-1]["target_actor"] == claude
+
+
+def test_main_actor_status_prefers_sourced_session_env_over_implicit_context_ids(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Claude"]) == 0
+    capsys.readouterr()
+
+    shared_root = registry / "demo"
+    claude = _actor_id(shared_root, "claude")
+    actor_root = shared_root / "actors" / claude
+    state = content.load_state_env_at_root(actor_root)
+    for key, value in state.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CODEX_THREAD_ID", "conflict-thread")
+    monkeypatch.setenv("TERM_SESSION_ID", "terminal-conflict")
+
+    assert cli.main(["actor", "status", "--output", "json"]) == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert "created a new gotta session" not in captured.err
+    assert claude in payload
+    assert not (registry / cli._session_token("conflict-thread")).exists()
 
 
 def test_main_failed_session_init_seed_does_not_leave_half_session(
@@ -308,6 +344,7 @@ def test_main_explicit_actor_target_resolves_grouped_session(
     registry = tmp_path / "session"
     _set_default_session_root(monkeypatch, registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    claude = "aaaaaaaaaaaa"
 
     parent_root = _grouped_root(registry, "thread-123")
     parent_dirs = content.ResolvedDirs(
@@ -324,20 +361,45 @@ def test_main_explicit_actor_target_resolves_grouped_session(
     )
     parent_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
 
-    actor_root = registry / cli._session_token("thread-123") / "actors" / "claude"
+    shared_root = registry / cli._session_token("thread-123")
+    actor_root = shared_root / "actors" / claude
     actor_dirs = content.ResolvedDirs(
         session_dir=actor_root,
-        content_dir=registry / cli._session_token("thread-123") / "content",
+        content_dir=shared_root / "content",
     )
     actor_dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_session_state(
         actor_dirs,
         {
             content.SESSION_ID_ENV: cli._session_token("thread-123"),
-            content.SESSION_ACTOR_ENV: "claude",
+            content.SESSION_ACTOR_ENV: claude,
         },
     )
     actor_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
+    shared_root.joinpath("session.json").write_text(
+        json.dumps(
+            {
+                "session_id": cli._session_token("thread-123"),
+                "members": [cli._session_token("thread-123"), claude],
+                "actors": {
+                    cli._session_token("thread-123"): {
+                        "label": cli._session_token("thread-123"),
+                        "model": "gpt-5.3-codex",
+                        "resume_uuid": "",
+                        "template": "",
+                    },
+                    claude: {
+                        "label": "Claude",
+                        "model": "claude-sonnet-4.6",
+                        "resume_uuid": "",
+                        "template": "claude",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     assert cli.main(["session", "show", "--actor", "claude"]) == 0
     assert capsys.readouterr().out.strip() == str(actor_root.resolve())
@@ -350,11 +412,11 @@ def test_main_resolves_absolute_shared_session_root_to_active_identity(
     _set_default_session_root(monkeypatch, registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["session", "bind", "retry-review", "--actor", "claude"]) == 0
+    assert cli.main(["session", "bind", "retry-review"]) == 0
     capsys.readouterr()
 
     shared_root = registry / "retry-review"
-    expected_root = shared_root / "actors" / "claude"
+    expected_root = shared_root / "actors" / cli._session_token("thread-123")
 
     assert cli.main(["session", "show", "--session", str(shared_root)]) == 0
 

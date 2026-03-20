@@ -33,6 +33,7 @@ from gotta.content import (
     session_is_initialized,
     session_relative_path,
     session_shared_id,
+    session_token,
     sh_quote,
     shared_session_root,
     state_dir_path,
@@ -49,6 +50,7 @@ from gotta.notes import (
     actor_notes_surface_path,
     sync_actor_notes_projection,
 )
+from gotta import topology
 from gotta.actor import (
     normalize_actor_name as _shared_normalize_actor_name,
     session_actor,
@@ -155,12 +157,17 @@ def _session_dir(
 ) -> Path:
     current = _current_session_dir(
         explicit_session,
-        explicit_actor=explicit_actor,
+        explicit_actor=None,
     )
     if current is None:
         raise SystemExit(
             "start or bind a session first with `gotta ...` or bootstrap one "
             "manually with `gotta session init --session \"$WS\"`"
+        )
+    if explicit_actor:
+        current = _actor_session_dir(
+            current,
+            _resolve_bound_actor_name(current, explicit_actor),
         )
     if not session_is_initialized(current):
         raise SystemExit(
@@ -339,6 +346,9 @@ ACTOR_ALIASES = {
     for actor in DEFAULT_ACTORS
     for alias in (actor.actor_id, *actor.aliases)
 }
+ACTOR_DEFAULT_MODEL = ACTOR_INDEX["codex"].default_model
+SESSION_ACTORS_METADATA_KEY = "actors"
+SESSION_MEMBERS_METADATA_KEY = "members"
 
 
 def _join_labels(labels: tuple[str, ...], joiner: str, *, code: bool = False) -> str:
@@ -370,12 +380,30 @@ def _actor_charter_command(actor_name: str, surface: str, *, mode: str = "--stdi
     return f"gotta {surface} --actor {_actor_session_ref(actor_name)} {mode}"
 
 
+def _actor_is_fingerprint(value: str) -> bool:
+    normalized = topology.normalize_identity(value)
+    return len(normalized) == 12 and all(ch in "0123456789abcdef" for ch in normalized)
+
+
+def _actor_template_spec(value: str) -> ActorSpec | None:
+    normalized = _shared_normalize_actor_name(value)
+    if not normalized:
+        return None
+    template_id = ACTOR_ALIASES.get(normalized)
+    if template_id is None:
+        for spec in DEFAULT_ACTORS:
+            if _shared_normalize_actor_name(spec.label) == normalized:
+                template_id = spec.actor_id
+                break
+    if template_id is None:
+        return None
+    return ACTOR_INDEX.get(template_id)
+
+
 def _resolve_actor_name(value: str, *, kind: str = "actor") -> str:
     normalized = _shared_normalize_actor_name(value)
     if not normalized:
         raise SystemExit(f"missing {kind}")
-    if normalized in ACTOR_ALIASES:
-        return ACTOR_ALIASES[normalized]
     return normalized
 
 
@@ -383,21 +411,21 @@ def _normalize_actor_name(value: str) -> str:
     return _resolve_actor_name(value, kind="actor")
 
 
-def _actor_label(actor_name: str) -> str:
+def _actor_label(actor_name: str, *, work_dir: Path | None = None) -> str:
     normalized = _normalize_actor_name(actor_name)
-    spec = ACTOR_INDEX.get(normalized)
-    return spec.label if spec is not None else normalized.replace("-", " ").title()
+    if work_dir is not None:
+        payload = _actor_registry(work_dir).get(normalized)
+        label = str(payload.get("label") or "").strip() if payload is not None else ""
+        if label:
+            return label
+    spec = _actor_template_spec(normalized)
+    if spec is not None:
+        return spec.label
+    return normalized.replace("-", " ").title()
 
 
 def _default_actor_registry() -> dict[str, dict[str, str]]:
-    return {
-        actor.actor_id: {
-            "label": actor.label,
-            "model": actor.default_model,
-            "resume_uuid": "",
-        }
-        for actor in DEFAULT_ACTORS
-    }
+    return {}
 
 
 def _actor_registry_from_state(state: dict[str, str]) -> dict[str, dict[str, str]]:
@@ -414,7 +442,7 @@ def _actor_registry_from_state(state: dict[str, str]) -> dict[str, dict[str, str
             normalized = _resolve_actor_name(str(actor_id))
             if not isinstance(actor_payload, dict):
                 raise SystemExit(f"invalid actor registry payload for {normalized}")
-            spec = ACTOR_INDEX.get(normalized)
+            spec = _actor_template_spec(str(actor_payload.get("template") or normalized))
             registry[normalized] = {
                 "label": str(
                     actor_payload.get("label")
@@ -422,17 +450,16 @@ def _actor_registry_from_state(state: dict[str, str]) -> dict[str, dict[str, str
                 ),
                 "model": str(
                     actor_payload.get("model")
-                    or (spec.default_model if spec else "")
+                    or (spec.default_model if spec else ACTOR_DEFAULT_MODEL)
                 ).strip(),
                 "resume_uuid": str(actor_payload.get("resume_uuid") or "").strip(),
+                "template": str(actor_payload.get("template") or (spec.actor_id if spec else "")).strip(),
             }
     for actor_id, actor_payload in registry.items():
-        spec = ACTOR_INDEX.get(actor_id)
+        spec = _actor_template_spec(str(actor_payload.get("template") or actor_id))
         if spec is not None:
             actor_payload["label"] = actor_payload.get("label") or spec.label
             actor_payload["model"] = actor_payload.get("model") or spec.default_model
-        if not actor_payload.get("resume_uuid"):
-            actor_payload["resume_uuid"] = str(uuid.uuid4()).lower()
     return registry
 
 
@@ -448,6 +475,7 @@ def _actor_registry_json(registry: dict[str, dict[str, str]]) -> str:
             ),
             "model": str(payload.get("model") or ""),
             "resume_uuid": str(payload.get("resume_uuid") or ""),
+            "template": str(payload.get("template") or ""),
         }
         for actor_id, payload in registry.items()
     }
@@ -456,6 +484,191 @@ def _actor_registry_json(registry: dict[str, dict[str, str]]) -> str:
 
 def _actor_ids_for_state(state: dict[str, str]) -> tuple[str, ...]:
     return tuple(_actor_registry_from_state(state))
+
+
+def _session_metadata_path(work_dir: Path) -> Path:
+    return shared_session_root(session_shared_id(work_dir)) / "session.json"
+
+
+def _load_session_metadata(work_dir: Path) -> dict[str, object]:
+    path = _session_metadata_path(work_dir)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid session metadata: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"invalid session metadata: {path}")
+    return payload
+
+
+def _write_session_metadata(work_dir: Path, payload: dict[str, object]) -> None:
+    path = _session_metadata_path(work_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned = dict(payload)
+    cleaned["session_id"] = session_shared_id(work_dir)
+    cleaned.setdefault("created_at", datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    cleaned["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    path.write_text(json.dumps(cleaned, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _actor_registry_from_metadata(work_dir: Path) -> dict[str, dict[str, str]]:
+    payload = _load_session_metadata(work_dir)
+    registry: dict[str, dict[str, str]] = {}
+    raw_actors = payload.get(SESSION_ACTORS_METADATA_KEY)
+    if isinstance(raw_actors, dict):
+        for actor_id, actor_payload in raw_actors.items():
+            normalized = topology.normalize_identity(str(actor_id))
+            if not normalized or topology.is_placeholder_identity(normalized):
+                continue
+            if not isinstance(actor_payload, dict):
+                raise SystemExit(f"invalid session actor payload for {normalized}")
+            spec = _actor_template_spec(str(actor_payload.get("template") or ""))
+            registry[normalized] = {
+                "label": str(actor_payload.get("label") or (spec.label if spec else normalized)).strip() or normalized,
+                "model": str(actor_payload.get("model") or (spec.default_model if spec else ACTOR_DEFAULT_MODEL)).strip(),
+                "resume_uuid": str(actor_payload.get("resume_uuid") or "").strip(),
+                "template": str(actor_payload.get("template") or (spec.actor_id if spec else "")).strip(),
+            }
+    raw_members = payload.get(SESSION_MEMBERS_METADATA_KEY)
+    if isinstance(raw_members, list):
+        for actor_id in raw_members:
+            normalized = topology.normalize_identity(str(actor_id))
+            if not normalized or topology.is_placeholder_identity(normalized):
+                continue
+            registry.setdefault(
+                normalized,
+                {
+                    "label": normalized,
+                    "model": ACTOR_DEFAULT_MODEL,
+                    "resume_uuid": "",
+                    "template": "",
+                },
+            )
+    return registry
+
+
+def _discovered_actor_registry(work_dir: Path) -> dict[str, dict[str, str]]:
+    resolved = work_dir.resolve()
+    actors_dir = resolved / "actors"
+    if not actors_dir.is_dir():
+        actors_dir = shared_session_root(session_shared_id(work_dir)) / "actors"
+    registry: dict[str, dict[str, str]] = {}
+    if not actors_dir.is_dir():
+        return registry
+    for actor_dir in sorted(actors_dir.iterdir()):
+        if not actor_dir.is_dir():
+            continue
+        actor_id = topology.normalize_identity(actor_dir.name)
+        if not _actor_is_fingerprint(actor_id) or topology.is_placeholder_identity(actor_id):
+            continue
+        if not session_is_initialized(actor_dir.resolve()):
+            continue
+        registry[actor_id] = {
+            "label": actor_id,
+            "model": ACTOR_DEFAULT_MODEL,
+            "resume_uuid": "",
+            "template": "",
+        }
+    return registry
+
+
+def _actor_registry(work_dir: Path) -> dict[str, dict[str, str]]:
+    registry = _actor_registry_from_metadata(work_dir)
+    discovered_registry = _discovered_actor_registry(work_dir)
+    if registry:
+        for actor_id, payload in discovered_registry.items():
+            registry.setdefault(actor_id, payload)
+        return registry
+    if discovered_registry:
+        return discovered_registry
+    state_registry = _actor_registry_from_state(_load_session_state(work_dir))
+    if state_registry:
+        return state_registry
+    if topology.parse_grouped_session_root(work_dir) is not None:
+        current = session_identity(work_dir)
+    else:
+        current = ""
+    if current and not topology.is_placeholder_identity(current):
+        return {
+            current: {
+                "label": current,
+                "model": ACTOR_DEFAULT_MODEL,
+                "resume_uuid": "",
+                "template": "",
+            }
+        }
+    return {}
+
+
+def _store_actor_registry(work_dir: Path, registry: dict[str, dict[str, str]]) -> None:
+    metadata = _load_session_metadata(work_dir)
+    metadata[SESSION_MEMBERS_METADATA_KEY] = sorted(registry)
+    metadata[SESSION_ACTORS_METADATA_KEY] = {
+        actor_id: {
+            "label": str(payload.get("label") or actor_id),
+            "model": str(payload.get("model") or ACTOR_DEFAULT_MODEL),
+            "resume_uuid": str(payload.get("resume_uuid") or ""),
+            "template": str(payload.get("template") or ""),
+        }
+        for actor_id, payload in sorted(registry.items())
+    }
+    _write_session_metadata(work_dir, metadata)
+
+
+def _resolve_bound_actor_name(work_dir: Path, actor_ref: str, *, kind: str = "actor") -> str:
+    normalized = _normalize_actor_name(actor_ref)
+    if not normalized:
+        raise SystemExit(f"missing {kind}")
+    registry = _actor_registry(work_dir)
+    if normalized in registry:
+        return normalized
+    for actor_id, payload in registry.items():
+        label = _shared_normalize_actor_name(str(payload.get("label") or ""))
+        if label and label == normalized:
+            return actor_id
+    raise SystemExit(
+        f"{normalized} is not bound for this session; bind them first with "
+        f"`gotta actor bind {actor_ref}`"
+    )
+
+
+def _new_actor_identity(registry: dict[str, dict[str, str]], *, seed: str = "") -> str:
+    candidate = topology.normalize_identity(seed) if seed else ""
+    if candidate and _actor_is_fingerprint(candidate) and candidate not in registry:
+        return candidate
+    while True:
+        candidate = session_token(str(uuid.uuid4()).lower())
+        if candidate not in registry:
+            return candidate
+
+
+def _bind_actor_identity(session_root: Path, actor_ref: str) -> tuple[str, bool]:
+    registry = _actor_registry(session_root)
+    normalized = _normalize_actor_name(actor_ref)
+    if normalized in registry:
+        return normalized, False
+    for actor_id, payload in registry.items():
+        label = _shared_normalize_actor_name(str(payload.get("label") or ""))
+        if label and label == normalized:
+            return actor_id, False
+    template = _actor_template_spec(actor_ref)
+    label = template.label if template is not None else actor_ref.strip() or normalized
+    model = template.default_model if template is not None else ACTOR_DEFAULT_MODEL
+    resume_uuid = str(uuid.uuid4()).lower()
+    actor_id = _new_actor_identity(
+        registry,
+        seed=normalized if _actor_is_fingerprint(normalized) else "",
+    )
+    registry[actor_id] = {
+        "label": label,
+        "model": model,
+        "resume_uuid": resume_uuid,
+        "template": template.actor_id if template is not None else "",
+    }
+    _store_actor_registry(session_root, registry)
+    return actor_id, True
 
 
 def _actor_dir_path(work_dir: Path, actor_name: str) -> Path:
@@ -500,18 +713,23 @@ def _actor_is_selected(work_dir: Path, actor_name: str) -> bool:
 
 
 def _read_actor_state(work_dir: Path, actor_name: str) -> dict[str, object]:
-    normalized = _normalize_actor_name(actor_name)
+    registry = _actor_registry(work_dir)
+    normalized = (
+        _resolve_bound_actor_name(work_dir, actor_name)
+        if registry
+        else _normalize_actor_name(actor_name)
+    )
     if not _actor_is_selected(work_dir, normalized):
         return {
             "actor": normalized,
-            "label": _actor_label(normalized),
+            "label": _actor_label(normalized, work_dir=work_dir),
             "status": "pending",
         }
     path = _actor_state_path(work_dir, normalized)
     if not path.exists():
         return {
             "actor": normalized,
-            "label": _actor_label(normalized),
+            "label": _actor_label(normalized, work_dir=work_dir),
             "status": "pending",
         }
     try:
@@ -521,7 +739,7 @@ def _read_actor_state(work_dir: Path, actor_name: str) -> dict[str, object]:
     if not isinstance(data, dict):
         raise SystemExit(f"invalid actor state file: {path}")
     data.setdefault("actor", normalized)
-    data.setdefault("label", _actor_label(normalized))
+    data.setdefault("label", _actor_label(normalized, work_dir=work_dir))
     data["status"] = _normalize_actor_status(data.get("status") or "pending")
     return data
 
@@ -531,7 +749,11 @@ def _write_actor_state(
     actor_name: str,
     payload: dict[str, object],
 ) -> Path:
-    normalized = _normalize_actor_name(actor_name)
+    normalized = (
+        _resolve_bound_actor_name(work_dir, actor_name)
+        if _actor_registry(work_dir)
+        else _normalize_actor_name(actor_name)
+    )
     state_dir = _actor_state_link_root(work_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     path = _actor_state_path(work_dir, normalized)
@@ -543,7 +765,7 @@ def _write_actor_state(
             continue
         merged[key] = value
     merged["actor"] = normalized
-    merged["label"] = _actor_label(normalized)
+    merged["label"] = _actor_label(normalized, work_dir=work_dir)
     merged["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     status = _normalize_actor_status(merged.get("status") or "pending")
     merged["status"] = status
@@ -577,8 +799,8 @@ def _bootstrap_want() -> str:
     )
 
 
-def _bootstrap_actor_want(*, label: str) -> str:
-    actor_name = _normalize_actor_name(label)
+def _bootstrap_actor_want(*, actor_name: str, label: str) -> str:
+    actor_name = _normalize_actor_name(actor_name)
     return _finish(
         f"""
         # Actor Want Placeholder
@@ -653,8 +875,8 @@ def _bootstrap_goal(
     )
 
 
-def _bootstrap_actor_goal(*, label: str, actor_dir: Path, work_dir: Path) -> str:
-    actor_name = _normalize_actor_name(label)
+def _bootstrap_actor_goal(*, actor_name: str, label: str, actor_dir: Path, work_dir: Path) -> str:
+    actor_name = _normalize_actor_name(actor_name)
     return _finish(
         f"""
         # Seed Actor Goal Placeholder
@@ -698,8 +920,8 @@ def _seed_file(path: Path, content: str) -> None:
         path.write_text(content, encoding="utf-8")
 
 
-def _actor_readme(label: str) -> str:
-    actor_name = _normalize_actor_name(label)
+def _actor_readme(actor_name: str, label: str) -> str:
+    actor_name = _normalize_actor_name(actor_name)
     return dedent(
         f"""\
         # {label} Session
@@ -738,16 +960,21 @@ def _actor_readme(label: str) -> str:
 
 def _seed_actor_surface(
     actor_dir: Path,
+    actor_name: str,
     label: str,
     *,
     work_dir: Path,
 ) -> None:
     actor_dir.mkdir(parents=True, exist_ok=True)
-    _seed_file(actor_dir / "README.md", _actor_readme(label))
-    _seed_file(actor_dir / WANT_FILE, _bootstrap_actor_want(label=label))
+    _seed_file(actor_dir / "README.md", _actor_readme(actor_name, label))
+    _seed_file(
+        actor_dir / WANT_FILE,
+        _bootstrap_actor_want(actor_name=actor_name, label=label),
+    )
     _seed_file(
         actor_dir / "GOAL.md",
         _bootstrap_actor_goal(
+            actor_name=actor_name,
             label=label,
             actor_dir=actor_dir,
             work_dir=work_dir,
@@ -883,7 +1110,7 @@ def _managed_todo_redirect(managed_key: str) -> str:
 
 
 def _selected_actor_ids(work_dir: Path) -> tuple[str, ...]:
-    registry = _actor_registry_from_state(_load_session_state(work_dir))
+    registry = _actor_registry(work_dir)
     selected: list[str] = []
     for actor_id in registry:
         if _actor_is_selected(work_dir, actor_id):
@@ -1042,7 +1269,7 @@ def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
             repo_path = _default_repo().resolve()
         except (subprocess.CalledProcessError, FileNotFoundError):
             repo_path = None
-    actors = _actor_registry_from_state(current)
+    actors = _actor_registry(session_dir)
     created_at = current.get(SESSION_CREATED_ENV) or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     home = Path.home()
     agents_src = _find_upward_file(repo_path, "AGENTS.md") if repo_path else None
@@ -1277,7 +1504,10 @@ def _actor_want_rewrite_pending(work_root: Path, actor_name: str) -> bool:
     if not path.is_file():
         return True
     current = path.read_text(encoding="utf-8").strip()
-    return current == _bootstrap_actor_want(label=_actor_label(actor_name)).strip()
+    return current == _bootstrap_actor_want(
+        actor_name=actor_name,
+        label=_actor_label(actor_name, work_dir=work_root),
+    ).strip()
 
 
 def _actor_goal_rewrite_pending(work_root: Path, actor_name: str) -> bool:
@@ -1285,7 +1515,8 @@ def _actor_goal_rewrite_pending(work_root: Path, actor_name: str) -> bool:
     if not path.is_file():
         return True
     return path.read_text(encoding="utf-8").strip() == _bootstrap_actor_goal(
-        label=_actor_label(actor_name),
+        actor_name=actor_name,
+        label=_actor_label(actor_name, work_dir=work_root),
         actor_dir=_actor_session_dir(work_root, actor_name),
         work_dir=work_root,
     ).strip()
@@ -1299,6 +1530,7 @@ def _actor_launch_blockers(work_root: Path, *, actor_name: str = "") -> list[str
     if _goal_rewrite_pending(goal_path):
         blockers.append(f"rewrite `{goal_path}` from the current moment before launch")
     if actor_name:
+        actor_name = _resolve_bound_actor_name(work_root, actor_name)
         actor_want = _actor_dir_path(work_root, actor_name) / WANT_FILE
         actor_goal = _actor_dir_path(work_root, actor_name) / "GOAL.md"
         want_cmd = _actor_charter_command(actor_name, "want")
@@ -1451,6 +1683,7 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
 
 
 def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
+    actor_name = _resolve_bound_actor_name(work_dir, actor_name)
     state = _read_actor_state(work_dir, actor_name)
     status = str(state.get("status") or "pending")
     requested_status = str(state.get("requested_status") or "")
@@ -1628,6 +1861,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         next_step = ""
     return {
         **state,
+        "label": _actor_label(actor_name, work_dir=work_dir),
         "status": derived_status,
         "state_path": str(_actor_state_path(work_dir, actor_name)),
         "events_path": str(_actor_events_path(work_dir, actor_name)),
@@ -1656,7 +1890,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
 
 def _ensure_actor_todo_items(work_dir: Path, actor_name: str) -> None:
     actor = _normalize_actor_name(actor_name)
-    label = _actor_label(actor)
+    label = _actor_label(actor, work_dir=work_dir)
     ensure_managed_todo_item(
         work_dir,
         section="Actor Checklist",
@@ -1726,7 +1960,7 @@ def _sync_actor_projection_surfaces(work_dir: Path, actor_name: str) -> None:
     sync_actor_notes_projection(
         work_dir,
         actor,
-        label=_actor_label(actor),
+        label=_actor_label(actor, work_dir=work_dir),
         status_payload=_actor_status_payload(work_dir, actor),
     )
 
@@ -1736,9 +1970,9 @@ def _actor_launch_command(work_dir: Path, actor_name: str) -> str:
 
 
 def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
-    actor_name = _normalize_actor_name(actor_name)
+    actor_name = _resolve_bound_actor_name(work_dir, actor_name)
     state = _load_session_state(work_dir)
-    actors = _actor_registry_from_state(state)
+    actors = _actor_registry(work_dir)
     actor = actors.get(actor_name)
     if actor is None:
         raise SystemExit(f"unknown actor: {actor_name}")
@@ -1751,7 +1985,8 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
             _reset_orphaned_actor_surface(actor_dir)
         _seed_actor_surface(
             actor_dir,
-            _actor_label(actor_name),
+            actor_name,
+            _actor_label(actor_name, work_dir=work_dir),
             work_dir=work_dir,
         )
         _copy_if_present(work_dir / "AGENTS.md", actor_dir / "AGENTS.md")
@@ -1762,7 +1997,10 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
         )
         _ensure_actor_parent_links(work_dir, actor_name, actor_dir)
     else:
-        _seed_file(actor_dir / "README.md", _actor_readme(_actor_label(actor_name)))
+        _seed_file(
+            actor_dir / "README.md",
+            _actor_readme(actor_name, _actor_label(actor_name, work_dir=work_dir)),
+        )
         _ensure_state_exports(actor_dir)
     _write_state_file(
         actor_dir,
@@ -1805,7 +2043,7 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
 
 
 def _bind_actor(session_root: Path, actor_name: str) -> str:
-    actor = _normalize_actor_name(actor_name)
+    actor, created = _bind_actor_identity(session_root, actor_name)
     bin_path = session_root / "bin" / actor
     already_bound = _actor_is_selected(session_root, actor) and bin_path.exists()
     _ensure_actor_surface(session_root, actor)
@@ -1830,22 +2068,23 @@ def _bind_actor(session_root: Path, actor_name: str) -> str:
     actor_blockers = _actor_launch_blockers(session_root, actor_name=actor)
     if actor_blockers:
         suffix = (
-            f"; not launched. Rewrite `{actor_want}` and `{actor_goal}` for {_actor_label(actor)} with `{want_cmd}` and `{goal_cmd}` first. "
+            f"; not launched. Rewrite `{actor_want}` and `{actor_goal}` for {_actor_label(actor, work_dir=session_root)} with `{want_cmd}` and `{goal_cmd}` first. "
             f"`{actor_todo}` is already seeded with a minimal actor-local checklist and you may extend it before launch if useful, "
-            f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor)} to start"
+            f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor, work_dir=session_root)} to start"
         )
     else:
         suffix = (
             f"; not launched. `{actor_want}` and `{actor_goal}` are already real. "
             f"`{actor_todo}` is already seeded with a minimal actor-local checklist and you may extend it before launch if useful, "
-            f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor)} to start"
+            f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor, work_dir=session_root)} to start"
         )
     if already_bound:
-        return f"{_actor_label(actor)} already bound{suffix}"
+        return f"{actor} ({_actor_label(actor, work_dir=session_root)}) already bound{suffix}"
     _append_actor_event(session_root, actor, event="bound", detail="bound actor session")
     _actor_log_line(session_root, actor, "bound session")
+    created_note = " [new actor]" if created else ""
     return (
-        f"bound {_actor_label(actor)} session, seeded actor-local WANT/GOAL placeholders, seeded actor-local TODO, launch shim, actor-local logs/oops, and shared evidence access"
+        f"bound {actor} ({_actor_label(actor, work_dir=session_root)}) session, seeded actor-local WANT/GOAL placeholders, seeded actor-local TODO, launch shim, actor-local logs/oops, and shared evidence access{created_note}"
         f"{suffix}"
     )
 

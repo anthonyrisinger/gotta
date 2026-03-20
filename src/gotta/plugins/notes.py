@@ -14,7 +14,6 @@ from gotta.notes import (
 )
 from gotta import session as session_plugin
 from gotta.session import (
-    _normalize_actor_name,
     _actor_label,
 )
 
@@ -66,7 +65,7 @@ def _summary_payload(work_dir, *, actor_name: str) -> dict[str, object]:
     status = session_plugin._actor_status_payload(work_dir, actor_name)
     return {
         "actor": actor_name,
-        "label": _actor_label(actor_name),
+        "label": _actor_label(actor_name, work_dir=work_dir),
         "notes": str(actor_notes_surface_path(work_dir, actor_name)),
         "notes_log": str(actor_notes_log_path(work_dir, actor_name)),
         "status": str(status.get("status") or "pending"),
@@ -84,7 +83,7 @@ def _require_bound_actor(work_dir, actor_name: str) -> None:
     if actor_name not in session_plugin._selected_actor_ids(work_dir):
         raise SystemExit(
             f"{actor_name} is not bound for this session; bind them first with "
-            f"`gotta actor bind {_actor_label(actor_name)}`"
+            f"`gotta actor bind {_actor_label(actor_name, work_dir=work_dir)}`"
         )
 
 
@@ -110,14 +109,14 @@ def main(argv: list[str] | None = None) -> int:
     if action == "show":
         if not args.actor:
             raise SystemExit("missing actor; use `gotta notes show --actor <actor>`")
-        actor_name = _normalize_actor_name(args.actor)
+        actor_name = session_plugin._resolve_bound_actor_name(work_dir, args.actor)
         _require_bound_actor(work_dir, actor_name)
         session_plugin._ensure_actor_surface(work_dir, actor_name)
         status = session_plugin._actor_status_payload(work_dir, actor_name)
         payload = actor_notes_payload(
             work_dir,
             actor_name,
-            label=_actor_label(actor_name),
+            label=_actor_label(actor_name, work_dir=work_dir),
             status_payload=status,
         )
         if args.output == "json":
@@ -128,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.actor:
         raise SystemExit("missing actor; use `gotta notes append --actor <actor> ...`")
-    actor_name = _normalize_actor_name(args.actor or "")
+    actor_name = session_plugin._resolve_bound_actor_name(work_dir, args.actor or "")
     _require_bound_actor(work_dir, actor_name)
     session_plugin._ensure_actor_surface(work_dir, actor_name)
     message = session_plugin._normalize_entry_text(

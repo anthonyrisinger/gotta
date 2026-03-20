@@ -16,13 +16,14 @@ from gotta.content import SESSION_REPO_ENV, load_state_env_at_root, session_is_i
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.notes import actor_notes_log_path
 from gotta.actor import (
+    ACTOR_ID_ENV,
+    ACTOR_LABEL_ENV,
     SUPERVISOR_GRACEFUL_STOP_MODE,
     SUPERVISOR_GRACEFUL_STOP_STATUS,
     actor_session_root,
 )
 from gotta import session as session_plugin
 from gotta.session import (
-    _actor_registry_from_state,
     _normalize_actor_name,
     _actor_goal_path,
     _actor_label,
@@ -58,12 +59,13 @@ def _normalize_args(argv: list[str]) -> list[str]:
 
 
 def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
+    actor_name = session_plugin._resolve_bound_actor_name(work_root, actor_name)
     actor_dir = actor_session_root(work_root, actor_name)
     actor_want = _actor_want_path(work_root, actor_name)
     actor_goal = _actor_goal_path(work_root, actor_name)
     notes_file = session_plugin.actor_notes_surface_path(work_root, actor_name)
     notes_log = actor_notes_log_path(work_root, actor_name)
-    label = _actor_label(actor_name)
+    label = _actor_label(actor_name, work_dir=work_root)
     want_text = actor_want.read_text(encoding="utf-8").strip()
     goal_text = actor_goal.read_text(encoding="utf-8").strip()
     return dedent(
@@ -130,22 +132,33 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
 
 
 def _actor_runtime_env(work_root: Path, actor_name: str) -> dict[str, str]:
+    actor_name = session_plugin._resolve_bound_actor_name(work_root, actor_name)
     actor_dir = actor_session_root(work_root, actor_name)
     env = os.environ.copy()
     env.update(load_state_env_at_root(actor_dir))
-    env["GOTTA_ACTOR_LABEL"] = _normalize_actor_name(actor_name)
+    env[ACTOR_ID_ENV] = actor_name
+    env[ACTOR_LABEL_ENV] = _actor_label(actor_name, work_dir=work_root)
     env["GOTTA_ACTOR_DIR"] = str(actor_dir)
     env["GOTTA_ACTOR_NOTES_PATH"] = str(session_plugin.actor_notes_surface_path(work_root, actor_name))
     env["GOTTA_ACTOR_NOTES_LOG_PATH"] = str(actor_notes_log_path(work_root, actor_name))
-    env[ACTOR_SPEAKER_ENV] = _normalize_actor_name(actor_name)
+    env[ACTOR_SPEAKER_ENV] = actor_name
     repo = env.get(SESSION_REPO_ENV, "").strip()
     env["PATH"] = f"{actor_dir / 'bin'}:{env.get('PATH', '')}"
+    env.pop("GOTTA_CONTEXT_ID", None)
+    env.pop("GOTTA_CONTEXT_SOURCE", None)
+    env.pop("GOTTA_SESSION_ACTIVATION", None)
     if repo:
         venv_bin = Path(repo) / ".venv" / "bin"
         if venv_bin.is_dir():
             env["VIRTUAL_ENV"] = str(venv_bin.parent)
             env["PATH"] = f"{venv_bin}:{env['PATH']}"
     return env
+
+
+def _actor_copilot_config_dir(work_root: Path, actor_name: str) -> Path:
+    actor_name = session_plugin._resolve_bound_actor_name(work_root, actor_name)
+    actor_dir = actor_session_root(work_root, actor_name)
+    return actor_dir / "state" / "copilot"
 
 
 def _mark_actor_runtime_active(work_root: Path, actor_name: str) -> None:
@@ -328,7 +341,7 @@ def _session_root(args: argparse.Namespace) -> Path:
 
 def _actor_names(args: argparse.Namespace) -> list[str]:
     return [
-        _normalize_actor_name(actor)
+        str(actor).strip()
         for actor in getattr(args, "actors", [])
         if str(actor).strip()
     ]
@@ -352,12 +365,13 @@ def _status_actors(work_root: Path, actor_name: str) -> list[str]:
     selected = list(session_plugin._selected_actor_ids(work_root))
     if not actor_name:
         return selected
-    if actor_name not in selected:
+    resolved = session_plugin._resolve_bound_actor_name(work_root, actor_name)
+    if resolved not in selected:
         raise SystemExit(
-            f"{actor_name} is not bound for this session; bind them first with "
-            f"`gotta actor bind {_actor_label(actor_name)}`"
+            f"{resolved} is not bound for this session; bind them first with "
+            f"`gotta actor bind {actor_name}`"
         )
-    return [actor_name]
+    return [resolved]
 
 
 def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
@@ -723,6 +737,7 @@ def _cmd_signoff(args: argparse.Namespace, work_root: Path, actor_name: str) -> 
 
 
 def _cmd_launch(work_root: Path, actor_name: str) -> int:
+    actor_name = session_plugin._resolve_bound_actor_name(work_root, actor_name)
     current = session_plugin._actor_status_payload(work_root, actor_name)
     if current["status"] in {"starting", "active"}:
         raise SystemExit(
@@ -742,16 +757,20 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
     prompt = _actor_prompt(work_root=work_root, actor_name=actor_name)
     env = _actor_runtime_env(work_root, actor_name)
     state = load_state_env_at_root(work_root)
-    actor = _actor_registry_from_state(state).get(actor_name)
+    actor = session_plugin._actor_registry(work_root).get(actor_name)
     if actor is None:
         raise SystemExit(f"unknown actor: {actor_name}")
     model = str(actor.get("model") or "")
     resume_uuid = str(actor.get("resume_uuid") or "")
     repo_root = str(state.get(SESSION_REPO_ENV) or "").strip()
     actor_dir = actor_session_root(work_root, actor_name)
+    copilot_config_dir = _actor_copilot_config_dir(work_root, actor_name)
+    copilot_config_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     argv = [
         "copilot",
+        "--config-dir",
+        str(copilot_config_dir),
         "--allow-all",
         "--add-dir",
         str(work_root),
@@ -760,7 +779,6 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
             if repo_root
             else []
         ),
-        "--experimental",
         "--no-ask-user",
         "--no-alt-screen",
         "--stream=on",
@@ -828,6 +846,7 @@ def main(argv: list[str] | None = None) -> int:
     if action == "status":
         return _cmd_status(args, work_root, actor_name)
     _require_actor_name(actor_name, action)
+    actor_name = session_plugin._resolve_bound_actor_name(work_root, actor_name)
     if action == "launch":
         return _cmd_launch(work_root, actor_name)
     session_plugin._ensure_actor_surface(work_root, actor_name)

@@ -42,6 +42,7 @@ from gotta.content import (
     shared_session_root,
     write_session_state,
 )
+from gotta import session as session_plugin
 from gotta import topology
 
 
@@ -266,11 +267,8 @@ def _create_session_root(
     write_session_state(
         dirs,
         {
-            CONTEXT_ID_ENV: context_id,
-            CONTEXT_SOURCE_ENV: context_source,
             SESSION_CREATED_ENV: load_state_env_at_root(root).get(SESSION_CREATED_ENV, "")
             or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            SESSION_ACTIVATION_ENV: activation,
             SESSION_REPO_ENV: str(repo_root) if repo_root is not None else "",
             SESSION_ID_ENV: current_session_id,
             SESSION_ACTOR_ENV: actor,
@@ -286,20 +284,46 @@ def _create_session_root(
     if session_link.is_symlink() or session_link.is_file():
         session_link.unlink(missing_ok=True)
     metadata_path = session_dir / "session.json"
-    if not metadata_path.exists():
-        metadata_path.write_text(
-            json.dumps(
-                {
-                    "session_id": current_session_id,
-                    "created_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "members": [actor],
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+    payload: dict[str, object]
+    if metadata_path.exists():
+        try:
+            existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = {}
+        payload = existing if isinstance(existing, dict) else {}
+    else:
+        payload = {}
+    members = payload.get("members")
+    if not isinstance(members, list):
+        members = []
+    normalized_members = [
+        topology.normalize_identity(str(item))
+        for item in members
+        if str(item).strip()
+    ]
+    if actor not in normalized_members:
+        normalized_members.append(actor)
+    actors = payload.get("actors")
+    if not isinstance(actors, dict):
+        actors = {}
+    actors.setdefault(
+        actor,
+        {
+            "label": actor,
+            "model": session_plugin.ACTOR_DEFAULT_MODEL,
+            "resume_uuid": "",
+            "template": "",
+        },
+    )
+    payload["session_id"] = current_session_id
+    payload.setdefault("created_at", datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    payload["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload["members"] = sorted(dict.fromkeys(normalized_members))
+    payload["actors"] = actors
+    metadata_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return dirs.session_dir.resolve(), True
 
 
@@ -322,9 +346,6 @@ def _bind_session_root(context_id: str, context_source: str) -> tuple[Path, bool
         write_session_state(
             dirs,
             {
-                CONTEXT_ID_ENV: context_id,
-                CONTEXT_SOURCE_ENV: context_source,
-                SESSION_ACTIVATION_ENV: "gotta",
                 SESSION_ID_ENV: session_id,
                 SESSION_ACTOR_ENV: fingerprint,
             },
@@ -521,13 +542,21 @@ def main(argv: list[str] | None = None) -> int:
                 allow_missing=False,
             )
             if explicit_root is not None and explicit_actor:
+                resolved_actor = session_plugin._resolve_bound_actor_name(
+                    explicit_root,
+                    explicit_actor,
+                )
                 root = topology.session_root_for(
                     session_id(explicit_root),
-                    explicit_actor,
+                    resolved_actor,
                 )
             elif explicit_root is not None:
                 root = explicit_root
             else:
+                if explicit_actor:
+                    return die(
+                        "explicit actor targeting requires an existing shared session and a bound actor"
+                    )
                 root = resolve_session_reference(
                     explicit_session,
                     identity=target_identity,
@@ -540,8 +569,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
         elif explicit_actor:
             current = _prefer_bound_session_root()
-            current_session_id = session_id(current) if current is not None else _session_token(context_id)
-            root = topology.session_root_for(current_session_id, explicit_actor)
+            if current is None:
+                current = _resolve_existing_session_root(context_id, context_source)
+            if current is None:
+                current, _created = _bind_session_root(context_id, context_source)
+            resolved_actor = session_plugin._resolve_bound_actor_name(
+                current,
+                explicit_actor,
+            )
+            root = topology.session_root_for(session_id(current), resolved_actor)
         else:
             root = _prefer_bound_session_root()
         read_only_explicit_target = bool(explicit_session) and _is_read_only_explicit_target(
@@ -584,7 +620,7 @@ def main(argv: list[str] | None = None) -> int:
             _hydrate_environment(root, context_id=context_id, context_source=context_source)
             seed_actor_context(acting_actor)
             if explicit_actor:
-                os.environ[SESSION_ACTOR_ENV] = topology.normalize_identity(explicit_actor)
+                os.environ[SESSION_ACTOR_ENV] = content_session_identity(root)
             if created:
                 print(
                     "\n".join(

@@ -11,6 +11,7 @@ import pytest
 from gotta import builtin as plugin_api
 from gotta import main as cli
 from gotta import content, dispatch
+from gotta.actor import ACTOR_ID_ENV
 
 
 def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
@@ -932,7 +933,7 @@ def test_materialize_invocation_captures_actor_actor_metadata(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("GOTTA_ACTOR_LABEL", "claude")
+    monkeypatch.setenv(ACTOR_ID_ENV, "claude")
     monkeypatch.setenv("GOTTA_ACTOR_DIR", str(dirs.session_dir / "actors" / "claude"))
 
     result = dispatch._materialize_invocation(
