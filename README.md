@@ -257,6 +257,7 @@ gotta grafana search --type dash-db baseload
 gotta grafana search "production overview"
 gotta grafana get demo-dashboard-uid
 gotta grafana query --dashboard demo-dashboard-uid 'sum(app_up)'
+gotta grafana query --dashboard 'https://grafana.example.com/d/demo-dashboard-uid/view?orgId=1&from=now-6h&to=now' 'sum(app_up)'
 gotta grafana query --datasource prom-main 'rate(http_requests_total[5m])'
 gotta confluence search "queue architecture"
 gotta gdocs search "incident response"

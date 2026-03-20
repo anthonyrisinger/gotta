@@ -241,6 +241,96 @@ def test_grafana_query_can_infer_datasource_from_dashboard(monkeypatch, capsys) 
     assert payload["series"][0]["points"][0]["value"] == 9
 
 
+def test_grafana_query_inherits_dashboard_url_context(monkeypatch, capsys) -> None:
+    monkeypatch.setenv(grafana.GRAFANA_BASE_URL_ENV, "https://grafana.example.com")
+    monkeypatch.setenv(grafana.GRAFANA_TOKEN_ENV, "glsa_secret")
+
+    dashboard_url = (
+        "https://grafana.example.com/d/demo-dashboard-uid/production-overview"
+        "?orgId=7&from=now-6h&to=now"
+    )
+
+    def fake_json(session, path, *, method="GET", params=None, payload=None):
+        if path == "/api/dashboards/uid/demo-dashboard-uid":
+            assert session.org_id == "7"
+            return {
+                "dashboard": {
+                    "uid": "demo-dashboard-uid",
+                    "title": "Production Overview",
+                    "panels": [
+                        {
+                            "datasource": {"type": "prometheus", "uid": "prom-main"},
+                            "targets": [
+                                {
+                                    "expr": "sum(agent_up)",
+                                    "datasource": {"type": "prometheus", "uid": "prom-main"},
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "meta": {"url": "/d/demo-dashboard-uid/production-overview"},
+            }
+        if path == "/api/datasources/uid/prom-main":
+            assert session.org_id == "7"
+            return {
+                "uid": "prom-main",
+                "name": "Main Prometheus",
+                "type": "prometheus",
+                "url": "https://prom.example.com",
+                "access": "proxy",
+                "isDefault": False,
+                "readOnly": False,
+            }
+        if path == "/api/ds/query":
+            assert method == "POST"
+            assert payload is not None
+            assert payload["from"] == "now-6h"
+            assert payload["to"] == "now"
+            assert payload["queries"][0]["expr"] == "sum(agent_up)"
+            return {
+                "results": {
+                    "A": {
+                        "status": 200,
+                        "frames": [
+                            {
+                                "schema": {
+                                    "fields": [
+                                        {"name": "Time"},
+                                        {"name": "Value"},
+                                    ]
+                                },
+                                "data": {"values": [[1700000000000], [9]]},
+                            }
+                        ],
+                    }
+                }
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(grafana, "_grafana_json", fake_json)
+
+    assert (
+        grafana.main(
+            [
+                "query",
+                "--dashboard",
+                dashboard_url,
+                "--output",
+                "json",
+                "sum(agent_up)",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["orgId"] == "7"
+    assert payload["from"] == "now-6h"
+    assert payload["to"] == "now"
+    assert payload["dashboard"]["uid"] == "demo-dashboard-uid"
+
+
 def test_grafana_headers_use_non_default_user_agent(monkeypatch) -> None:
     monkeypatch.setenv(grafana.GRAFANA_BASE_URL_ENV, "https://grafana.example.com")
     monkeypatch.setenv(grafana.GRAFANA_TOKEN_ENV, "glsa_secret")
@@ -325,6 +415,18 @@ def test_grafana_route_and_locator_contract() -> None:
             ["query", "--dashboard", "demo-dashboard-uid", "sum(agent_up)"]
         )
         == "grafana:query --dashboard demo-dashboard-uid sum(agent_up)"
+    )
+    assert (
+        grafana.canonical_locator(
+            [
+                "query",
+                "--dashboard",
+                "https://grafana.example.com/d/demo-dashboard-uid/production-overview"
+                "?orgId=7&from=now-6h&to=now",
+                "sum(agent_up)",
+            ]
+        )
+        == "grafana:query --dashboard demo-dashboard-uid --org-id 7 --from now-6h sum(agent_up)"
     )
     assert (
         grafana.preferred_name(["search", "--type", "dash-db"], None)

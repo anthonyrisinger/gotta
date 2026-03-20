@@ -48,6 +48,14 @@ class Session:
     org_id: str
 
 
+@dataclass(frozen=True)
+class DashboardRefContext:
+    uid: str
+    org_id: str
+    from_time: str
+    to_time: str
+
+
 def die(message: str, code: int = 2) -> int:
     print(message, file=sys.stderr)
     return code
@@ -144,17 +152,34 @@ def _grafana_json(
 
 
 def _dashboard_uid_from_ref(raw: str) -> str:
+    return _dashboard_ref_context(raw).uid
+
+
+def _dashboard_ref_context(raw: str) -> DashboardRefContext:
     candidate = strip_http_url_fragment(raw.strip())
     if not candidate:
-        return ""
+        return DashboardRefContext(uid="", org_id="", from_time="", to_time="")
     match = DASHBOARD_URL_RE.match(candidate)
+    org_id = ""
+    from_time = ""
+    to_time = ""
     if match:
-        return match.group("uid")
+        parsed = urllib.parse.urlparse(candidate)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+        org_id = str((query.get("orgId") or [""])[0] or "").strip()
+        from_time = str((query.get("from") or [""])[0] or "").strip()
+        to_time = str((query.get("to") or [""])[0] or "").strip()
+        return DashboardRefContext(
+            uid=match.group("uid"),
+            org_id=org_id,
+            from_time=from_time,
+            to_time=to_time,
+        )
     parsed = urllib.parse.urlparse(candidate)
     if parsed.scheme:
-        return ""
+        return DashboardRefContext(uid="", org_id="", from_time="", to_time="")
     normalized = re.sub(r"[^A-Za-z0-9._-]+", "", candidate)
-    return normalized
+    return DashboardRefContext(uid=normalized, org_id="", from_time="", to_time="")
 
 
 def _require_configured_session(session: Session) -> None:
@@ -637,6 +662,17 @@ def _resolve_query_datasource(
     )
 
 
+def _effective_query_context(
+    args: argparse.Namespace,
+) -> tuple[str, str, str, str]:
+    dashboard_context = _dashboard_ref_context(str(args.dashboard or ""))
+    dashboard_ref = str(args.dashboard or "").strip()
+    from_time = str(args.from_time or "").strip() or dashboard_context.from_time or "now-1h"
+    to_time = str(args.to_time or "").strip() or dashboard_context.to_time or "now"
+    org_id = str(args.org_id or "").strip() or dashboard_context.org_id
+    return dashboard_ref, org_id, from_time, to_time
+
+
 def _frame_series(result: dict[str, Any]) -> list[dict[str, Any]]:
     frames = result.get("frames") or []
     series: list[dict[str, Any]] = []
@@ -675,24 +711,27 @@ def _frame_series(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _query_payload(args: argparse.Namespace) -> dict[str, Any]:
+    dashboard_ref, effective_org_id, effective_from_time, effective_to_time = _effective_query_context(
+        args
+    )
     session = _load_session(
         base_url=args.base_url,
         token=args.service_account_token,
-        org_id=args.org_id,
+        org_id=effective_org_id,
     )
     _require_configured_session(session)
     datasource, dashboard = _resolve_query_datasource(
         session,
         datasource_ref=args.datasource or "",
-        dashboard_ref=args.dashboard or "",
+        dashboard_ref=dashboard_ref,
     )
     raw = _grafana_json(
         session,
         "/api/ds/query",
         method="POST",
         payload={
-            "from": args.from_time,
-            "to": args.to_time,
+            "from": effective_from_time,
+            "to": effective_to_time,
             "queries": [
                 {
                     "refId": "A",
@@ -713,12 +752,14 @@ def _query_payload(args: argparse.Namespace) -> dict[str, Any]:
         "baseUrl": session.base_url,
         "query": args.expr,
         "mode": "range" if args.range else "instant",
-        "from": args.from_time,
-        "to": args.to_time,
+        "from": effective_from_time,
+        "to": effective_to_time,
         "datasource": datasource,
         "series": series,
         "seriesCount": len(series),
     }
+    if session.org_id:
+        payload["orgId"] = session.org_id
     if dashboard is not None:
         payload["dashboard"] = {
             "uid": dashboard.get("uid") or "",
@@ -847,17 +888,22 @@ def _normalize_search_locator_tail(args: argparse.Namespace) -> list[str]:
 
 
 def _normalize_query_locator_tail(args: argparse.Namespace) -> list[str]:
+    dashboard_ref, effective_org_id, effective_from_time, effective_to_time = _effective_query_context(
+        args
+    )
     parts = ["query"]
     if args.datasource:
         parts.extend(["--datasource", args.datasource])
-    if args.dashboard:
-        parts.extend(["--dashboard", _dashboard_uid_from_ref(args.dashboard) or args.dashboard])
+    if dashboard_ref:
+        parts.extend(["--dashboard", _dashboard_uid_from_ref(dashboard_ref) or dashboard_ref])
+    if effective_org_id:
+        parts.extend(["--org-id", effective_org_id])
     if args.range:
         parts.append("--range")
-    if args.from_time != "now-1h":
-        parts.extend(["--from", args.from_time])
-    if args.to_time != "now":
-        parts.extend(["--to", args.to_time])
+    if effective_from_time != "now-1h":
+        parts.extend(["--from", effective_from_time])
+    if effective_to_time != "now":
+        parts.extend(["--to", effective_to_time])
     parts.append(args.expr)
     return parts
 
@@ -884,7 +930,7 @@ def route_target(target: str) -> list[str] | None:
             return query_route(
                 "query",
                 rest.removeprefix("query ").strip(),
-                valued_flags=("--datasource", "--dashboard", "--from", "--to", "--output"),
+                valued_flags=("--datasource", "--dashboard", "--org-id", "--from", "--to", "--output"),
                 boolean_flags=("--range",),
             )
         if rest.startswith("get "):
@@ -949,14 +995,14 @@ def _build_parser() -> argparse.ArgumentParser:
     query.add_argument(
         "--from",
         dest="from_time",
-        default="now-1h",
-        help="Grafana relative or absolute start time (default: now-1h)",
+        default=None,
+        help="Grafana relative or absolute start time (default: inherit from dashboard URL or now-1h)",
     )
     query.add_argument(
         "--to",
         dest="to_time",
-        default="now",
-        help="Grafana relative or absolute end time (default: now)",
+        default=None,
+        help="Grafana relative or absolute end time (default: inherit from dashboard URL or now)",
     )
     query.add_argument("--output", choices=["markdown", "summary", "json"], default="summary")
 
