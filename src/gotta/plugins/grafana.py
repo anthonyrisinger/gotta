@@ -36,6 +36,7 @@ LEGACY_GRAFANA_TOKEN_SECRET_ENV = "GOTTA_GRAFANA_SERVICE_ACCOUNT_TOKEN_SECRET"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 5000
 DASHBOARD_URL_RE = re.compile(r"^https?://[^/]+(?:/[^?#]*)?/d(?:-solo)?/(?P<uid>[^/?#]+)")
+DEFAULT_USER_AGENT = "gotta/grafana-plugin"
 
 
 class ToolError(RuntimeError):
@@ -112,6 +113,7 @@ def _headers(session: Session) -> dict[str, str]:
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {session.token}",
+        "User-Agent": DEFAULT_USER_AGENT,
     }
     if session.org_id:
         headers["X-Grafana-Org-Id"] = session.org_id
