@@ -19,6 +19,7 @@ HELP_TOKENS = {"-h", "--help", "--help-all", "help-all"}
 
 CONTROL_SUBCOMMANDS = {
     "confluence": {"auth", "mcp", "status"},
+    "grafana": {"auth", "status"},
     "gdrive": {"auth", "status"},
     "gdocs": {"auth", "status"},
     "gsheets": {"auth", "status"},

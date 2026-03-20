@@ -82,6 +82,7 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     [
         ["jira", "status"],
         ["slack", "status"],
+        ["grafana", "status"],
     ],
 )
 def test_main_provider_status_surfaces_do_not_create_session(

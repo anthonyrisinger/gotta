@@ -157,6 +157,12 @@ GOTTA_GOOGLE_OAUTH_REDIRECT_URI = "http://localhost:8091/callback"
 
 [providers.slack.env]
 GOTTA_SLACK_WORKSPACE = "your-workspace"
+
+[providers.grafana.env]
+GOTTA_GRAFANA_BASE_URL = "https://grafana.example.com"
+GOTTA_GRAFANA_SERVICE_ACCOUNT_TOKEN = "glsa_your_service_account_token"
+# Optional when the token must be pinned to one org explicitly.
+GOTTA_GRAFANA_ORG_ID = "1"
 ```
 
 Durable OAuth state lands under gotta's OS-native state directory:
@@ -244,6 +250,9 @@ gotta jira status
 gotta jira search "retry budget"
 gotta github search "service ownership"
 gotta github https://github.com/org/repo/commits/HEAD
+gotta grafana status
+gotta grafana search "production overview"
+gotta grafana cIBgcSjkk
 gotta confluence search "queue architecture"
 gotta gdocs search "incident response"
 gotta granola list --time-range last_30_days --limit 5
@@ -269,8 +278,8 @@ unless they intentionally materialize durable evidence.
 
 This surface is broader than search. It is the acquisition layer for the
 session's evidence web. Slack threads, GitHub pages, Jira issues, Google docs,
-Confluence pages, and Granola notes all become reopenable session artifacts
-rather than transient terminal output.
+Grafana dashboards, Confluence pages, and Granola notes all become reopenable
+session artifacts rather than transient terminal output.
 
 Granola extends that same model to personal notes and transcripts through the
 local desktop session and Granola's APIs, so meeting notes and transcripts
@@ -480,6 +489,7 @@ Core currently ships these top-level plugins:
 - `confluence`
 - `gdocs`
 - `gdrive`
+- `grafana`
 - `granola`
 - `github`
 - `gsheets`

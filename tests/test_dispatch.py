@@ -105,6 +105,14 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
         )
         == "slack-workspace-example-workspace.summary"
     )
+    assert (
+        dispatch.derive_preferred_name(
+            "grafana",
+            ["search", "Production Overview"],
+            options,
+        )
+        == "grafana-search-production-overview.md"
+    )
 
 
 def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
@@ -242,6 +250,13 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
             ],
         )
         == "confluence:10101"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "grafana",
+            ["get", "cIBgcSjkk"],
+        )
+        == "grafana:cIBgcSjkk"
     )
     assert (
         dispatch.canonical_locator(
@@ -1030,6 +1045,15 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
     assert plugin_api.get_plugin("granola").route_target("granola:get 'Weekly Review'") == [
         "get",
         "Weekly Review",
+    ]
+    assert plugin_api.get_plugin("grafana").route_target("grafana:status") == ["status"]
+    assert plugin_api.get_plugin("grafana").route_target("grafana:search Architecture") == [
+        "search",
+        "Architecture",
+    ]
+    assert plugin_api.get_plugin("grafana").route_target("grafana:cIBgcSjkk") == [
+        "get",
+        "cIBgcSjkk",
     ]
     assert plugin_api.get_plugin("jira").route_target("jira:search Architecture") == [
         "search",

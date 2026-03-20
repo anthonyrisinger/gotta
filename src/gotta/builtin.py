@@ -297,6 +297,19 @@ def gdocs_plugin() -> PluginSpec:
     )
 
 
+def grafana_plugin() -> PluginSpec:
+    return PluginSpec(
+        name="grafana",
+        description="read-only Grafana dashboard discovery through the HTTP API",
+        runner=_runner("gotta.plugins.grafana"),
+        route_target=_module_attr("gotta.plugins.grafana", "route_target"),
+        route_priority=70,
+        session_access="none",
+        canonical_locator=_module_attr("gotta.plugins.grafana", "canonical_locator"),
+        preferred_name=_module_attr("gotta.plugins.grafana", "preferred_name"),
+    )
+
+
 def granola_plugin() -> PluginSpec:
     return PluginSpec(
         name="granola",
@@ -389,6 +402,7 @@ def _builtin_core_plugins() -> dict[str, PluginSpec]:
     factories = (
         ask_plugin,
         confluence_plugin,
+        grafana_plugin,
         gdocs_plugin,
         gdrive_plugin,
         goal_plugin,
