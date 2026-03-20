@@ -16,6 +16,7 @@ from gotta import session as sessionlib
 from gotta import todo as session_todo
 from gotta.notes import actor_notes_surface_path
 from gotta.plugins import goal
+from gotta.plugins import logs
 from gotta.plugins import notes
 from gotta.plugins import actor
 from gotta.plugins import session
@@ -381,16 +382,28 @@ def test_actor_status_discovers_initialized_fingerprint_actors_missing_from_meta
     assert discovered in payload
 
 
-def test_notes_show_requires_explicit_actor(
+def test_notes_show_defaults_to_all_bound_actors(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
 
-    with pytest.raises(SystemExit) as excinfo:
-        notes.main(["show", "--session", str(root)])
-    assert "missing actor; use `gotta notes show --actor <actor>`" in str(excinfo.value)
+    assert notes.main(["append", "codex note", "--actor", codex, "--session", str(root)]) == 0
+    capsys.readouterr()
+    assert notes.main(["append", "claude note", "--actor", claude, "--session", str(root)]) == 0
+    capsys.readouterr()
+
+    assert notes.main(["show", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["actor_count"] == 2
+    assert codex in payload["actors"]
+    assert claude in payload["actors"]
+    assert {entry["actor"] for entry in payload["entries"]} == {codex, claude}
 
 
 def test_notes_show_unbound_actor_fails_without_materializing_surface(
@@ -405,6 +418,70 @@ def test_notes_show_unbound_actor_fails_without_materializing_surface(
 
     assert "claude is not bound for this session" in str(excinfo.value)
     assert not sessionlib._actor_session_dir(root, "claude").exists()
+
+
+def test_actor_status_filters_with_actor_flag(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "Claude")
+
+    assert actor.main(["status", "--session", str(root), "--actor", claude, "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert list(payload) == [claude]
+
+
+def test_logs_show_defaults_to_all_bound_actors(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
+
+    assert logs.main(["append", "codex log", "--session", str(root), "--actor", codex]) == 0
+    capsys.readouterr()
+    assert logs.main(["append", "claude log", "--session", str(root), "--actor", claude]) == 0
+    capsys.readouterr()
+
+    assert logs.main(["show", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["actor_count"] == 2
+    assert payload["entry_count"] == 2
+    assert {entry["actor"] for entry in payload["entries"]} == {codex, claude}
+
+
+def test_charter_surfaces_default_to_all_bound_actors(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
+
+    actor_goal = sessionlib._actor_session_dir(root, claude) / "GOAL.md"
+    actor_goal.write_text("# Goal\n\nClaude-specific goal.\n", encoding="utf-8")
+    actor_want = sessionlib._actor_session_dir(root, codex) / "WANT.md"
+    actor_want.write_text("# Want\n\nCodex-specific want.\n", encoding="utf-8")
+
+    assert want.main(["--session", str(root)]) == 0
+    want_output = capsys.readouterr().out
+    assert "##" in want_output
+    assert claude in want_output
+    assert codex in want_output
+
+    assert goal.main(["--session", str(root)]) == 0
+    goal_output = capsys.readouterr().out
+    assert "Claude-specific goal." in goal_output
 
 
 def test_bound_session_root_prefers_explicit_identity_over_hyphen_split(

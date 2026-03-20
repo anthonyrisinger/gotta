@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from html import unescape
 import urllib.error
 import urllib.request
 
@@ -134,9 +135,30 @@ def fetch_url(target: str) -> tuple[bytes, str]:
             return response.read(), response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"download failed with {exc.code}: {body}") from exc
+        detail = _summarize_http_error(exc.code, body, exc.headers.get("Content-Type", ""))
+        raise RuntimeError(detail) from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"download failed: {exc.reason}") from exc
+
+
+def _summarize_http_error(status: int, body: str, content_type: str) -> str:
+    normalized_body = body.strip()
+    lowered = normalized_body.lower()
+    if "text/html" in content_type.lower() or "<html" in lowered:
+        title_match = re.search(r"<title[^>]*>(?P<title>.*?)</title>", body, flags=re.IGNORECASE | re.DOTALL)
+        if title_match:
+            title = re.sub(r"\s+", " ", unescape(title_match.group("title"))).strip()
+            if title:
+                return f"download failed with {status}: {title}"
+        return f"download failed with {status}: remote server returned an HTML error page"
+    first_lines = [line.strip() for line in normalized_body.splitlines() if line.strip()]
+    preview = " ".join(first_lines[:3]).strip()
+    if preview:
+        preview = re.sub(r"\s+", " ", preview)
+        if len(preview) > 240:
+            preview = preview[:237].rstrip() + "..."
+        return f"download failed with {status}: {preview}"
+    return f"download failed with {status}"
 
 
 def extract_main_html(html: str) -> str:

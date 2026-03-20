@@ -5,10 +5,20 @@ import json
 from pathlib import Path
 import threading
 
+import pytest
+
 from gotta import content
 from gotta import friction
+from gotta import session as sessionlib
+from gotta.plugins import actor
 from gotta.plugins import oops
 from gotta.plugins import session as session_plugin
+
+
+@pytest.fixture(autouse=True)
+def local_session_registry(tmp_path: Path, monkeypatch) -> None:
+    registry = tmp_path / "sessions"
+    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
 
 
 def initialize_session(root: Path) -> None:
@@ -188,6 +198,72 @@ def test_oops_append_supports_stdin_flag(tmp_path: Path, monkeypatch, capsys) ->
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert payload["entries"][0]["message"] == "explicit stdin oops payload"
+
+
+def test_oops_read_defaults_to_all_bound_actors_and_actor_filters_narrow(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+
+    assert actor.main(["bind", "Claude", "Codex", "--session", str(root)]) == 0
+    capsys.readouterr()
+    claude = sessionlib._resolve_bound_actor_name(root, "Claude")
+    codex = sessionlib._resolve_bound_actor_name(root, "Codex")
+
+    assert (
+        oops.main(
+            [
+                "append",
+                "codex-facing seam",
+                "--session",
+                str(root),
+                "--actor",
+                codex,
+                "--surface",
+                "session",
+                "--kind",
+                "routing",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        oops.main(
+            [
+                "append",
+                "claude-facing seam",
+                "--session",
+                str(root),
+                "--actor",
+                claude,
+                "--surface",
+                "actor",
+                "--kind",
+                "contract",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert oops.main(["summary", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["actor_count"] == 2
+    assert payload["entry_count"] == 2
+    assert set(payload["actors"]) == {codex, claude}
+    assert set(payload["oops_logs"]) == {codex, claude}
+
+    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert {entry["actor"] for entry in listed["entries"]} == {codex, claude}
+
+    assert oops.main(["summary", "--session", str(root), "--actor", claude, "--output", "json"]) == 0
+    filtered = json.loads(capsys.readouterr().out)
+    assert filtered["actor_count"] == 1
+    assert filtered["actors"] == [claude]
+    assert filtered["entry_count"] == 1
 
 
 def test_oops_append_uses_projection_append_hot_path_when_surface_exists(

@@ -15,8 +15,8 @@ def main(argv: list[str] | None = None) -> int:
         command_name="gotta goal",
         description=(
             "Inspect or rewrite the canonical session goal charter. "
-            "Bare invocation shows current contents; use --stdin or --from-file to rewrite. "
-            "Pass --actor <actor> to target another actor inside the current session."
+            "Bare invocation shows all bound actor goal charters; use --stdin or --from-file to rewrite. "
+            "Pass --actor <actor> to narrow inspection or target one actor for rewrite."
         ),
         surface_name="GOAL.md",
         plugin_name="goal",

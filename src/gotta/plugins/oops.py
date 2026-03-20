@@ -122,7 +122,8 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
         prog=command_name,
         description=(
             "Append, extend, list, or summarize durable session speed bumps, "
-            "including suspected gotta bugs. "
+            "including suspected gotta bugs. Read paths summarize all bound "
+            "actor oops by default. "
             "For literal prose or Markdown, prefer stdin, --stdin, or --from-file."
         ),
     )
@@ -187,13 +188,41 @@ def session_access_mode(argv: list[str]) -> str:
     return "write" if action in {"append", "extend"} else "read"
 
 
+def _aggregate_oops_records(
+    work_dir: Path,
+    *,
+    actor_name: str | None = None,
+    surface: str = "",
+    command: str = "",
+    kind: str = "",
+    severity: str = "",
+) -> tuple[list[str], list[dict[str, object]]]:
+    actor_ids = list(session_plugin._target_actor_ids(work_dir, actor_name))
+    records: list[dict[str, object]] = []
+    for current_actor in actor_ids:
+        actor_root = session_plugin._actor_session_dir(work_dir, current_actor)
+        for record in filtered_oops_records(
+            oops_records(actor_root),
+            surface=surface,
+            command=command,
+            kind=kind,
+            severity=severity,
+        ):
+            payload = dict(record)
+            payload.setdefault("actor", current_actor)
+            payload.setdefault("label", session_plugin._actor_label(current_actor, work_dir=work_dir))
+            records.append(payload)
+    records = sorted(records, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+    return actor_ids, records
+
+
 def cmd_oops(args: argparse.Namespace) -> int:
-    session_dir = session_plugin._session_dir(
-        explicit_session=getattr(args, "session", None),
-        explicit_actor=getattr(args, "actor", None),
-    )
     action = args.action or "summary"
     if action == "append":
+        session_dir = session_plugin._session_dir(
+            explicit_session=getattr(args, "session", None),
+            explicit_actor=getattr(args, "actor", None),
+        )
         payload = _read_text_source(
             session_root=session_dir,
             inline=(args.value[0] if args.value else None),
@@ -216,6 +245,10 @@ def cmd_oops(args: argparse.Namespace) -> int:
         print(f"appended oops entry in {oops_surface_path(session_dir)}")
         return 0
     if action == "extend":
+        session_dir = session_plugin._session_dir(
+            explicit_session=getattr(args, "session", None),
+            explicit_actor=getattr(args, "actor", None),
+        )
         entries = _read_text_items_source(
             session_root=session_dir,
             inline_items=list(args.value or []),
@@ -239,32 +272,73 @@ def cmd_oops(args: argparse.Namespace) -> int:
         print(f"extended oops entries in {oops_surface_path(session_dir)}: {len(entries)} item(s)")
         return 0
 
-    records = filtered_oops_records(
-        oops_records(session_dir),
-        surface=args.surface or "",
-        command=args.command or "",
-        kind=args.kind or "",
-        severity=args.severity or "",
-    )
+    explicit_actor = getattr(args, "actor", None)
+    if explicit_actor:
+        session_dir = session_plugin._session_dir(
+            explicit_session=getattr(args, "session", None),
+            explicit_actor=explicit_actor,
+        )
+        records = filtered_oops_records(
+            oops_records(session_dir),
+            surface=args.surface or "",
+            command=args.command or "",
+            kind=args.kind or "",
+            severity=args.severity or "",
+        )
+        actor_ids = [session_plugin.session_identity(session_dir)]
+    else:
+        session_dir = session_plugin._shared_session_dir(
+            explicit_session=getattr(args, "session", None),
+        )
+        actor_ids, records = _aggregate_oops_records(
+            session_dir,
+            surface=args.surface or "",
+            command=args.command or "",
+            kind=args.kind or "",
+            severity=args.severity or "",
+        )
+        if not actor_ids:
+            raise SystemExit(
+                "no actors bound for this session; bind one intentionally with "
+                + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+            )
     records = sorted(records, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
     if action == "list":
         limited = records[: max(args.limit, 0)]
         payload = {
             "session_root": str(session_dir),
-            "entry_count": len(records),
+            "actor_count": len(actor_ids),
+            "actors": actor_ids,
             "shown_count": len(limited),
             "entries": limited,
+            "entry_count": len(records),
         }
+        if explicit_actor:
+            payload["oops"] = str(oops_surface_path(session_dir))
+            payload["oops_log"] = str(oops_log_path(session_dir))
+        else:
+            payload["oops_surfaces"] = {
+                actor: str(oops_surface_path(session_plugin._actor_session_dir(session_dir, actor)))
+                for actor in actor_ids
+            }
+            payload["oops_logs"] = {
+                actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
+                for actor in actor_ids
+            }
         if args.output == "json":
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
-        print(f"oops: {oops_surface_path(session_dir)}")
+        if explicit_actor:
+            print(f"oops: {oops_surface_path(session_dir)}")
+        else:
+            print(f"oops: session-wide across {len(actor_ids)} actor(s)")
         print(f"entries: {payload['entry_count']} (showing {payload['shown_count']})")
         for record in limited:
+            actor = str(record.get("actor") or "unknown-actor")
             print(
                 "- "
                 f"{record.get('timestamp') or 'unknown-time'} "
-                f"[{record.get('severity') or 'unknown'}] "
+                f"[{actor}/{record.get('severity') or 'unknown'}] "
                 f"{record.get('kind') or 'general'} "
                 f"{record.get('surface') or 'unspecified'} :: "
                 f"{record.get('message') or ''}"
@@ -273,14 +347,29 @@ def cmd_oops(args: argparse.Namespace) -> int:
 
     payload = {
         "session_root": str(session_dir),
-        "oops": str(oops_surface_path(session_dir)),
-        "oops_log": str(oops_log_path(session_dir)),
+        "actor_count": len(actor_ids),
+        "actors": actor_ids,
         **oops_summary(records),
     }
+    if explicit_actor:
+        payload["oops"] = str(oops_surface_path(session_dir))
+        payload["oops_log"] = str(oops_log_path(session_dir))
+    else:
+        payload["oops_surfaces"] = {
+            actor: str(oops_surface_path(session_plugin._actor_session_dir(session_dir, actor)))
+            for actor in actor_ids
+        }
+        payload["oops_logs"] = {
+            actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
+            for actor in actor_ids
+        }
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
-    print(f"oops: {oops_surface_path(session_dir)}")
+    if explicit_actor:
+        print(f"oops: {oops_surface_path(session_dir)}")
+    else:
+        print(f"oops: session-wide across {len(actor_ids)} actor(s)")
     print(f"entries: {payload['entry_count']}")
     print(f"severity_counts: {payload['severity_counts']}")
     print(f"kind_counts: {payload['kind_counts']}")

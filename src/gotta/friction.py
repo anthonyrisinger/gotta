@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gotta.compat import UTC, datetime
-from gotta.content import append_activity_event, write_text_atomic
+from gotta.content import append_activity_event, current_actor, session_identity, write_text_atomic
 from gotta.projection import append_chunk, append_jsonl, read_jsonl_records
 
 
@@ -158,6 +158,7 @@ def append_channel_record(
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "actor": current_actor(default_actor=session_identity(session_dir)),
         "message": message,
         "surface": surface,
         "command": command,

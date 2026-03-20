@@ -164,6 +164,13 @@ def test_github_preferred_name_is_specific_for_rendered_object_urls() -> None:
         github.preferred_name(["https://github.com/acme/widgets/commits"], options)
         == "widgets-commits.md"
     )
+    assert (
+        github.preferred_name(
+            ["https://github.com/acme/widgets/blob/main/docs/quickstart.md"],
+            options,
+        )
+        == "widgets-blob-main-docs-quickstart.md"
+    )
 
 
 def test_route_target_accepts_clean_supported_github_urls() -> None:

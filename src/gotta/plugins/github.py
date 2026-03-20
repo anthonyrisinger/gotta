@@ -208,43 +208,45 @@ def route_target(target: str) -> list[str] | None:
 
 
 def _preferred_render_name(parsed: ParsedArgs, extension: str) -> str:
+    def render_name(base: str) -> str:
+        suffix = f".{extension}"
+        return base if base.endswith(suffix) else f"{base}{suffix}"
+
     parsed_url = urllib.parse.urlparse(parsed.url.split("#", 1)[0].split("?", 1)[0])
     parts = [part for part in parsed_url.path.split("/") if part]
     if len(parts) >= 2:
         repo = _slug(parts[1])
         if len(parts) == 2:
-            return f"{repo}.{extension}"
+            return render_name(repo)
         if len(parts) >= 4 and parts[2] == "pull" and parts[3].isdigit():
             suffix = f"{repo}-pr-{parts[3]}"
             if len(parts) >= 5 and parts[4] == "commits":
                 suffix = f"{suffix}-commits"
-            return f"{suffix}.{extension}"
+            return render_name(suffix)
         if len(parts) >= 4 and parts[2] == "issues" and parts[3].isdigit():
-            return f"{repo}-issue-{parts[3]}.{extension}"
+            return render_name(f"{repo}-issue-{parts[3]}")
         if len(parts) >= 4 and parts[2] == "commit":
-            return f"{repo}-commit-{_slug(parts[3])}.{extension}"
+            return render_name(f"{repo}-commit-{_slug(parts[3])}")
         if len(parts) >= 3 and parts[2] == "commits":
             suffix = f"{repo}-commits"
             if len(parts) >= 4:
                 suffix = f"{suffix}-{_slug(parts[3])}"
             if len(parts) >= 5:
                 suffix = f"{suffix}-{_slug('/'.join(parts[4:]))}"
-            return f"{suffix}.{extension}"
+            return render_name(suffix)
         if len(parts) >= 4 and parts[2] == "tree":
             suffix = f"{repo}-tree-{_slug(parts[3])}"
             if len(parts) >= 5:
                 suffix = f"{suffix}-{_slug('/'.join(parts[4:]))}"
-            return f"{suffix}.{extension}"
+            return render_name(suffix)
         if len(parts) >= 5 and parts[2] == "blob":
-            return f"{repo}-blob-{_slug(parts[3])}-{_slug('/'.join(parts[4:]))}.{extension}"
+            return render_name(f"{repo}-blob-{_slug(parts[3])}-{_slug('/'.join(parts[4:]))}")
         if len(parts) >= 3 and parts[2] == "releases":
             if len(parts) >= 5 and parts[3] == "tag":
-                return f"{repo}-release-{_slug(parts[4])}.{extension}"
-            return f"{repo}-releases.{extension}"
+                return render_name(f"{repo}-release-{_slug(parts[4])}")
+            return render_name(f"{repo}-releases")
     name = Path(parsed_url.path.rstrip("/")).name or "github"
-    if "." not in name:
-        name = f"{name}.{extension}"
-    return name
+    return render_name(name)
 
 
 def die(message: str, code: int = 2) -> int:

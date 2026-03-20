@@ -11,6 +11,7 @@ from gotta.notes import (
     actor_notes_log_path,
     actor_notes_payload,
     actor_notes_surface_path,
+    render_actor_notes_markdown,
 )
 from gotta import session as session_plugin
 from gotta.session import (
@@ -113,34 +114,96 @@ def main(argv: list[str] | None = None) -> int:
         if int(exc.code or 0) == 0:
             return 0
         raise
+    action = args.action or "show"
+
+    if action == "show":
+        if args.actor:
+            session_dir = session_plugin._session_dir(
+                explicit_session=getattr(args, "session", None),
+                explicit_actor=getattr(args, "actor", None),
+            )
+            work_dir = session_dir.resolve()
+            actor_name = session_plugin._resolve_bound_actor_name(work_dir, args.actor)
+            _require_bound_actor(work_dir, actor_name)
+            status = session_plugin._actor_status_payload(work_dir, actor_name)
+            payload = actor_notes_payload(
+                work_dir,
+                actor_name,
+                label=_actor_label(actor_name, work_dir=work_dir),
+                status_payload=status,
+            )
+            if args.output == "json":
+                print(json.dumps(payload, indent=2, sort_keys=True))
+                return 0
+            print(
+                render_actor_notes_markdown(
+                    work_dir,
+                    actor_name,
+                    label=_actor_label(actor_name, work_dir=work_dir),
+                    status_payload=status,
+                ),
+                end="",
+            )
+            return 0
+
+        work_dir = session_plugin._shared_session_dir(
+            explicit_session=getattr(args, "session", None),
+        )
+        actor_ids = list(session_plugin._target_actor_ids(work_dir))
+        if not actor_ids:
+            raise SystemExit(
+                "no actors bound for this session; bind one intentionally with "
+                + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+            )
+        actor_payloads: dict[str, dict[str, object]] = {}
+        entries: list[dict[str, object]] = []
+        for actor_name in actor_ids:
+            status = session_plugin._actor_status_payload(work_dir, actor_name)
+            actor_payloads[actor_name] = actor_notes_payload(
+                work_dir,
+                actor_name,
+                label=_actor_label(actor_name, work_dir=work_dir),
+                status_payload=status,
+            )
+            for record in actor_payloads[actor_name]["entries"]:
+                payload = dict(record)
+                payload.setdefault("actor", actor_name)
+                payload.setdefault("label", _actor_label(actor_name, work_dir=work_dir))
+                entries.append(payload)
+        entries = sorted(entries, key=lambda item: str(item.get("timestamp") or ""))
+        payload = {
+            "session_root": str(work_dir),
+            "actor_count": len(actor_ids),
+            "actors": actor_payloads,
+            "entry_count": len(entries),
+            "entries": entries,
+        }
+        if args.output == "json":
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0
+        print(f"notes: session-wide across {len(actor_ids)} actor(s)")
+        print(f"entries: {len(entries)}")
+        if not entries:
+            print("- none yet")
+            return 0
+        for record in entries:
+            actor_name = str(record.get("actor") or "unknown-actor")
+            author = str(record.get("author") or actor_name)
+            timestamp = str(record.get("timestamp") or "unknown-time")
+            message = str(record.get("message") or "").strip() or "empty note"
+            lines = message.splitlines() or ["empty note"]
+            print(f"- `{timestamp}` [{actor_name}/{author}] {lines[0]}")
+            for continuation in lines[1:]:
+                print(f"  {continuation}")
+        return 0
+
+    if not args.actor:
+        raise SystemExit("missing actor; use `gotta notes append --actor <actor> ...`")
     session_dir = session_plugin._session_dir(
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
     work_dir = session_dir.resolve()
-    action = args.action or "show"
-
-    if action == "show":
-        if not args.actor:
-            raise SystemExit("missing actor; use `gotta notes show --actor <actor>`")
-        actor_name = session_plugin._resolve_bound_actor_name(work_dir, args.actor)
-        _require_bound_actor(work_dir, actor_name)
-        session_plugin._ensure_actor_surface(work_dir, actor_name)
-        status = session_plugin._actor_status_payload(work_dir, actor_name)
-        payload = actor_notes_payload(
-            work_dir,
-            actor_name,
-            label=_actor_label(actor_name, work_dir=work_dir),
-            status_payload=status,
-        )
-        if args.output == "json":
-            print(json.dumps(payload, indent=2, sort_keys=True))
-            return 0
-        print(actor_notes_surface_path(work_dir, actor_name).read_text(encoding="utf-8"), end="")
-        return 0
-
-    if not args.actor:
-        raise SystemExit("missing actor; use `gotta notes append --actor <actor> ...`")
     actor_name = session_plugin._resolve_bound_actor_name(work_dir, args.actor or "")
     _require_bound_actor(work_dir, actor_name)
     session_plugin._ensure_actor_surface(work_dir, actor_name)

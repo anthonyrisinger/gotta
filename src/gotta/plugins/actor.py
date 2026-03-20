@@ -121,6 +121,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - prefer `gotta` commands over side channels
         - use `gotta read`, `gotta session ...`, `gotta actor ...`, `gotta todo ...`, `gotta logs ...`, `gotta oops ...`, and `gotta notes ...` first for native inspection and mutation
         - for large native outputs, try `gotta read --head`, `--tail`, or `--section` before shell slicing
+        - do not start with shell traversal, `gh`, `rg`, `jq`, ad hoc Python, or other side channels; exhaust native `gotta` surfaces first
         - if no native path exists, disclose that gap in a durable note instead of silently routing around it through shell traversal
         - treat actor-local WANT.md and GOAL.md as operator-authored live surfaces, not hidden templates that need to be rediscovered
         - treat actor-local WANT/GOAL/TODO/LOGS/OOPS plus the shared evidence web as the live truth surfaces
@@ -350,11 +351,14 @@ def _session_root(args: argparse.Namespace) -> Path:
 
 
 def _actor_names(args: argparse.Namespace) -> list[str]:
-    return [
-        str(actor).strip()
-        for actor in getattr(args, "actors", [])
-        if str(actor).strip()
-    ]
+    names: list[str] = []
+    for value in [*getattr(args, "actors", []), getattr(args, "actor", "")]:
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized and normalized not in names:
+            names.append(normalized)
+    return names
 
 
 def _actor_name(args: argparse.Namespace, action: str) -> str:

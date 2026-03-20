@@ -182,6 +182,50 @@ def _session_dir(
     return current
 
 
+def _shared_session_dir(
+    *,
+    explicit_session: str | None,
+) -> Path:
+    current = _current_session_dir(
+        explicit_session,
+        explicit_actor=None,
+    )
+    if current is None:
+        raise SystemExit(
+            "start or bind a session first with `gotta ...` or bootstrap one "
+            "manually with `gotta session init --session \"$WS\"`"
+        )
+    resolved = current.resolve()
+    if (
+        topology.parse_grouped_session_root(resolved) is None
+        and topology.parse_shared_session_root(resolved) is None
+    ):
+        return resolved
+    return shared_session_root(session_shared_id(resolved)).resolve()
+
+
+def _target_actor_ids(work_dir: Path, actor_ref: str | None = None) -> tuple[str, ...]:
+    selected = _selected_actor_ids(work_dir)
+    if (
+        not selected
+        and topology.parse_grouped_session_root(work_dir) is None
+        and topology.parse_shared_session_root(work_dir) is None
+        and session_is_initialized(work_dir)
+    ):
+        identity = session_identity(work_dir)
+        if identity:
+            selected = (identity,)
+    if actor_ref:
+        resolved = _resolve_bound_actor_name(work_dir, actor_ref)
+        if resolved not in selected:
+            raise SystemExit(
+                f"{resolved} is not bound for this session; bind them first with "
+                f"`gotta actor bind {actor_ref}`"
+            )
+        return (resolved,)
+    return selected
+
+
 def _build_charter_parser(
     *,
     command_name: str,
@@ -316,17 +360,60 @@ def run_charter_surface(
         if int(exc.code or 0) == 0:
             return 0
         raise
+    has_payload = bool(args.from_file or args.use_stdin)
+    if not has_payload:
+        if getattr(args, "actor", None):
+            work_dir = _session_dir(
+                explicit_session=getattr(args, "session", None),
+                explicit_actor=getattr(args, "actor", None),
+            )
+            path = work_dir / surface_name
+            if not path.is_file():
+                raise SystemExit(f"missing {surface_name} surface: {path}")
+            print(path.read_text(encoding="utf-8"), end="")
+            return 0
+        work_dir = _shared_session_dir(
+            explicit_session=getattr(args, "session", None),
+        )
+        actor_ids = _target_actor_ids(work_dir)
+        if not actor_ids:
+            raise SystemExit(
+                "no actors bound for this session; bind one intentionally with "
+                + _actor_bind_examples(prefix="gotta actor bind")
+            )
+        if len(actor_ids) == 1:
+            path = _actor_session_dir(work_dir, actor_ids[0]) / surface_name
+            if not path.is_file():
+                raise SystemExit(f"missing {surface_name} surface: {path}")
+            print(path.read_text(encoding="utf-8"), end="")
+            return 0
+        sections: list[str] = []
+        for actor_name in actor_ids:
+            path = _actor_session_dir(work_dir, actor_name) / surface_name
+            if not path.is_file():
+                continue
+            label = _actor_label(actor_name, work_dir=work_dir)
+            body = path.read_text(encoding="utf-8").rstrip()
+            sections.append(
+                "\n".join(
+                    [
+                        f"## {label} ({actor_name})",
+                        "",
+                        body or "_empty_",
+                    ]
+                ).rstrip()
+            )
+        if not sections:
+            raise SystemExit(
+                f"missing {surface_name} surface across bound actors in {work_dir}"
+            )
+        print("\n\n".join(sections) + "\n", end="")
+        return 0
     work_dir = _session_dir(
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
     path = work_dir / surface_name
-    has_payload = bool(args.from_file or args.use_stdin)
-    if not has_payload:
-        if not path.is_file():
-            raise SystemExit(f"missing {surface_name} surface: {path}")
-        print(path.read_text(encoding="utf-8"), end="")
-        return 0
     payload = _normalize_charter_text(
         _read_charter_text_source(
             session_root=work_dir,

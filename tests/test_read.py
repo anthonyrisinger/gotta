@@ -1,5 +1,7 @@
 from __future__ import annotations
+import io
 from pathlib import Path
+import urllib.error
 
 import pytest
 
@@ -353,6 +355,26 @@ def test_read_supports_bounded_provider_views(monkeypatch, capsys) -> None:
     assert "# Title" in output
     assert "line 1" in output
     assert "line 2" not in output
+
+
+def test_read_fetch_url_summarizes_html_error_pages(monkeypatch) -> None:
+    def fake_urlopen(_request):
+        raise urllib.error.HTTPError(
+            url="https://github.com/acme/widgets/blob/main/missing.md",
+            code=404,
+            msg="Not Found",
+            hdrs={"Content-Type": "text/html; charset=utf-8"},
+            fp=io.BytesIO(
+                b"<html><head><title>Page not found \xc2\xb7 GitHub \xc2\xb7 GitHub</title></head><body>missing</body></html>"
+            ),
+        )
+
+    monkeypatch.setattr(read.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        read.fetch_url("https://github.com/acme/widgets/blob/main/missing.md")
+
+    assert str(excinfo.value) == "download failed with 404: Page not found · GitHub · GitHub"
 
 
 def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> None:
