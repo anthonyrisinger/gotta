@@ -713,7 +713,6 @@ def test_bind_session_root_treats_raced_creation_as_reuse(
             canonical,
             context_id=locked_context_id,
             context_source="env",
-            activation="gotta",
         )
         yield
 

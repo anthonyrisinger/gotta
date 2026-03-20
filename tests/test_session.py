@@ -302,6 +302,8 @@ def test_actor_launch_uses_isolated_copilot_config_dir(
 
     class FakeThread:
         def join(self, timeout: float | None = None) -> None:
+            if timeout is None:
+                return None
             return None
 
     monkeypatch.setattr(

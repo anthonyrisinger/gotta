@@ -246,7 +246,6 @@ def _create_session_root(
     *,
     context_id: str,
     context_source: str,
-    activation: str,
 ) -> tuple[Path, bool]:
     current_session_id = topology.shared_session_id(root)
     actor = topology.session_identity(root)
@@ -339,7 +338,6 @@ def _bind_session_root(context_id: str, context_source: str) -> tuple[Path, bool
                 root,
                 context_id=context_id,
                 context_source=context_source,
-                activation="gotta",
             )
             created = True
         dirs = resolve_dirs(CommonOptions(session_dir=str(root)), create=False)
@@ -406,7 +404,6 @@ def _ensure_scaffolded_session(
             root,
             context_id=context_id,
             context_source=context_source,
-            activation="gotta",
         )
     state = load_state_env_at_root(root)
     if state.get(SESSION_INITIALIZED_ENV, "").strip() != "1":

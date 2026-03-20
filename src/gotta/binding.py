@@ -92,7 +92,6 @@ def ensure_actor_session(
     *,
     context_id: str,
     context_source: str,
-    activation: str,
 ) -> tuple[Path, bool]:
     resolved = root.expanduser().resolve()
     current_session_id = topology.shared_session_id(resolved)
@@ -174,7 +173,6 @@ def bind_current_context(
         root,
         context_id=context_id,
         context_source=context_source,
-        activation="session.bind",
     )
     topology.write_binding(binding_id, root)
     return print_payload(_resolved_payload(root), output=output)
