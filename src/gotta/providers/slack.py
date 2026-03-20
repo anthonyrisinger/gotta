@@ -302,7 +302,7 @@ def slack_api_post(
     )
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
     request.add_header("Cookie", cookie_header(cookies))
-    request.add_header("User-Agent", "gotta/slack")
+    request.add_header("User-Actor", "gotta/slack")
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             payload = json.loads(response.read().decode("utf-8"))

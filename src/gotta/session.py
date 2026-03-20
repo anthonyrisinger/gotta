@@ -1,4 +1,4 @@
-"""Shared session-surface helpers for charters, state, and linked peers."""
+"""Shared session-surface helpers for charters, state, and linked actors."""
 
 from __future__ import annotations
 
@@ -12,46 +12,44 @@ import subprocess
 import sys
 import time
 from textwrap import dedent
-from typing import Callable
 import uuid
 
 from gotta.compat import UTC, datetime
 from gotta.content import (
     CONTENT_ENV,
     SESSION_ENV,
+    SESSION_CREATED_ENV,
     SESSION_REPO_ENV,
-    WORK_INITIALIZED_ENV,
+    SESSION_ACTOR_ENV,
+    SESSION_INITIALIZED_ENV,
     CommonOptions,
     append_activity_event,
     discover_state_env,
     env_mapping,
     load_state_env_at_root,
     resolve_dirs,
-    resolve_session_reference,
+    session_identity,
     session_is_initialized,
     session_relative_path,
     sh_quote,
     state_dir_path,
     state_env_path,
     stdin_has_readable_text,
-    work_is_initialized,
+    session_surface_initialized,
     write_session_state,
 )
 from gotta.friction import oops_log_path, render_oops_markdown
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.logs import append_log_record, logs_state_path, sync_logs_projection
 from gotta.notes import (
-    peer_notes_ready,
-    peer_notes_surface_path,
-    sync_peer_notes_projection,
+    actor_notes_ready,
+    actor_notes_surface_path,
+    sync_actor_notes_projection,
 )
-from gotta.peer import (
-    PEER_SESSION_ACTOR_ENV,
-    normalize_peer_name as _shared_normalize_peer_name,
-    peer_link_path,
+from gotta.actor import (
+    normalize_actor_name as _shared_normalize_actor_name,
     session_actor,
-    peer_state_link_dir,
-    peer_session_root,
+    actor_session_root,
     requested_disposition_label,
 )
 from gotta.todo import (
@@ -64,10 +62,13 @@ from gotta.todo import (
 )
 
 
-GOTTA_WORK_ACTORS_JSON = "GOTTA_WORK_ACTORS_JSON"
-PEER_STATE_STATUS = {
+SESSION_ACTORS_ENV = "GOTTA_SESSION_ACTORS_JSON"
+SESSION_WANT_PATH_ENV = "GOTTA_SESSION_WANT_PATH"
+SESSION_ACTORS_SOURCE_ENV = "GOTTA_SESSION_ACTORS_SOURCE"
+SESSION_VOICE_SOURCE_ENV = "GOTTA_SESSION_VOICE_SOURCE"
+ACTOR_STATE_STATUS = {
     "pending",
-    "configured",
+    "bound",
     "starting",
     "active",
     "stalled",
@@ -75,15 +76,22 @@ PEER_STATE_STATUS = {
     "failed",
     "signed_off",
 }
-PEER_TERMINAL_STATUS = {
+ACTOR_TERMINAL_STATUS = {
     "completed",
     "failed",
     "incomplete",
     "rejected",
     "signed_off",
 }
-PEER_STALL_SECONDS = 180
-PEER_RUNNING_STATUS = {
+
+
+def _normalize_actor_status(value: object) -> str:
+    status = str(value or "pending")
+    if status == "configured":
+        return "bound"
+    return status
+ACTOR_STALL_SECONDS = 180
+ACTOR_RUNNING_STATUS = {
     "starting",
     "active",
     "producing_evidence",
@@ -93,53 +101,59 @@ ROOT_SHARED_FILES = (
     "LOGS.md",
     "OOPS.md",
 )
-WORK_STATE_KEYS = (
-    WORK_INITIALIZED_ENV,
-    "GOTTA_WORK_REPO",
-    "GOTTA_WORK_CREATED",
-    GOTTA_WORK_ACTORS_JSON,
-    "GOTTA_WORK_WANT_PATH",
-    "GOTTA_WORK_AGENTS_SOURCE",
-    "GOTTA_WORK_VOICE_SOURCE",
-    PEER_SESSION_ACTOR_ENV,
+SESSION_STATE_KEYS = (
+    SESSION_INITIALIZED_ENV,
+    SESSION_CREATED_ENV,
+    SESSION_ACTORS_ENV,
+    SESSION_WANT_PATH_ENV,
+    SESSION_ACTORS_SOURCE_ENV,
+    SESSION_VOICE_SOURCE_ENV,
+    SESSION_ACTOR_ENV,
 )
-PEER_SHARED_FILES = (
+ACTOR_SHARED_FILES = (
     "LOGS.md",
     "OOPS.md",
 )
-PEER_SHARED_STATE_FILES = (
+ACTOR_SHARED_STATE_FILES = (
     "logs.jsonl",
     "oops.jsonl",
 )
 FINAL_SIGNOFF_MARKER = "actors-final-signoff"
 
 
-def _current_work_session_dir(
+def _current_session_dir(
     explicit_session: str | None,
+    explicit_actor: str | None = None,
     *,
     include_context_session: bool = True,
 ) -> Path | None:
-    session_raw = (
-        explicit_session
-        or os.environ.get(SESSION_ENV, "").strip()
-        or discover_state_env(include_context_session=include_context_session).get(
-            SESSION_ENV, ""
-        ).strip()
-    )
-    if not session_raw:
-        return None
-    resolved = resolve_session_reference(session_raw, allow_missing=False)
-    if resolved is None and explicit_session:
-        raise SystemExit(
-            "relative session references require an active or discoverable "
-            "session root. Use `gotta ...` to bind one first or pass an "
-            "absolute `--session` path."
+    discovered = discover_state_env(include_context_session=include_context_session)
+    try:
+        dirs = resolve_dirs(
+            CommonOptions(
+                session_dir=explicit_session
+                or os.environ.get(SESSION_ENV, "").strip()
+                or discovered.get(SESSION_ENV, "").strip(),
+                actor=explicit_actor
+                or os.environ.get(SESSION_ACTOR_ENV, "").strip()
+                or discovered.get(SESSION_ACTOR_ENV, "").strip(),
+            ),
+            create=False,
         )
-    return resolved
+    except Exception:
+        return None
+    return dirs.session_dir
 
 
-def _work_workspace_dir(*, explicit_session: str | None) -> Path:
-    current = _current_work_session_dir(explicit_session)
+def _session_dir(
+    *,
+    explicit_session: str | None,
+    explicit_actor: str | None = None,
+) -> Path:
+    current = _current_session_dir(
+        explicit_session,
+        explicit_actor=explicit_actor,
+    )
     if current is None:
         raise SystemExit(
             "start or bind a session first with `gotta ...` or bootstrap one "
@@ -150,7 +164,7 @@ def _work_workspace_dir(*, explicit_session: str | None) -> Path:
             "start or bind a session first with `gotta ...` or bootstrap one "
             "manually with `gotta session init --session \"$WS\"`"
         )
-    if not work_is_initialized(current):
+    if not session_surface_initialized(current):
         raise SystemExit(
             "this session has no canonical session surface yet; run "
             "`gotta session init` to scaffold the active session"
@@ -169,6 +183,7 @@ def _build_charter_parser(
         description=description,
     )
     parser.add_argument("--session", help="session root")
+    parser.add_argument("--actor", help="actor within the current session")
     parser.add_argument(
         "--from-file",
         help=f"read {value_name} text from a UTF-8 file instead of inline text; use '-' for stdin",
@@ -180,6 +195,11 @@ def _build_charter_parser(
         help=f"read {value_name} text from stdin explicitly",
     )
     return parser
+
+
+def add_target_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--session", help="session root")
+    parser.add_argument("--actor", help="actor within the current session")
 
 
 def _read_charter_text_source(
@@ -248,7 +268,10 @@ def run_charter_surface(
         if int(exc.code or 0) == 0:
             return 0
         raise
-    work_dir = _work_workspace_dir(explicit_session=getattr(args, "session", None))
+    work_dir = _session_dir(
+        explicit_session=getattr(args, "session", None),
+        explicit_actor=getattr(args, "actor", None),
+    )
     path = work_dir / surface_name
     has_payload = bool(args.from_file or args.use_stdin)
     if not has_payload:
@@ -308,7 +331,7 @@ DEFAULT_ACTORS = (
 )
 ACTOR_INDEX = {actor.actor_id: actor for actor in DEFAULT_ACTORS}
 ACTOR_IDS = tuple(actor.actor_id for actor in DEFAULT_ACTORS)
-WORK_ACTOR_ALIASES = {
+ACTOR_ALIASES = {
     alias: actor.actor_id
     for actor in DEFAULT_ACTORS
     for alias in (actor.actor_id, *actor.aliases)
@@ -332,35 +355,33 @@ def _default_actor_summary(*, code: bool = False) -> str:
     )
 
 
-def _work_with_examples(*, prefix: str = "gotta peer with") -> str:
+def _actor_bind_examples(*, prefix: str = "gotta actor bind") -> str:
     return " or ".join(f"`{prefix} {actor.label} ...`" for actor in DEFAULT_ACTORS)
 
 
-def _peer_session_ref(peer_name: str) -> str:
-    return f"peers/{_normalize_peer_name(peer_name)}"
+def _actor_session_ref(actor_name: str) -> str:
+    return _normalize_actor_name(actor_name)
 
 
-def _peer_charter_command(peer_name: str, surface: str, *, mode: str = "--stdin") -> str:
-    return f"gotta {surface} --session {_peer_session_ref(peer_name)} {mode}"
+def _actor_charter_command(actor_name: str, surface: str, *, mode: str = "--stdin") -> str:
+    return f"gotta {surface} --actor {_actor_session_ref(actor_name)} {mode}"
 
 
 def _resolve_actor_name(value: str, *, kind: str = "actor") -> str:
-    normalized = value.strip().lower()
-    if normalized in WORK_ACTOR_ALIASES:
-        return WORK_ACTOR_ALIASES[normalized]
-    if kind == "peer":
-        raise SystemExit(
-            f"unknown peer: {value}. expected one of {', '.join(ACTOR_IDS)}"
-        )
-    raise SystemExit(f"unknown actor: {value}")
+    normalized = _shared_normalize_actor_name(value)
+    if not normalized:
+        raise SystemExit(f"missing {kind}")
+    if normalized in ACTOR_ALIASES:
+        return ACTOR_ALIASES[normalized]
+    return normalized
 
 
-def _normalize_peer_name(value: str) -> str:
-    return _shared_normalize_peer_name(_resolve_actor_name(value, kind="peer"))
+def _normalize_actor_name(value: str) -> str:
+    return _resolve_actor_name(value, kind="actor")
 
 
-def _peer_label(peer_name: str) -> str:
-    normalized = _normalize_peer_name(peer_name)
+def _actor_label(actor_name: str) -> str:
+    normalized = _normalize_actor_name(actor_name)
     spec = ACTOR_INDEX.get(normalized)
     return spec.label if spec is not None else normalized.replace("-", " ").title()
 
@@ -377,7 +398,7 @@ def _default_actor_registry() -> dict[str, dict[str, str]]:
 
 
 def _actor_registry_from_state(state: dict[str, str]) -> dict[str, dict[str, str]]:
-    raw = str(state.get(GOTTA_WORK_ACTORS_JSON) or "").strip()
+    raw = str(state.get(SESSION_ACTORS_ENV) or "").strip()
     registry = _default_actor_registry()
     if raw:
         try:
@@ -434,102 +455,97 @@ def _actor_ids_for_state(state: dict[str, str]) -> tuple[str, ...]:
     return tuple(_actor_registry_from_state(state))
 
 
-def _peer_dir_path(work_dir: Path, peer_name: str) -> Path:
-    return peer_link_path(work_dir, _normalize_peer_name(peer_name))
+def _actor_dir_path(work_dir: Path, actor_name: str) -> Path:
+    return _actor_session_dir(work_dir, actor_name)
 
 
-def _peer_state_link_root(work_dir: Path) -> Path:
-    return state_dir_path(work_dir) / "peers"
+def _actor_state_link_root(work_dir: Path) -> Path:
+    return state_dir_path(work_dir)
 
 
-def _peer_state_path(work_dir: Path, peer_name: str) -> Path:
-    return _peer_session_dir(work_dir, peer_name) / "state" / "peer.json"
+def _actor_state_path(work_dir: Path, actor_name: str) -> Path:
+    return _actor_session_dir(work_dir, actor_name) / "state" / "actor.json"
 
 
-def _peer_events_path(work_dir: Path, peer_name: str) -> Path:
-    return _peer_session_dir(work_dir, peer_name) / "state" / "peer.jsonl"
+def _actor_events_path(work_dir: Path, actor_name: str) -> Path:
+    return _actor_session_dir(work_dir, actor_name) / "state" / "actor.jsonl"
 
 
-def _peer_want_path(work_dir: Path, peer_name: str) -> Path:
-    return _peer_session_dir(work_dir, peer_name) / WANT_FILE
+def _actor_want_path(work_dir: Path, actor_name: str) -> Path:
+    return _actor_session_dir(work_dir, actor_name) / WANT_FILE
 
 
-def _peer_goal_path(work_dir: Path, peer_name: str) -> Path:
-    return _peer_session_dir(work_dir, peer_name) / "GOAL.md"
+def _actor_goal_path(work_dir: Path, actor_name: str) -> Path:
+    return _actor_session_dir(work_dir, actor_name) / "GOAL.md"
 
 
 def _canonical_work_root(session_dir: Path) -> Path:
     return session_dir.expanduser().resolve()
 
 
-def _peer_session_dir(work_dir: Path, peer_name: str) -> Path:
-    return peer_session_root(work_dir.resolve(), _normalize_peer_name(peer_name))
+def _actor_session_dir(work_dir: Path, actor_name: str) -> Path:
+    return actor_session_root(work_dir.resolve(), _normalize_actor_name(actor_name))
 
 
-def _peer_is_selected(work_dir: Path, peer_name: str) -> bool:
-    normalized = _normalize_peer_name(peer_name)
+def _actor_is_selected(work_dir: Path, actor_name: str) -> bool:
+    normalized = _normalize_actor_name(actor_name)
     resolved = work_dir.resolve()
     if session_actor(resolved) == normalized:
         return True
-    link = peer_link_path(resolved, normalized)
-    state_link = peer_state_link_dir(resolved, normalized)
-    return (
-        link.exists()
-        or link.is_symlink()
-        or state_link.exists()
-        or state_link.is_symlink()
-    )
+    actor_root = actor_session_root(resolved, normalized)
+    return session_is_initialized(actor_root)
 
 
-def _read_peer_state(work_dir: Path, peer_name: str) -> dict[str, object]:
-    normalized = _normalize_peer_name(peer_name)
-    if not _peer_is_selected(work_dir, normalized):
+def _read_actor_state(work_dir: Path, actor_name: str) -> dict[str, object]:
+    normalized = _normalize_actor_name(actor_name)
+    if not _actor_is_selected(work_dir, normalized):
         return {
-            "peer": normalized,
-            "label": _peer_label(normalized),
+            "actor": normalized,
+            "label": _actor_label(normalized),
             "status": "pending",
         }
-    path = _peer_state_path(work_dir, normalized)
+    path = _actor_state_path(work_dir, normalized)
     if not path.exists():
         return {
-            "peer": normalized,
-            "label": _peer_label(normalized),
+            "actor": normalized,
+            "label": _actor_label(normalized),
             "status": "pending",
         }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"invalid peer state file: {path}: {exc}") from exc
+        raise SystemExit(f"invalid actor state file: {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise SystemExit(f"invalid peer state file: {path}")
-    data.setdefault("peer", normalized)
-    data.setdefault("label", _peer_label(normalized))
-    data.setdefault("status", "pending")
+        raise SystemExit(f"invalid actor state file: {path}")
+    data.setdefault("actor", normalized)
+    data.setdefault("label", _actor_label(normalized))
+    data["status"] = _normalize_actor_status(data.get("status") or "pending")
     return data
 
 
-def _write_peer_state(
+def _write_actor_state(
     work_dir: Path,
-    peer_name: str,
+    actor_name: str,
     payload: dict[str, object],
 ) -> Path:
-    normalized = _normalize_peer_name(peer_name)
-    state_dir = _peer_state_link_root(work_dir)
+    normalized = _normalize_actor_name(actor_name)
+    state_dir = _actor_state_link_root(work_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
-    path = _peer_state_path(work_dir, normalized)
+    path = _actor_state_path(work_dir, normalized)
     path.parent.mkdir(parents=True, exist_ok=True)
-    merged = _read_peer_state(work_dir, normalized)
+    merged = _read_actor_state(work_dir, normalized)
     for key, value in payload.items():
         if value is None:
             merged.pop(key, None)
             continue
         merged[key] = value
-    merged["peer"] = normalized
-    merged["label"] = _peer_label(normalized)
+    merged["actor"] = normalized
+    merged["label"] = _actor_label(normalized)
     merged["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    status = str(merged.get("status") or "pending")
-    if status not in PEER_STATE_STATUS:
-        raise SystemExit(f"invalid peer status: {status}")
+    status = _normalize_actor_status(merged.get("status") or "pending")
+    merged["status"] = status
+    if status not in ACTOR_STATE_STATUS:
+        raise SystemExit(f"invalid actor status: {status}")
     path.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
@@ -558,25 +574,25 @@ def _bootstrap_want() -> str:
     )
 
 
-def _bootstrap_peer_want(*, label: str) -> str:
-    peer_name = _normalize_peer_name(label)
+def _bootstrap_actor_want(*, label: str) -> str:
+    actor_name = _normalize_actor_name(label)
     return _finish(
         f"""
-        # Peer Want Placeholder
+        # Actor Want Placeholder
 
-        > Generated by `gotta peer with {label}`.
-        > Rewrite this file before peer launch.
+        > Generated by `gotta actor bind {label}`.
+        > Rewrite this file before actor launch.
 
-        This is the operator-authored peer-local intent frame for {label}.
+        This is the operator-authored actor-local intent frame for {label}.
 
         It is a live charter, not an append surface and not a hidden template.
-        Rewrite it intentionally so the peer starts from a real contract instead of
+        Rewrite it intentionally so the actor starts from a real contract instead of
         trying to infer one from the shared session.
 
         Native rewrite:
 
-        - `{_peer_charter_command(peer_name, 'want')}`
-        - `{_peer_charter_command(peer_name, 'want', mode='--from-file <path>')}`
+        - `{_actor_charter_command(actor_name, 'want')}`
+        - `{_actor_charter_command(actor_name, 'want', mode='--from-file <path>')}`
         """
     )
 
@@ -604,7 +620,7 @@ def _bootstrap_goal(
         > This is an intentional rewrite target, not an append log.
 
         This file is a rewrite-on-purpose execution charter. Rewrite it from live
-        context before launching peers or treating it as current truth.
+        context before launching actors or treating it as current truth.
 
         Bootstrap facts:
 
@@ -628,43 +644,43 @@ def _bootstrap_goal(
           provenance signals visible so you can choose between materialized,
           native, search-seed, and otherwise promising unmaterialized branches.
         - Rewrite `GOAL.md` in place so it reflects the current moment.
-        - Keep `GOAL.md` durable for peer launches and reruns.
-        - Launch peers once `WANT.md` and `GOAL.md` are real.
+        - Keep `GOAL.md` durable for actor launches and reruns.
+        - Launch actors once `WANT.md` and `GOAL.md` are real.
         """
     )
 
 
-def _bootstrap_peer_goal(*, label: str, peer_dir: Path, work_dir: Path) -> str:
-    peer_name = _normalize_peer_name(label)
+def _bootstrap_actor_goal(*, label: str, actor_dir: Path, work_dir: Path) -> str:
+    actor_name = _normalize_actor_name(label)
     return _finish(
         f"""
-        # Seed Peer Goal Placeholder
+        # Seed Actor Goal Placeholder
 
-        > Generated by `gotta peer with {label}`.
-        > Rewrite this file before peer launch.
+        > Generated by `gotta actor bind {label}`.
+        > Rewrite this file before actor launch.
 
-        This file turns the operator-authored peer `WANT.md` into a concrete
+        This file turns the operator-authored actor `WANT.md` into a concrete
         evidence-collection contract for {label}.
 
         Bootstrap facts:
 
-        - Peer session root: `{peer_dir}`
-        - Shared live logs: `{work_dir / 'LOGS.md'}`, `{work_dir / 'OOPS.md'}`
-        - Peer-local checklist: `{peer_dir / 'TODO.md'}`
-        - Peer-local notes: `{peer_dir / 'NOTES.md'}`
+        - Actor session root: `{actor_dir}`
+        - Actor-local logs: `{actor_dir / 'LOGS.md'}`, `{actor_dir / 'OOPS.md'}`
+        - Actor-local checklist: `{actor_dir / 'TODO.md'}`
+        - Actor-local notes: `{actor_dir / 'NOTES.md'}`
 
         Rewrite rule:
 
-        - Read peer-local `WANT.md` first.
+        - Read actor-local `WANT.md` first.
         - Turn that charter into concrete evidence-collection steps.
-        - Treat `TODO.md` as the live peer-local checklist.
+        - Treat `TODO.md` as the live actor-local checklist.
         - Append durable notes during the run; do not wait until the end.
-        - Do not author the final dossier from this workspace.
+        - Do not author the final dossier from this session.
 
         Native rewrite:
 
-        - `{_peer_charter_command(peer_name, 'goal')}`
-        - `{_peer_charter_command(peer_name, 'goal', mode='--from-file <path>')}`
+        - `{_actor_charter_command(actor_name, 'goal')}`
+        - `{_actor_charter_command(actor_name, 'goal', mode='--from-file <path>')}`
         """
     )
 
@@ -678,79 +694,72 @@ def _seed_file(path: Path, content: str) -> None:
         path.write_text(content, encoding="utf-8")
 
 
-def _peer_readme(label: str) -> str:
-    peer_name = _normalize_peer_name(label)
+def _actor_readme(label: str) -> str:
+    actor_name = _normalize_actor_name(label)
     return dedent(
         f"""\
-        # {label} Workspace
+        # {label} Session
 
-        > Generated by `gotta peer with {label}`.
+        > Generated by `gotta actor bind {label}`.
         > This file is a bootstrap guide, not a live append surface.
 
-        This directory is a first-class peer session root for {label.lower()} inside one
-        linked gotta investigation.
+        This directory is the canonical {label.lower()} actor root for one shared gotta session.
 
-        Readable peer surfaces:
+        Readable actor surfaces:
 
-        - `WANT.md`: peer-local intent frame seeded here, then rewritten before launch
-        - `GOAL.md`: peer-local goal seeded here, then rewritten before launch
-        - `TODO.md`: peer-local checklist projected from `state/todo.jsonl`
-        - `NOTES.md`: projected running notes plus live peer state
-        - `LOGS.md` / `OOPS.md`: shared cross-actor continuous logs
+        - `WANT.md`: actor-local intent frame seeded here, then rewritten before launch
+        - `GOAL.md`: actor-local goal seeded here, then rewritten before launch
+        - `TODO.md`: actor-local checklist projected from `state/todo.jsonl`
+        - `NOTES.md`: projected running notes plus live actor state
+        - `LOGS.md` / `OOPS.md`: actor-local continuous logs
 
         Canonical truth:
 
-        - this session root is real; work from here with `gotta ...`
-        - this peer session is top-level under the canonical gotta session home and may be linked into other sessions
-        - peer-local checklist truth is `state/todo.jsonl`
-        - peer lifecycle truth is `state/peer.json` and `state/peer.jsonl`
-        - peer notes truth is `state/notes.jsonl`
-        - shared cross-actor truth is `state/logs.jsonl`, `state/oops.jsonl`, and the shared evidence web
-        - shared evidence and cross-session readable surfaces may be linked into this session
-        - provenance still belongs to the peer that performed the work
-        - peer-local `WANT.md` and `GOAL.md` are live operator-authored charters, not hidden templates
-        - rewrite peer-local charters with `{_peer_charter_command(peer_name, 'want')}` and `{_peer_charter_command(peer_name, 'goal')}` before launch
+        - this session root is real; operate from here with `gotta ...`
+        - actor selection is explicit actor selection inside one shared session, not path traversal under `actors/`
+        - actor-local checklist truth is `state/todo.jsonl`
+        - actor lifecycle truth is `state/actor.json` and `state/actor.jsonl`
+        - actor notes truth is `state/notes.jsonl`
+        - actor-local continuous truth is `state/logs.jsonl` and `state/oops.jsonl`
+        - shared cross-actor truth is the shared evidence web at `content/`
+        - provenance still belongs to the actor that produced the evidence
+        - actor-local `WANT.md` and `GOAL.md` are live operator-authored charters, not hidden templates
+        - rewrite actor-local charters with `{_actor_charter_command(actor_name, 'want')}` and `{_actor_charter_command(actor_name, 'goal')}` before launch
         - prefer native `gotta` surfaces over shell-side spelunking
-        - prefer `gotta notes ...` for peer-note mutation
-        - do not author the final dossier from this workspace; stop at evidence and handoff notes
+        - prefer `gotta notes ...` for actor-note mutation
+        - do not author the final dossier from this session; stop at evidence and handoff notes
         """
     )
 
 
-def _seed_peer_surface(
-    peer_dir: Path,
+def _seed_actor_surface(
+    actor_dir: Path,
     label: str,
     *,
     work_dir: Path,
-    ensure_symlink: Callable[[Path, Path], None],
 ) -> None:
-    peer_dir.mkdir(parents=True, exist_ok=True)
-    _seed_file(peer_dir / "README.md", _peer_readme(label))
-    _seed_file(peer_dir / WANT_FILE, _bootstrap_peer_want(label=label))
+    actor_dir.mkdir(parents=True, exist_ok=True)
+    _seed_file(actor_dir / "README.md", _actor_readme(label))
+    _seed_file(actor_dir / WANT_FILE, _bootstrap_actor_want(label=label))
     _seed_file(
-        peer_dir / "GOAL.md",
-        _bootstrap_peer_goal(
+        actor_dir / "GOAL.md",
+        _bootstrap_actor_goal(
             label=label,
-            peer_dir=peer_dir,
+            actor_dir=actor_dir,
             work_dir=work_dir,
         ),
     )
-    for name in ROOT_SHARED_FILES:
-        ensure_symlink(peer_dir / name, work_dir / name)
 
 
-def _reset_orphaned_peer_surface(peer_dir: Path) -> None:
+def _reset_orphaned_actor_surface(actor_dir: Path) -> None:
     managed_paths = (
-        peer_dir / "README.md",
-        peer_dir / WANT_FILE,
-        peer_dir / "GOAL.md",
-        peer_dir / "TODO.md",
-        peer_dir / "NOTES.md",
-        peer_dir / "LOGS.md",
-        peer_dir / "OOPS.md",
-        peer_dir / "content",
-        peer_dir / "peers",
-        peer_dir / "state",
+        actor_dir / "README.md",
+        actor_dir / WANT_FILE,
+        actor_dir / "GOAL.md",
+        actor_dir / "TODO.md",
+        actor_dir / "NOTES.md",
+        actor_dir / "content",
+        actor_dir / "session",
     )
     for path in managed_paths:
         if path.is_symlink() or path.is_file():
@@ -759,24 +768,24 @@ def _reset_orphaned_peer_surface(peer_dir: Path) -> None:
             shutil.rmtree(path)
 
 
-def _peer_script(*, work_dir: Path, peer_dir: Path, peer_name: str) -> str:
-    peer_name = _normalize_peer_name(peer_name)
-    peer_session = _peer_session_dir(work_dir, peer_name)
+def _actor_script(*, work_dir: Path, actor_dir: Path, actor_name: str) -> str:
+    actor_name = _normalize_actor_name(actor_name)
+    actor_session = _actor_session_dir(work_dir, actor_name)
     return dedent(
         f"""\
         #!/usr/bin/env bash
         set -euo pipefail
 
-        ws={sh_quote(str(peer_session))}
+        ws={sh_quote(str(actor_session))}
         if [[ "${{1:-}}" == "--help" || "${{1:-}}" == "-h" ]]; then
-          exec gotta peer launch {peer_name} --session "$ws" --help
+          exec gotta actor launch {actor_name} --session "$ws" --help
         fi
-        exec gotta peer launch {peer_name} --session "$ws" "$@"
+        exec gotta actor launch {actor_name} --session "$ws" "$@"
         """
     )
 
 
-def _load_work_state(work_dir: Path) -> dict[str, str]:
+def _load_session_state(work_dir: Path) -> dict[str, str]:
     return load_state_env_at_root(work_dir)
 
 
@@ -821,59 +830,59 @@ def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
     _append_chunk(path, json.dumps(payload, sort_keys=True) + "\n")
 
 
-def _peer_todo_marker(peer_name: str, phase: str) -> str:
-    return f"peer-{_normalize_peer_name(peer_name)}-{phase}"
+def _actor_todo_marker(actor_name: str, phase: str) -> str:
+    return f"actor-{_normalize_actor_name(actor_name)}-{phase}"
 
 
-def _peer_todo_redirect(peer_name: str, phase: str) -> str:
-    actor = _normalize_peer_name(peer_name)
-    label = _peer_label(actor)
+def _actor_todo_redirect(actor_name: str, phase: str) -> str:
+    actor = _normalize_actor_name(actor_name)
+    label = _actor_label(actor)
     if phase == "initial":
         return (
             f"that TODO item is owned by {label} lifecycle; inspect with "
-            f"`gotta peer status {actor}` and advance it through "
-            f"`gotta peer complete {actor}` or `gotta peer signoff {actor} ...`"
+            f"`gotta actor status {actor}` and advance it through "
+            f"`gotta actor complete {actor}` or `gotta actor signoff {actor} ...`"
         )
     if phase == "complete":
         return (
             f"that TODO item is owned by {label} lifecycle; use "
-            f"`gotta peer complete {actor}` once the peer run has materially landed"
+            f"`gotta actor complete {actor}` once the actor run has materially landed"
         )
     if phase == "dispositioned":
         return (
             f"that TODO item is owned by {label} disposition; use "
-            f"`gotta peer signoff {actor} --summary ...` after review"
+            f"`gotta actor signoff {actor} --summary ...` after review"
         )
-    raise ValueError(f"unknown peer TODO phase: {phase}")
+    raise ValueError(f"unknown actor TODO phase: {phase}")
 
 
 def _managed_todo_redirect(managed_key: str) -> str:
     if managed_key == FINAL_SIGNOFF_MARKER:
         return (
-            "that TODO item is owned by final peer sign-off; inspect all peers with "
-            "`gotta peer status` and sign off each peer through "
-            "`gotta peer signoff ...`"
+            "that TODO item is owned by final actor sign-off; inspect all actors with "
+            "`gotta actor status` and sign off each actor through "
+            "`gotta actor signoff ...`"
         )
-    prefix = "peer-"
+    prefix = "actor-"
     suffixes = ("-initial", "-complete", "-dispositioned")
     if managed_key.startswith(prefix):
         for suffix in suffixes:
             if managed_key.endswith(suffix):
                 actor = managed_key[len(prefix) : -len(suffix)]
                 phase = suffix.removeprefix("-")
-                return _peer_todo_redirect(actor, phase)
+                return _actor_todo_redirect(actor, phase)
     return (
-        "that TODO item is managed by native peer state; use "
-        "`gotta peer ...` to advance it instead of "
+        "that TODO item is managed by native actor state; use "
+        "`gotta actor ...` to advance it instead of "
         "`gotta todo check`"
     )
 
 
 def _selected_actor_ids(work_dir: Path) -> tuple[str, ...]:
-    registry = _actor_registry_from_state(_load_work_state(work_dir))
+    registry = _actor_registry_from_state(_load_session_state(work_dir))
     selected: list[str] = []
     for actor_id in registry:
-        if _peer_is_selected(work_dir, actor_id):
+        if _actor_is_selected(work_dir, actor_id):
             selected.append(actor_id)
     return tuple(selected)
 
@@ -924,7 +933,7 @@ def _write_state_file(work_dir: Path, values: dict[str, str]) -> None:
         **base_exports,
         **values,
     }
-    ordered_keys = [SESSION_ENV, CONTENT_ENV, SESSION_REPO_ENV, *WORK_STATE_KEYS]
+    ordered_keys = [SESSION_ENV, CONTENT_ENV, SESSION_REPO_ENV, *SESSION_STATE_KEYS]
     extras = [key for key in merged if key not in ordered_keys]
     lines: list[str] = []
     for key in ordered_keys + sorted(extras):
@@ -977,22 +986,22 @@ def _seed_session_files(
         create_todo_item(
             session_dir,
             section="Status",
-            text=f"{WANT_FILE} rewritten by the active agent from live context",
+            text=f"{WANT_FILE} rewritten by the active actor from live context",
         )
         create_todo_item(
             session_dir,
             section="Status",
-            text="GOAL.md rewritten by the active agent from live context",
+            text="GOAL.md rewritten by the active actor from live context",
         )
         create_todo_item(
             session_dir,
             section="Status",
-            text="TODO.md expanded by the active agent into a real working checklist",
+            text="TODO.md expanded by the active actor into a real working checklist",
         )
         create_todo_item(
             session_dir,
             section="Status",
-            text="Decide whether to configure a peer with `gotta peer with ...` and actually consult them if it helps.",
+            text="Decide whether to bind an actor with `gotta actor bind ...` and actually consult them if it helps.",
         )
         sync_todo_projection(session_dir)
     if not logs_state_path(session_dir).exists():
@@ -1005,7 +1014,7 @@ def _seed_session_files(
             bootstrap_lines.insert(1, f"Repository: `{repo}`")
         for actor_id, payload in actors.items():
             bootstrap_lines.append(
-                f"  - {str(payload.get('label') or _peer_label(actor_id))}: model = `{payload.get('model', '')}`, resume = `{payload.get('resume_uuid', '')}`"
+                f"  - {str(payload.get('label') or _actor_label(actor_id))}: model = `{payload.get('model', '')}`, resume = `{payload.get('resume_uuid', '')}`"
             )
         if agents_src:
             bootstrap_lines.append("Imported `AGENTS.md`")
@@ -1017,10 +1026,8 @@ def _seed_session_files(
 
 
 def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
-    current = _load_work_state(session_dir)
-    existing_repo = str(
-        current.get("GOTTA_WORK_REPO") or current.get(SESSION_REPO_ENV) or ""
-    ).strip()
+    current = _load_session_state(session_dir)
+    existing_repo = str(current.get(SESSION_REPO_ENV) or "").strip()
     repo_path: Path | None
     if repo is not None:
         repo_path = repo.expanduser().resolve()
@@ -1032,9 +1039,7 @@ def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
         except (subprocess.CalledProcessError, FileNotFoundError):
             repo_path = None
     actors = _actor_registry_from_state(current)
-    created_at = current.get("GOTTA_WORK_CREATED") or datetime.now(tz=UTC).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    created_at = current.get(SESSION_CREATED_ENV) or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     home = Path.home()
     agents_src = _find_upward_file(repo_path, "AGENTS.md") if repo_path else None
     voice_src = _find_upward_file(repo_path, "VOICE.md") if repo_path else None
@@ -1046,13 +1051,12 @@ def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
         session_dir,
         {
             SESSION_REPO_ENV: str(repo_path or ""),
-            WORK_INITIALIZED_ENV: "1",
-            "GOTTA_WORK_REPO": str(repo_path or ""),
-            "GOTTA_WORK_CREATED": created_at,
-            GOTTA_WORK_ACTORS_JSON: _actor_registry_json(actors),
-            "GOTTA_WORK_WANT_PATH": str(session_dir / WANT_FILE),
-            "GOTTA_WORK_AGENTS_SOURCE": str(agents_src or ""),
-            "GOTTA_WORK_VOICE_SOURCE": str(voice_src or ""),
+            SESSION_INITIALIZED_ENV: "1",
+            SESSION_CREATED_ENV: created_at,
+            SESSION_ACTORS_ENV: _actor_registry_json(actors),
+            SESSION_WANT_PATH_ENV: str(session_dir / WANT_FILE),
+            SESSION_ACTORS_SOURCE_ENV: str(agents_src or ""),
+            SESSION_VOICE_SOURCE_ENV: str(voice_src or ""),
         },
     )
     _seed_session_files(
@@ -1062,7 +1066,7 @@ def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
         agents_src=agents_src,
         voice_src=voice_src,
     )
-    _record_work_activity(
+    _record_session_activity(
         session_dir,
         plugin="session",
         surface="session.init",
@@ -1072,61 +1076,52 @@ def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
     )
 
 
-def _ensure_peer_session_exports(
-    peer_dir: Path,
+def _ensure_actor_session_exports(
+    actor_dir: Path,
     *,
     content_dir: Path,
-    session_root: Path,
+    session_dir: Path,
 ) -> dict[str, str]:
     dirs = resolve_dirs(
-        CommonOptions(session_dir=str(peer_dir), content_dir=str(content_dir)),
+        CommonOptions(session_dir=str(actor_dir), content_dir=str(content_dir)),
         create=True,
     )
     write_session_state(dirs)
     dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
-    _ensure_symlink(peer_dir / "content", content_dir)
-    for name in PEER_SHARED_FILES:
-        target = session_root / name
-        _ensure_symlink(peer_dir / name, target)
-    _ensure_symlink(peer_dir / "peers", session_root / "peers")
-    peer_state_dir = peer_dir / "state"
-    for name in PEER_SHARED_STATE_FILES:
-        target = session_root / "state" / name
-        _ensure_symlink(peer_state_dir / name, target)
-    _ensure_symlink(peer_state_dir / "peers", session_root / "state" / "peers")
+    _ensure_symlink(actor_dir / "content", content_dir)
+    _ensure_symlink(actor_dir / "session", session_dir)
     return env_mapping(dirs)
 
 
-def _ensure_peer_parent_links(session_root: Path, peer_name: str, peer_dir: Path) -> None:
-    _ensure_symlink(peer_link_path(session_root, peer_name), peer_dir)
-    _ensure_symlink(peer_state_link_dir(session_root, peer_name), peer_dir / "state")
+def _ensure_actor_parent_links(session_root: Path, actor_name: str, actor_dir: Path) -> None:
+    return None
 
 
-def _ensure_peer_initial_todo(peer_dir: Path) -> None:
-    if todo_items(peer_dir):
+def _ensure_actor_initial_todo(actor_dir: Path) -> None:
+    if todo_items(actor_dir):
         return
     create_todo_item(
-        peer_dir,
+        actor_dir,
         section="Status",
-        text="Rewrite WANT.md and GOAL.md into a concrete peer-local checklist in TODO.md.",
+        text="Rewrite WANT.md and GOAL.md into a concrete actor-local checklist in TODO.md.",
     )
     create_todo_item(
-        peer_dir,
+        actor_dir,
         section="Status",
         text="Materialize the first strong source anchor and append a first durable note as soon as it lands.",
     )
     create_todo_item(
-        peer_dir,
+        actor_dir,
         section="Status",
         text="Append another durable note after each material evidence wave or plan change; do not request completion or sign-off with empty NOTES.md.",
     )
 
 
-def _work_surface_path(work_dir: Path, surface: str) -> Path:
+def _session_surface_path(work_dir: Path, surface: str) -> Path:
     return work_dir / surface
 
 
-def _record_work_activity(
+def _record_session_activity(
     work_dir: Path,
     *,
     plugin: str,
@@ -1140,9 +1135,9 @@ def _record_work_activity(
 ) -> None:
     if target is not None:
         resolved = target.resolve()
-        todo_surface = _work_surface_path(work_dir, "TODO.md").resolve()
-        logs_surface = _work_surface_path(work_dir, "LOGS.md").resolve()
-        oops_surface = _work_surface_path(work_dir, "OOPS.md").resolve()
+        todo_surface = _session_surface_path(work_dir, "TODO.md").resolve()
+        logs_surface = _session_surface_path(work_dir, "LOGS.md").resolve()
+        oops_surface = _session_surface_path(work_dir, "OOPS.md").resolve()
         if resolved == todo_surface:
             resolved_locator = _session_relative_locator(work_dir, todo_state_path(work_dir))
             resolved_name = "TODO.md"
@@ -1178,9 +1173,9 @@ def _record_work_activity(
     )
 
 
-def _append_peer_event(
+def _append_actor_event(
     work_dir: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     event: str,
     detail: str = "",
@@ -1188,43 +1183,43 @@ def _append_peer_event(
 ) -> None:
     payload: dict[str, object] = {
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "peer": _normalize_peer_name(peer_name),
+        "actor": _normalize_actor_name(actor_name),
         "event": event,
         "detail": detail,
     }
     if extra:
         payload.update(extra)
-    _append_jsonl(_peer_events_path(work_dir, peer_name), payload)
+    _append_jsonl(_actor_events_path(work_dir, actor_name), payload)
     if event != "heartbeat":
-        _record_work_activity(
+        _record_session_activity(
             work_dir,
-            plugin="peer",
-            surface="peer.lifecycle",
+            plugin="actor",
+            surface="actor.lifecycle",
             action=event,
-            locator=f"peer:{payload['peer']}",
-            preferred_name=str(payload["peer"]),
-            follow_command=f"gotta peer status {payload['peer']}",
+            locator=f"actor:{payload['actor']}",
+            preferred_name=str(payload["actor"]),
+            follow_command=f"gotta actor status {payload['actor']}",
             detail=detail or event,
         )
 
 
-def _peer_log_line(session_root: Path, peer_name: str, message: str) -> None:
-    append_log_record(session_root, message=f"[{peer_name}] {message}", actor=peer_name)
+def _actor_log_line(session_root: Path, actor_name: str, message: str) -> None:
+    append_log_record(session_root, message=f"[{actor_name}] {message}", actor=actor_name)
 
 
-def _record_peer_projection_activity(
+def _record_actor_projection_activity(
     session_root: Path,
     *,
-    peer_name: str,
+    actor_name: str,
     surface: str,
     action: str,
     log_path: Path,
     projection_path: Path,
     detail: str,
 ) -> None:
-    _record_work_activity(
+    _record_session_activity(
         session_root,
-        plugin="peer",
+        plugin="actor",
         surface=surface,
         action=action,
         locator=_session_relative_locator(session_root, log_path),
@@ -1235,7 +1230,7 @@ def _record_peer_projection_activity(
 
 
 def _want_rewrite_pending(work_dir: Path) -> bool:
-    want_path = _work_surface_path(work_dir, WANT_FILE)
+    want_path = _session_surface_path(work_dir, WANT_FILE)
     if not want_path.is_file():
         return True
     current = want_path.read_text(encoding="utf-8").strip()
@@ -1248,49 +1243,49 @@ def _goal_rewrite_pending(goal_path: Path) -> bool:
     return goal_path.read_text(encoding="utf-8").strip().startswith("# Seed Goal Placeholder")
 
 
-def _peer_want_rewrite_pending(work_root: Path, peer_name: str) -> bool:
-    path = _peer_want_path(work_root, peer_name)
+def _actor_want_rewrite_pending(work_root: Path, actor_name: str) -> bool:
+    path = _actor_want_path(work_root, actor_name)
     if not path.is_file():
         return True
     current = path.read_text(encoding="utf-8").strip()
-    return current == _bootstrap_peer_want(label=_peer_label(peer_name)).strip()
+    return current == _bootstrap_actor_want(label=_actor_label(actor_name)).strip()
 
 
-def _peer_goal_rewrite_pending(work_root: Path, peer_name: str) -> bool:
-    path = _peer_goal_path(work_root, peer_name)
+def _actor_goal_rewrite_pending(work_root: Path, actor_name: str) -> bool:
+    path = _actor_goal_path(work_root, actor_name)
     if not path.is_file():
         return True
-    return path.read_text(encoding="utf-8").strip() == _bootstrap_peer_goal(
-        label=_peer_label(peer_name),
-        peer_dir=_peer_session_dir(work_root, peer_name),
+    return path.read_text(encoding="utf-8").strip() == _bootstrap_actor_goal(
+        label=_actor_label(actor_name),
+        actor_dir=_actor_session_dir(work_root, actor_name),
         work_dir=work_root,
     ).strip()
 
 
-def _peer_launch_blockers(work_root: Path, *, peer_name: str = "") -> list[str]:
+def _actor_launch_blockers(work_root: Path, *, actor_name: str = "") -> list[str]:
     blockers: list[str] = []
-    goal_path = _work_surface_path(work_root, "GOAL.md")
+    goal_path = _session_surface_path(work_root, "GOAL.md")
     if _want_rewrite_pending(work_root):
-        blockers.append(f"rewrite `{_work_surface_path(work_root, WANT_FILE)}` first")
+        blockers.append(f"rewrite `{_session_surface_path(work_root, WANT_FILE)}` first")
     if _goal_rewrite_pending(goal_path):
         blockers.append(f"rewrite `{goal_path}` from the current moment before launch")
-    if peer_name:
-        peer_want = _peer_dir_path(work_root, peer_name) / WANT_FILE
-        peer_goal = _peer_dir_path(work_root, peer_name) / "GOAL.md"
-        want_cmd = _peer_charter_command(peer_name, "want")
-        goal_cmd = _peer_charter_command(peer_name, "goal")
-        if _peer_want_rewrite_pending(work_root, peer_name):
+    if actor_name:
+        actor_want = _actor_dir_path(work_root, actor_name) / WANT_FILE
+        actor_goal = _actor_dir_path(work_root, actor_name) / "GOAL.md"
+        want_cmd = _actor_charter_command(actor_name, "want")
+        goal_cmd = _actor_charter_command(actor_name, "goal")
+        if _actor_want_rewrite_pending(work_root, actor_name):
             blockers.append(
-                f"rewrite `{peer_want}` as the peer-local intent frame with `{want_cmd}` before launch"
+                f"rewrite `{actor_want}` as the actor-local intent frame with `{want_cmd}` before launch"
             )
-        if _peer_goal_rewrite_pending(work_root, peer_name):
+        if _actor_goal_rewrite_pending(work_root, actor_name):
             blockers.append(
-                f"rewrite `{peer_goal}` as the peer-local goal with `{goal_cmd}` before launch"
+                f"rewrite `{actor_goal}` as the actor-local goal with `{goal_cmd}` before launch"
             )
     return blockers
 
 
-def _peer_evidence_summary(work_dir: Path, peer_name: str) -> dict[str, object]:
+def _actor_evidence_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
     manifest_path = work_dir / "content" / "manifest.jsonl"
     entries: list[dict[str, object]] = []
     if manifest_path.exists():
@@ -1301,7 +1296,9 @@ def _peer_evidence_summary(work_dir: Path, peer_name: str) -> dict[str, object]:
                 payload = json.loads(raw_line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, dict) and str(payload.get("actor") or "primary") == _normalize_peer_name(peer_name):
+            if isinstance(payload, dict) and str(
+                payload.get("actor") or session_identity(work_dir)
+            ) == _normalize_actor_name(actor_name):
                 entries.append(payload)
     ordered = sorted(
         entries,
@@ -1329,7 +1326,7 @@ def _peer_evidence_summary(work_dir: Path, peer_name: str) -> dict[str, object]:
     }
 
 
-def _peer_evidence_note(evidence: dict[str, object]) -> str:
+def _actor_evidence_note(evidence: dict[str, object]) -> str:
     artifact_count = int(evidence.get("artifact_count") or 0)
     if artifact_count <= 0:
         return ""
@@ -1340,7 +1337,7 @@ def _peer_evidence_note(evidence: dict[str, object]) -> str:
     )
 
 
-def _peer_activity_summary(event: str, detail: str) -> str:
+def _actor_activity_summary(event: str, detail: str) -> str:
     cleaned_detail = detail.strip()
     if event == "note":
         return cleaned_detail or "note"
@@ -1350,8 +1347,8 @@ def _peer_activity_summary(event: str, detail: str) -> str:
     return label
 
 
-def _peer_recent_activity(work_dir: Path, peer_name: str, *, limit: int = 5) -> dict[str, object]:
-    path = _peer_events_path(work_dir, peer_name)
+def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
+    path = _actor_events_path(work_dir, actor_name)
     if not path.exists():
         return {
             "recent_activity": [],
@@ -1378,7 +1375,7 @@ def _peer_recent_activity(work_dir: Path, peer_name: str, *, limit: int = 5) -> 
                 "timestamp": timestamp,
                 "event": event,
                 "detail": detail,
-                "summary": _peer_activity_summary(event, detail),
+                "summary": _actor_activity_summary(event, detail),
                 "_order": index,
             }
         )
@@ -1407,8 +1404,8 @@ def _peer_recent_activity(work_dir: Path, peer_name: str, *, limit: int = 5) -> 
     }
 
 
-def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
-    state = _read_peer_state(work_dir, peer_name)
+def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
+    state = _read_actor_state(work_dir, actor_name)
     status = str(state.get("status") or "pending")
     requested_status = str(state.get("requested_status") or "")
     requested_summary = str(state.get("requested_summary") or "")
@@ -1436,7 +1433,7 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
         if heartbeat_dt is not None:
             age = time.time() - heartbeat_dt.timestamp()
             state["heartbeat_age_seconds"] = round(age, 1)
-            if age > PEER_STALL_SECONDS:
+            if age > ACTOR_STALL_SECONDS:
                 derived_status = "stalled"
                 heartbeat_stale = True
     elif status in {"starting", "active"} and not heartbeat_at:
@@ -1445,16 +1442,16 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
             started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
         except ValueError:
             started_dt = None
-        if started_dt is not None and (time.time() - started_dt.timestamp()) > PEER_STALL_SECONDS:
+        if started_dt is not None and (time.time() - started_dt.timestamp()) > ACTOR_STALL_SECONDS:
             derived_status = "stalled"
             heartbeat_stale = True
     signoff_at = str(state.get("signoff_at") or "")
-    peer_dir = _peer_session_dir(work_dir, peer_name)
-    notes_path = peer_dir / "NOTES.md"
-    notes_ready = peer_notes_ready(work_dir, _normalize_peer_name(peer_name))
-    evidence = _peer_evidence_summary(work_dir, peer_name)
-    evidence_note = _peer_evidence_note(evidence)
-    recent_activity = _peer_recent_activity(work_dir, peer_name)
+    actor_dir = _actor_session_dir(work_dir, actor_name)
+    notes_path = actor_dir / "NOTES.md"
+    notes_ready = actor_notes_ready(work_dir, _normalize_actor_name(actor_name))
+    evidence = _actor_evidence_summary(work_dir, actor_name)
+    evidence_note = _actor_evidence_note(evidence)
+    recent_activity = _actor_recent_activity(work_dir, actor_name)
     evidence_live = int(evidence["artifact_count"]) > 0
     if signoff_at:
         derived_status = "signed_off"
@@ -1466,75 +1463,75 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
         else:
             derived_status = "awaiting_disposition"
         runtime_note = (
-            " Peer runtime is no longer live, so this is awaiting an explicit "
+            " Actor runtime is no longer live, so this is awaiting an explicit "
             "completion, failure, or sign-off record."
         )
     if derived_status in {"starting", "active"} and evidence_live:
         derived_status = "producing_evidence"
-    still_running = derived_status in PEER_RUNNING_STATUS and not heartbeat_stale
+    still_running = derived_status in ACTOR_RUNNING_STATUS and not heartbeat_stale
     request_note = ""
-    if requested_status and derived_status not in PEER_TERMINAL_STATUS:
+    if requested_status and derived_status not in ACTOR_TERMINAL_STATUS:
         if requested_label == "stop":
             if derived_status == "stalled":
                 request_note = (
                     " Operator already requested a graceful stop"
                     + (f" ({requested_summary})." if requested_summary else ".")
                     + " Because the heartbeat is stale, you can settle now with "
-                    f"`gotta peer settle {_normalize_peer_name(peer_name)}`."
+                    f"`gotta actor settle {_normalize_actor_name(actor_name)}`."
                 )
             else:
                 request_note = (
                     " Operator already requested a graceful stop"
                     + (f" ({requested_summary})." if requested_summary else ".")
-                    + " The peer should wind down, append one final durable note, and sign off."
+                    + " The actor should wind down, append one final durable note, and sign off."
                 )
         elif derived_status == "stalled":
             request_note = (
                 f" Operator already requested `{requested_label}`"
                 + (f" ({requested_summary})." if requested_summary else ".")
                 + " Because the heartbeat is stale, you can settle now with "
-                f"`gotta peer settle {_normalize_peer_name(peer_name)}`."
+                f"`gotta actor settle {_normalize_actor_name(actor_name)}`."
             )
         else:
             request_note = (
                 f" Operator already requested `{requested_label}`"
                 + (f" ({requested_summary})." if requested_summary else ".")
                 + " That pending disposition will become authoritative automatically "
-                "when the peer runtime exits."
+                "when the actor runtime exits."
             )
     if derived_status == "producing_evidence":
         if notes_ready:
             next_step = (
-                "peer is still active and producing evidence artifacts. "
+                "actor is still active and producing evidence artifacts. "
                 + (evidence_note + " " if evidence_note else "")
-                + "Use NOTES.md for live peer visibility; recheck `gotta peer status "
-                f"{_normalize_peer_name(peer_name)}` shortly before closing the peer out."
+                + "Use NOTES.md for live actor visibility; recheck `gotta actor status "
+                f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
                 + request_note
                 + runtime_note
             )
         else:
             next_step = (
-                "peer is still active and producing evidence artifacts, but NOTES.md is still empty. "
+                "actor is still active and producing evidence artifacts, but NOTES.md is still empty. "
                 + (evidence_note + " " if evidence_note else "")
                 + "Append a durable note before requesting completion or sign-off, then recheck "
-                f"`gotta peer status {_normalize_peer_name(peer_name)}` shortly."
+                f"`gotta actor status {_normalize_actor_name(actor_name)}` shortly."
                 + request_note
                 + runtime_note
             )
     elif derived_status in {"starting", "active"} and notes_ready:
         next_step = (
-            "peer is still active and has already started landing durable notes. "
-            "Use NOTES.md for live peer visibility; recheck `gotta peer status "
-            f"{_normalize_peer_name(peer_name)}` shortly before closing the peer out."
+            "actor is still active and has already started landing durable notes. "
+            "Use NOTES.md for live actor visibility; recheck `gotta actor status "
+            f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
             + request_note
             + runtime_note
         )
     elif derived_status == "awaiting_disposition":
         next_step = (
-            "peer runtime is no longer running, but no durable terminal lifecycle was recorded yet. "
+            "actor runtime is no longer running, but no durable terminal lifecycle was recorded yet. "
             + (evidence_note + " " if evidence_note else "")
             + "Inspect NOTES.md plus the shared evidence web, then settle with "
-            f"`gotta peer settle {_normalize_peer_name(peer_name)}`"
+            f"`gotta actor settle {_normalize_actor_name(actor_name)}`"
             + (
                 f" to honor the pending `{requested_label}` request."
                 if requested_status
@@ -1544,7 +1541,7 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
         )
     elif derived_status == "stalled" and (notes_ready or evidence_live):
         next_step = (
-            "peer heartbeat is stale, but material peer work already exists in NOTES.md or the "
+            "actor heartbeat is stale, but material actor state already exists in NOTES.md or the "
             "shared evidence web. "
             + (evidence_note + " " if evidence_note else "")
             + "Inspect the notes and decide whether to wait, relaunch, or disposition manually."
@@ -1553,24 +1550,24 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
     elif derived_status == "completed" and (notes_ready or evidence_live):
         if notes_ready:
             next_step = (
-                "peer run is complete; inspect NOTES.md plus the shared evidence web, then record "
+                "actor run is complete; inspect NOTES.md plus the shared evidence web, then record "
                 "durable sign-off with "
-                f"`gotta peer signoff {_normalize_peer_name(peer_name)} --summary ...`."
+                f"`gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
             )
         else:
             next_step = (
-                "peer run is complete and evidence landed, but NOTES.md is still empty. Wait for a "
+                "actor run is complete and evidence landed, but NOTES.md is still empty. Wait for a "
                 "durable note or sign off intentionally only if you are explicitly accepting an "
-                "evidence-only peer contribution."
+                "evidence-only actor contribution."
             )
     elif derived_status == "incomplete":
         next_step = (
-            "peer finished without material notes or evidence. Decide whether to relaunch, "
+            "actor finished without material notes or evidence. Decide whether to relaunch, "
             "fail, or sign off intentionally."
         )
     elif derived_status == "failed" and evidence_note:
         next_step = (
-            "peer was manually marked failed, but evidence already landed in shared state. "
+            "actor was manually marked failed, but evidence already landed in shared state. "
             + evidence_note
             + " Keep or reject that evidence intentionally instead of assuming it vanished."
         )
@@ -1579,9 +1576,9 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
     return {
         **state,
         "status": derived_status,
-        "state_path": str(_peer_state_path(work_dir, peer_name)),
-        "events_path": str(_peer_events_path(work_dir, peer_name)),
-        "peer_dir": str(peer_dir),
+        "state_path": str(_actor_state_path(work_dir, actor_name)),
+        "events_path": str(_actor_events_path(work_dir, actor_name)),
+        "actor_dir": str(actor_dir),
         "notes_path": str(notes_path),
         "notes_status": notes_status,
         "notes_ready": notes_ready,
@@ -1591,7 +1588,7 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
         "requested_summary": requested_summary,
         "requested_label": requested_label,
         "requested_pending": bool(
-            requested_status and derived_status not in PEER_TERMINAL_STATUS
+            requested_status and derived_status not in ACTOR_TERMINAL_STATUS
         ),
         "still_running": still_running,
         "runtime_live": runtime_live,
@@ -1604,57 +1601,57 @@ def _peer_status_payload(work_dir: Path, peer_name: str) -> dict[str, object]:
     }
 
 
-def _ensure_peer_todo_items(work_dir: Path, peer_name: str) -> None:
-    actor = _normalize_peer_name(peer_name)
-    label = _peer_label(actor)
+def _ensure_actor_todo_items(work_dir: Path, actor_name: str) -> None:
+    actor = _normalize_actor_name(actor_name)
+    label = _actor_label(actor)
     ensure_managed_todo_item(
         work_dir,
-        section="Peer Checklist",
-        text=f"Initial peer pass collected from {label}",
-        managed_key=_peer_todo_marker(actor, "initial"),
+        section="Actor Checklist",
+        text=f"Initial actor pass collected from {label}",
+        managed_key=_actor_todo_marker(actor, "initial"),
     )
     ensure_managed_todo_item(
         work_dir,
-        section="Peer Checklist",
+        section="Actor Checklist",
         text=f"{label} run materially complete",
-        managed_key=_peer_todo_marker(actor, "complete"),
+        managed_key=_actor_todo_marker(actor, "complete"),
     )
     ensure_managed_todo_item(
         work_dir,
-        section="Peer Checklist",
+        section="Actor Checklist",
         text=f"{label} findings dispositioned",
-        managed_key=_peer_todo_marker(actor, "dispositioned"),
+        managed_key=_actor_todo_marker(actor, "dispositioned"),
     )
     ensure_managed_todo_item(
         work_dir,
-        section="Peer Checklist",
-        text="Final peer sign-off collected after edits for the chosen team",
+        section="Actor Checklist",
+        text="Final actor sign-off collected after edits for the chosen team",
         managed_key=FINAL_SIGNOFF_MARKER,
     )
 
 
-def _sync_peer_todo_state(work_dir: Path) -> None:
+def _sync_actor_todo_state(work_dir: Path) -> None:
     actor_ids = _selected_actor_ids(work_dir)
-    peer_payloads = {peer: _peer_status_payload(work_dir, peer) for peer in actor_ids}
+    actor_payloads = {actor: _actor_status_payload(work_dir, actor) for actor in actor_ids}
     launched_actor_ids = [
-        peer
-        for peer in actor_ids
-        if str(peer_payloads[peer].get("status") or "pending") not in {"pending", "configured"}
+        actor
+        for actor in actor_ids
+        if str(actor_payloads[actor].get("status") or "pending") not in {"pending", "bound"}
     ]
-    for peer_name in launched_actor_ids:
-        _ensure_peer_todo_items(work_dir, peer_name)
+    for actor_name in launched_actor_ids:
+        _ensure_actor_todo_items(work_dir, actor_name)
     items_by_key = {
         str(item.get("managed_key") or ""): item for item in todo_items(work_dir) if item.get("managed_key")
     }
-    for peer_name in launched_actor_ids:
-        payload = peer_payloads[peer_name]
+    for actor_name in launched_actor_ids:
+        payload = actor_payloads[actor_name]
         materially_complete = bool(payload.get("notes_ready") or payload.get("evidence_live"))
         terminal = str(payload.get("status") or "") in {"completed", "failed", "rejected", "signed_off", "incomplete"}
         signed_off = str(payload.get("status") or "") == "signed_off"
         for marker, checked in (
-            (_peer_todo_marker(peer_name, "initial"), materially_complete),
-            (_peer_todo_marker(peer_name, "complete"), terminal),
-            (_peer_todo_marker(peer_name, "dispositioned"), signed_off),
+            (_actor_todo_marker(actor_name, "initial"), materially_complete),
+            (_actor_todo_marker(actor_name, "complete"), terminal),
+            (_actor_todo_marker(actor_name, "dispositioned"), signed_off),
         ):
             item = items_by_key.get(marker)
             if item is None:
@@ -1664,132 +1661,138 @@ def _sync_peer_todo_state(work_dir: Path) -> None:
                 items_by_key[marker] = updated
     final_item = items_by_key.get(FINAL_SIGNOFF_MARKER)
     final_checked = bool(launched_actor_ids) and all(
-        str(peer_payloads[peer].get("status") or "") == "signed_off"
-        for peer in launched_actor_ids
+        str(actor_payloads[actor].get("status") or "") == "signed_off"
+        for actor in launched_actor_ids
     )
     if final_item is not None:
         set_todo_checked(work_dir, str(final_item["id"]), checked=final_checked)
 
 
-def _sync_peer_projection_surfaces(work_dir: Path, peer_name: str) -> None:
-    peer = _normalize_peer_name(peer_name)
-    sync_peer_notes_projection(
+def _sync_actor_projection_surfaces(work_dir: Path, actor_name: str) -> None:
+    actor = _normalize_actor_name(actor_name)
+    sync_actor_notes_projection(
         work_dir,
-        peer,
-        label=_peer_label(peer),
-        status_payload=_peer_status_payload(work_dir, peer),
+        actor,
+        label=_actor_label(actor),
+        status_payload=_actor_status_payload(work_dir, actor),
     )
 
 
-def _peer_launch_command(work_dir: Path, peer_name: str) -> str:
-    return f"gotta peer launch {peer_name} --session {sh_quote(str(work_dir))}"
+def _actor_launch_command(work_dir: Path, actor_name: str) -> str:
+    return f"gotta actor launch {actor_name} --session {sh_quote(str(work_dir))}"
 
 
-def _ensure_peer_surface(work_dir: Path, peer_name: str) -> Path:
-    peer_name = _normalize_peer_name(peer_name)
-    state = _load_work_state(work_dir)
+def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
+    actor_name = _normalize_actor_name(actor_name)
+    state = _load_session_state(work_dir)
     actors = _actor_registry_from_state(state)
-    actor = actors.get(peer_name)
+    actor = actors.get(actor_name)
     if actor is None:
-        raise SystemExit(f"unknown peer: {peer_name}")
-    repo_raw = str(state.get("GOTTA_WORK_REPO") or "").strip()
-    peer_dir = peer_session_root(work_dir, peer_name)
-    bin_path = work_dir / "bin" / peer_name
-    if peer_dir != work_dir:
-        if peer_dir.exists() and not _peer_is_selected(work_dir, peer_name):
-            _reset_orphaned_peer_surface(peer_dir)
-        _seed_peer_surface(
-            peer_dir,
-            _peer_label(peer_name),
+        raise SystemExit(f"unknown actor: {actor_name}")
+    repo_raw = str(state.get(SESSION_REPO_ENV) or "").strip()
+    actor_dir = actor_session_root(work_dir, actor_name)
+    bin_path = work_dir / "bin" / actor_name
+    if actor_dir != work_dir:
+        if actor_dir.exists() and not _actor_is_selected(work_dir, actor_name):
+            _reset_orphaned_actor_surface(actor_dir)
+        _seed_actor_surface(
+            actor_dir,
+            _actor_label(actor_name),
             work_dir=work_dir,
-            ensure_symlink=_ensure_symlink,
         )
-        _copy_if_present(work_dir / "AGENTS.md", peer_dir / "AGENTS.md")
-        _copy_if_present(work_dir / "VOICE.md", peer_dir / "VOICE.md")
-        _ensure_peer_session_exports(
-            peer_dir,
+        _copy_if_present(work_dir / "AGENTS.md", actor_dir / "AGENTS.md")
+        _copy_if_present(work_dir / "VOICE.md", actor_dir / "VOICE.md")
+        _ensure_actor_session_exports(
+            actor_dir,
             content_dir=work_dir / "content",
-            session_root=work_dir,
+            session_dir=work_dir / "session" if (work_dir / "session").exists() else work_dir,
         )
-        _ensure_peer_parent_links(work_dir, peer_name, peer_dir)
+        _ensure_actor_parent_links(work_dir, actor_name, actor_dir)
     else:
-        _seed_file(peer_dir / "README.md", _peer_readme(_peer_label(peer_name)))
-        _ensure_state_exports(peer_dir)
+        _seed_file(actor_dir / "README.md", _actor_readme(_actor_label(actor_name)))
+        _ensure_state_exports(actor_dir)
     _write_state_file(
-        peer_dir,
+        actor_dir,
         {
-            WORK_INITIALIZED_ENV: "1",
-            "GOTTA_WORK_REPO": repo_raw,
-            "GOTTA_WORK_CREATED": str(state.get("GOTTA_WORK_CREATED") or ""),
-            GOTTA_WORK_ACTORS_JSON: _actor_registry_json(actors),
-            "GOTTA_WORK_WANT_PATH": str(peer_dir / WANT_FILE),
-            "GOTTA_WORK_AGENTS_SOURCE": str(state.get("GOTTA_WORK_AGENTS_SOURCE") or ""),
-            "GOTTA_WORK_VOICE_SOURCE": str(state.get("GOTTA_WORK_VOICE_SOURCE") or ""),
-            PEER_SESSION_ACTOR_ENV: peer_name,
+            SESSION_INITIALIZED_ENV: "1",
+            SESSION_REPO_ENV: repo_raw,
+            SESSION_CREATED_ENV: str(state.get(SESSION_CREATED_ENV) or ""),
+            SESSION_ACTORS_ENV: _actor_registry_json(actors),
+            SESSION_WANT_PATH_ENV: str(actor_dir / WANT_FILE),
+            SESSION_ACTORS_SOURCE_ENV: str(state.get(SESSION_ACTORS_SOURCE_ENV) or ""),
+            SESSION_VOICE_SOURCE_ENV: str(state.get(SESSION_VOICE_SOURCE_ENV) or ""),
+            SESSION_ACTOR_ENV: actor_name,
         },
     )
-    if not todo_state_path(peer_dir).exists():
-        todo_state_path(peer_dir).parent.mkdir(parents=True, exist_ok=True)
-        todo_state_path(peer_dir).touch()
-        sync_todo_projection(peer_dir)
-    _ensure_peer_initial_todo(peer_dir)
-    _write_peer_state(
+    if not session_surface_initialized(actor_dir):
+        repo_path = Path(repo_raw).expanduser().resolve() if repo_raw else None
+        scaffold_session(actor_dir, repo=repo_path)
+    _ensure_actor_initial_todo(actor_dir)
+    _write_actor_state(
         work_dir,
-        peer_name,
+        actor_name,
         {
-            "status": str(_read_peer_state(work_dir, peer_name).get("status") or "pending"),
-            "notes_path": str(peer_notes_surface_path(work_dir, peer_name)),
+            "status": str(_read_actor_state(work_dir, actor_name).get("status") or "pending"),
+            "notes_path": str(actor_notes_surface_path(work_dir, actor_name)),
         },
     )
-    _sync_peer_projection_surfaces(work_dir, peer_name)
-    if peer_dir != work_dir:
+    _sync_actor_projection_surfaces(work_dir, actor_name)
+    if actor_dir != work_dir:
         bin_path.parent.mkdir(parents=True, exist_ok=True)
         bin_path.write_text(
-            _peer_script(
+            _actor_script(
                 work_dir=work_dir,
-                peer_dir=peer_dir,
-                peer_name=peer_name,
+                actor_dir=actor_dir,
+                actor_name=actor_name,
             ),
             encoding="utf-8",
         )
         bin_path.chmod(0o755)
-    return peer_dir
+    return actor_dir
 
 
-def _configure_peer(session_root: Path, peer_name: str) -> str:
-    peer = _normalize_peer_name(peer_name)
-    bin_path = session_root / "bin" / peer
-    already_configured = _peer_is_selected(session_root, peer) and bin_path.exists()
-    _ensure_peer_surface(session_root, peer)
-    current_status = str(_read_peer_state(session_root, peer).get("status") or "pending")
-    if current_status in {"", "pending"}:
-        _write_peer_state(session_root, peer, {"status": "configured"})
-        _sync_peer_projection_surfaces(session_root, peer)
-    launch_cmd = _peer_launch_command(session_root, peer)
-    peer_want = _peer_dir_path(session_root, peer) / WANT_FILE
-    peer_goal = _peer_dir_path(session_root, peer) / "GOAL.md"
-    peer_todo = _peer_dir_path(session_root, peer) / "TODO.md"
-    want_cmd = _peer_charter_command(peer, "want")
-    goal_cmd = _peer_charter_command(peer, "goal")
-    peer_blockers = _peer_launch_blockers(session_root, peer_name=peer)
-    if peer_blockers:
+def _bind_actor(session_root: Path, actor_name: str) -> str:
+    actor = _normalize_actor_name(actor_name)
+    bin_path = session_root / "bin" / actor
+    already_bound = _actor_is_selected(session_root, actor) and bin_path.exists()
+    _ensure_actor_surface(session_root, actor)
+    current_status = str(_read_actor_state(session_root, actor).get("status") or "pending")
+    if current_status in {
+        "",
+        "pending",
+        "completed",
+        "failed",
+        "incomplete",
+        "rejected",
+        "signed_off",
+    }:
+        _write_actor_state(session_root, actor, {"status": "bound"})
+        _sync_actor_projection_surfaces(session_root, actor)
+    launch_cmd = _actor_launch_command(session_root, actor)
+    actor_want = _actor_dir_path(session_root, actor) / WANT_FILE
+    actor_goal = _actor_dir_path(session_root, actor) / "GOAL.md"
+    actor_todo = _actor_dir_path(session_root, actor) / "TODO.md"
+    want_cmd = _actor_charter_command(actor, "want")
+    goal_cmd = _actor_charter_command(actor, "goal")
+    actor_blockers = _actor_launch_blockers(session_root, actor_name=actor)
+    if actor_blockers:
         suffix = (
-            f"; not launched. Rewrite `{peer_want}` and `{peer_goal}` for {_peer_label(peer)} with `{want_cmd}` and `{goal_cmd}` first. "
-            f"`{peer_todo}` is already seeded with a minimal peer-local checklist and you may extend it before launch if useful, "
-            f"then launch with `{launch_cmd}` when you actually want {_peer_label(peer)} to start"
+            f"; not launched. Rewrite `{actor_want}` and `{actor_goal}` for {_actor_label(actor)} with `{want_cmd}` and `{goal_cmd}` first. "
+            f"`{actor_todo}` is already seeded with a minimal actor-local checklist and you may extend it before launch if useful, "
+            f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor)} to start"
         )
     else:
         suffix = (
-            f"; not launched. `{peer_want}` and `{peer_goal}` are already real. "
-            f"`{peer_todo}` is already seeded with a minimal peer-local checklist and you may extend it before launch if useful, "
-            f"then launch with `{launch_cmd}` when you actually want {_peer_label(peer)} to start"
+            f"; not launched. `{actor_want}` and `{actor_goal}` are already real. "
+            f"`{actor_todo}` is already seeded with a minimal actor-local checklist and you may extend it before launch if useful, "
+            f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor)} to start"
         )
-    if already_configured:
-        return f"{_peer_label(peer)} already configured{suffix}"
-    _append_peer_event(session_root, peer, event="configured", detail="configured peer workspace")
-    _peer_log_line(session_root, peer, "configured workspace")
+    if already_bound:
+        return f"{_actor_label(actor)} already bound{suffix}"
+    _append_actor_event(session_root, actor, event="bound", detail="bound actor session")
+    _actor_log_line(session_root, actor, "bound session")
     return (
-        f"configured {_peer_label(peer)} workspace, linked peer session, seeded peer-local WANT/GOAL placeholders, seeded peer-local TODO, launch shim, linked shared logs, and evidence access only"
+        f"bound {_actor_label(actor)} session, seeded actor-local WANT/GOAL placeholders, seeded actor-local TODO, launch shim, actor-local logs/oops, and shared evidence access"
         f"{suffix}"
     )
 

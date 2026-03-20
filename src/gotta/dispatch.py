@@ -22,6 +22,7 @@ from gotta.content import (
     content_locator,
     materialize_bytes,
     resolve_dirs,
+    session_identity,
     session_is_initialized,
 )
 from gotta.builtin import (
@@ -376,7 +377,7 @@ def _materialize_invocation(
         return None
     materialize_plugin = resolved.resolved_plugin
     materialize_argv = resolved.resolved_argv
-    actor = os.environ.get("GOTTA_PEER_LABEL", "").strip() or "primary"
+    actor = os.environ.get("GOTTA_ACTOR_LABEL", "").strip() or session_identity(dirs.session_dir)
     metadata = {
         "tool": "gotta",
         "plugin": materialize_plugin,
@@ -395,9 +396,9 @@ def _materialize_invocation(
         metadata["entry_argv"] = resolved.entry_argv
         metadata["entry_locator"] = invocation_locator(resolved.entry_plugin, resolved.entry_argv)
         metadata["provider"] = resolved.provider
-    peer_dir = os.environ.get("GOTTA_PEER_DIR", "").strip()
-    if peer_dir:
-        metadata["peer_dir"] = peer_dir
+    actor_dir = os.environ.get("GOTTA_ACTOR_DIR", "").strip()
+    if actor_dir:
+        metadata["actor_dir"] = actor_dir
     invocation_id = os.environ.get("GOTTA_INVOCATION_ID", "").strip()
     if invocation_id:
         metadata["invocation_id"] = invocation_id
@@ -439,7 +440,7 @@ def require_operational_session(dirs: ResolvedDirs) -> None:
 
 
 def run_plugin(plugin: str, argv: list[str]) -> int:
-    if plugin in {"session", "work"}:
+    if plugin == "session":
         options = CommonOptions()
         cleaned = argv
     else:

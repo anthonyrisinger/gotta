@@ -16,23 +16,25 @@ import tempfile
 from typing import Any
 
 from gotta.compat import UTC, datetime
-from gotta.config import user_data_dir
+from gotta import topology
 
 SESSION_ENV = "GOTTA_SESSION_DIR"
 SESSION_ID_ENV = "GOTTA_SESSION_ID"
 CONTENT_ENV = "GOTTA_SESSION_CONTENT_DIR"
 STATE_DIR_ENV = "GOTTA_SESSION_STATE_DIR"
+SESSION_ACTOR_ENV = "GOTTA_SESSION_ACTOR"
 SESSION_REPO_ENV = "GOTTA_SESSION_REPO"
 SESSION_CREATED_ENV = "GOTTA_SESSION_CREATED"
 SESSION_ACTIVATION_ENV = "GOTTA_SESSION_ACTIVATION"
 CONTEXT_ACTIVE_ENV = "GOTTA_CONTEXT_ACTIVE"
 CONTEXT_ID_ENV = "GOTTA_CONTEXT_ID"
 CONTEXT_SOURCE_ENV = "GOTTA_CONTEXT_SOURCE"
-WORK_INITIALIZED_ENV = "GOTTA_WORK_INITIALIZED"
+SESSION_INITIALIZED_ENV = "GOTTA_SESSION_INITIALIZED"
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
-DEFAULT_SESSION_ROOT = user_data_dir() / "sessions"
+DEFAULT_SESSION_ROOT = topology.DEFAULT_SESSIONS_ROOT
+DEFAULT_BINDINGS_ROOT = topology.DEFAULT_BINDINGS_ROOT
 ACTIVITY_LOG_NAME = "activity.jsonl"
 
 
@@ -44,6 +46,8 @@ class ContentError(RuntimeError):
 class CommonOptions:
     session_dir: str | None = None
     content_dir: str | None = None
+    session_id: str | None = None
+    actor: str | None = None
     save_as: str | None = None
 
 
@@ -189,40 +193,43 @@ def session_token(context_id: str) -> str:
     return hashlib.sha256(context_id.encode("utf-8")).hexdigest()[:12]
 
 
+def default_session_id(context_id: str) -> str:
+    return session_token(context_id)
+
+
 def context_bound_session_root() -> Path | None:
     context_id, _context_source = current_context_binding()
-    root = DEFAULT_SESSION_ROOT.expanduser().resolve() / session_token(context_id)
+    fingerprint = session_token(context_id)
+    root = topology.resolve_binding(fingerprint)
+    if root is None:
+        legacy = (
+            DEFAULT_SESSION_ROOT.expanduser().resolve()
+            / fingerprint
+            / "actors"
+            / fingerprint
+        )
+        if session_is_initialized(legacy):
+            return legacy
+        return None
     if session_is_initialized(root):
         return root
-    if not DEFAULT_SESSION_ROOT.expanduser().resolve().exists():
-        return None
-    matches: list[Path] = []
-    for candidate in DEFAULT_SESSION_ROOT.expanduser().resolve().iterdir():
-        if not candidate.is_dir():
-            continue
-        if not session_is_initialized(candidate):
-            continue
-        state = load_state_env_at_root(candidate)
-        if state.get(CONTEXT_ID_ENV, "").strip() == context_id:
-            matches.append(candidate.resolve())
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        raise ContentError(
-            "ambiguous gotta session binding for the current context; "
-            "multiple initialized sessions claim the same deterministic context id"
-        )
     return None
 
 
 def _current_actor() -> str:
-    return os.environ.get("GOTTA_PEER_LABEL", "").strip() or "primary"
+    explicit = (
+        os.environ.get("GOTTA_ACTOR_LABEL", "").strip()
+        or os.environ.get(SESSION_ACTOR_ENV, "").strip()
+    )
+    if explicit and not topology.is_placeholder_identity(explicit):
+        return topology.normalize_identity(explicit)
+    return session_token(current_context_binding()[0])
 
 
 def append_activity_event(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     event = dict(payload)
     event.setdefault("timestamp", iso_utc())
-    event.setdefault("actor", _current_actor())
+    event.setdefault("actor", session_identity(root) or _current_actor())
     _append_jsonl_line(activity_log_path(root), event)
     return event
 
@@ -306,11 +313,14 @@ def write_session_state(
     updates: dict[str, str] | None = None,
 ) -> Path:
     existing = load_state_env_at_root(dirs.session_dir)
+    current_session_id = session_id(dirs.session_dir)
+    identity = session_identity(dirs.session_dir)
     merged = {
         **existing,
         **env_mapping(dirs),
+        SESSION_ID_ENV: current_session_id,
+        SESSION_ACTOR_ENV: identity,
     }
-    merged.setdefault(SESSION_ID_ENV, default_session_id(dirs.session_dir))
     if updates:
         merged.update({key: value for key, value in updates.items() if value is not None})
     ordered = [
@@ -318,12 +328,13 @@ def write_session_state(
         SESSION_ID_ENV,
         CONTENT_ENV,
         STATE_DIR_ENV,
+        SESSION_ACTOR_ENV,
         SESSION_REPO_ENV,
         SESSION_CREATED_ENV,
         SESSION_ACTIVATION_ENV,
         CONTEXT_ID_ENV,
         CONTEXT_SOURCE_ENV,
-        WORK_INITIALIZED_ENV,
+        SESSION_INITIALIZED_ENV,
     ]
     extras = [key for key in merged if key not in ordered]
     lines: list[str] = []
@@ -337,82 +348,80 @@ def write_session_state(
 
 
 def session_is_initialized(root: Path) -> bool:
+    if topology.parse_shared_session_root(root) is not None:
+        return False
     return state_env_path(root).exists()
-
-
-def default_session_id(root: Path) -> str:
-    resolved = root.expanduser().resolve()
-    return resolved.name or sanitize_name(str(resolved))
-
-
 def session_id(root: Path) -> str:
     state = load_state_env_at_root(root)
     explicit = str(state.get(SESSION_ID_ENV) or "").strip()
     if explicit:
         return explicit
-    return default_session_id(root)
+    return topology.shared_session_id(root)
 
 
 def resolve_session_root_by_id(session_ref: str) -> Path | None:
-    normalized = session_ref.strip()
-    if not normalized:
+    root = topology.resolve_session_root_by_id(session_ref)
+    if root is None:
         return None
-    root = DEFAULT_SESSION_ROOT.expanduser().resolve() / normalized
     if session_is_initialized(root):
         return root.resolve()
-    if not DEFAULT_SESSION_ROOT.expanduser().resolve().exists():
-        return None
-    for candidate in DEFAULT_SESSION_ROOT.expanduser().resolve().iterdir():
-        if not candidate.is_dir():
-            continue
-        if not session_is_initialized(candidate):
-            continue
-        if session_id(candidate) == normalized:
-            return candidate.resolve()
-    return None
+    return root.resolve()
 
 
 def resolve_session_reference(
     raw: str,
     *,
+    identity: str | None = None,
     allow_missing: bool = False,
 ) -> Path | None:
     normalized = raw.strip()
     if not normalized:
         return None
+    candidate = Path(normalized).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+        shared_id = topology.parse_shared_session_root(resolved)
+        if shared_id is not None and identity:
+            return topology.session_root_for(shared_id, identity).resolve()
+        return resolved
     by_id = resolve_session_root_by_id(normalized)
     if by_id is not None:
         return by_id
-    candidate = Path(normalized).expanduser()
-    if candidate.is_absolute():
-        return candidate.resolve()
-    anchors: list[Path] = []
-    env_session = os.environ.get(SESSION_ENV, "").strip()
-    if env_session:
-        anchors.append(Path(env_session).expanduser().resolve())
-    nearest = _nearest_session_root(Path.cwd())
-    if nearest is not None:
-        anchors.append(nearest)
-    context_root = context_bound_session_root()
-    if context_root is not None:
-        anchors.append(context_root)
-    for anchor in anchors:
-        linked = (anchor / candidate)
-        if linked.exists() or linked.is_symlink() or allow_missing:
-            return Path(os.path.normpath(str(linked))).expanduser().resolve()
+    if "/" in normalized:
+        session_id, session_identity = normalized.split("/", 1)
+        root = topology.session_root_for(session_id, session_identity)
+        if allow_missing or root.exists() or root.is_symlink():
+            return root.resolve()
+    if identity:
+        shared_root = topology.shared_session_root_for(normalized)
+        if allow_missing or shared_root.exists() or shared_root.is_symlink():
+            return topology.session_root_for(normalized, identity).resolve()
     return None
 
 
 def bound_session_root(*, include_context_session: bool = True) -> Path | None:
+    discovered = discover_state_env(include_context_session=include_context_session)
+    identity_raw = (
+        os.environ.get(SESSION_ACTOR_ENV, "").strip()
+        or str(discovered.get(SESSION_ACTOR_ENV) or "").strip()
+    )
+    identity = (
+        topology.normalize_identity(identity_raw)
+        if identity_raw and not topology.is_placeholder_identity(identity_raw)
+        else ""
+    )
     explicit = os.environ.get(SESSION_ENV, "").strip()
     if explicit:
-        candidate = resolve_session_reference(explicit, allow_missing=False)
+        candidate = resolve_session_reference(explicit, identity=identity, allow_missing=False)
         if candidate is not None and session_is_initialized(candidate):
             return candidate
-    discovered = discover_state_env(include_context_session=include_context_session)
     discovered_root = str(discovered.get(SESSION_ENV) or "").strip()
     if discovered_root:
-        candidate = resolve_session_reference(discovered_root, allow_missing=False)
+        candidate = resolve_session_reference(
+            discovered_root,
+            identity=identity,
+            allow_missing=False,
+        )
         if candidate is not None and session_is_initialized(candidate):
             return candidate
     for raw_id in (
@@ -421,8 +430,12 @@ def bound_session_root(*, include_context_session: bool = True) -> Path | None:
     ):
         if not raw_id:
             continue
+        if identity:
+            sibling = topology.session_root_for(raw_id, identity)
+            if session_is_initialized(sibling):
+                return sibling
         candidate = resolve_session_root_by_id(raw_id)
-        if candidate is not None:
+        if candidate is not None and session_is_initialized(candidate):
             return candidate
     if include_context_session:
         return context_bound_session_root()
@@ -442,23 +455,47 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
         or ("" if explicit_session else os.environ.get(CONTENT_ENV, "").strip())
         or ("" if explicit_session else discovered.get(CONTENT_ENV, "").strip())
     )
+    session_id_raw = (
+        options.session_id
+        or os.environ.get(SESSION_ID_ENV, "").strip()
+        or discovered.get(SESSION_ID_ENV, "").strip()
+    )
+    identity_raw = (
+        options.actor
+        or os.environ.get(SESSION_ACTOR_ENV, "").strip()
+        or discovered.get(SESSION_ACTOR_ENV, "").strip()
+    )
+    if not identity_raw or topology.is_placeholder_identity(identity_raw):
+        identity_raw = session_token(current_context_binding()[0])
 
     session: Path | None = (
-        resolve_session_reference(session_raw, allow_missing=create)
+        resolve_session_reference(
+            session_raw,
+            identity=identity_raw,
+            allow_missing=create,
+        )
         if session_raw
         else None
     )
     if session_raw and session is None:
-        raw_candidate = Path(session_raw).expanduser()
-        if not raw_candidate.is_absolute():
-            raise ContentError(
-                "relative session references require an active or discoverable "
-                "session root. Use `gotta ...` to bind one first or pass an "
-                "absolute `--session` path."
-            )
-    content: Path | None = (
-        Path(content_raw).expanduser() if content_raw else None
-    )
+        session_id = topology.normalize_session_id(session_raw)
+        identity = topology.normalize_identity(identity_raw)
+        session = topology.session_root_for(session_id, identity)
+        if create:
+            shared_session_root(session_id).mkdir(parents=True, exist_ok=True)
+        content_raw = str(shared_session_root(session_id) / "content")
+    if session is None and session_id_raw:
+        session_id = topology.normalize_session_id(session_id_raw)
+        identity = topology.normalize_identity(identity_raw)
+        session = topology.session_root_for(session_id, identity)
+        if create:
+            shared_session_root(session_id).mkdir(parents=True, exist_ok=True)
+        content_raw = str(shared_session_root(session_id) / "content")
+    if not content_raw and session is not None:
+        parsed = topology.parse_grouped_session_root(session)
+        if parsed is not None:
+            content_raw = str(shared_session_root(parsed[0]) / "content")
+    content: Path | None = Path(content_raw).expanduser() if content_raw else None
 
     if session is None and content is not None:
         session = content.parent
@@ -486,22 +523,55 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
 def export_env_lines(dirs: ResolvedDirs) -> list[str]:
     return [
         f"export {SESSION_ENV}={sh_quote(str(dirs.session_dir))}",
+        f"export {SESSION_ID_ENV}={sh_quote(session_id(dirs.session_dir))}",
         f"export {CONTENT_ENV}={sh_quote(str(dirs.content_dir))}",
         f"export {STATE_DIR_ENV}={sh_quote(str(state_dir_path(dirs.session_dir)))}",
+        f"export {SESSION_ACTOR_ENV}={sh_quote(session_identity(dirs.session_dir))}",
     ]
 
 
 def env_mapping(dirs: ResolvedDirs) -> dict[str, str]:
     return {
         SESSION_ENV: str(dirs.session_dir),
+        SESSION_ID_ENV: session_id(dirs.session_dir),
         CONTENT_ENV: str(dirs.content_dir),
         STATE_DIR_ENV: str(state_dir_path(dirs.session_dir)),
+        SESSION_ACTOR_ENV: session_identity(dirs.session_dir),
     }
 
 
-def work_is_initialized(root: Path) -> bool:
+def shared_session_root(session_id: str) -> Path:
+    return topology.shared_session_root_for(session_id)
+
+
+def session_shared_id(root: Path) -> str:
     state = load_state_env_at_root(root)
-    if state.get(WORK_INITIALIZED_ENV, "").strip() == "1":
+    explicit = str(state.get(SESSION_ID_ENV) or "").strip()
+    if explicit:
+        return topology.normalize_session_id(explicit)
+    return topology.shared_session_id(root)
+
+
+def session_identity(root: Path) -> str:
+    state = load_state_env_at_root(root)
+    explicit = str(state.get(SESSION_ACTOR_ENV) or state.get("GOTTA_SESSION_ACTOR") or "").strip()
+    if explicit and not topology.is_placeholder_identity(explicit):
+        return topology.normalize_identity(explicit)
+    derived = topology.session_identity(root)
+    if derived and not topology.is_placeholder_identity(derived):
+        return derived
+    resolved = root.expanduser().resolve()
+    if topology.parse_shared_session_root(resolved) is not None:
+        return _current_actor()
+    fallback = topology.normalize_identity(resolved.name)
+    if topology.is_placeholder_identity(fallback):
+        return session_token(current_context_binding()[0])
+    return fallback
+
+
+def session_surface_initialized(root: Path) -> bool:
+    state = load_state_env_at_root(root)
+    if state.get(SESSION_INITIALIZED_ENV, "").strip() == "1":
         return True
     required = ("WANT.md", "TODO.md", "LOGS.md", "GOAL.md", "OOPS.md")
     return all((root / name).exists() for name in required)
@@ -659,9 +729,9 @@ def materialize_bytes(
             "fetched_at": ts,
             "fetcher": metadata.get("tool", "gotta"),
             "plugin": metadata.get("plugin", ""),
-            "actor": metadata.get("actor", "primary"),
-            "peer_dir": metadata.get("peer_dir", ""),
-            "work_root": metadata.get("work_root", ""),
+            "actor": metadata.get("actor") or session_identity(dirs.session_dir) or _current_actor(),
+            "actor_dir": metadata.get("actor_dir", ""),
+            "session_root": metadata.get("session_root", ""),
             "checksum": digest,
             "preferred_name": sanitize_name(preferred_name),
             "fetch_link": str(fetch_link),

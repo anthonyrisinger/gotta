@@ -1,12 +1,12 @@
 # Gotta
 
 `gotta` is a session-rooted CLI for evidence acquisition, operational memory,
-durable continuity, and linked peer workflows.
+durable continuity, and linked actor workflows.
 
 The point is broader than retrieving one more document. `gotta` is designed to
-keep agent work coherent when terminal history, model context windows, or human
+keep actor work coherent when terminal history, model context windows, or human
 working memory come under pressure. It pushes enough state, provenance, and
-materialized evidence into durable external form. This lets an agent rehydrate
+materialized evidence into durable external form. This lets an actor rehydrate
 prior work reliably and continue from grounded context.
 
 The public surface stays small:
@@ -22,7 +22,7 @@ dispatches the requested plugin with that session active. You do not need to
 
 ## Continuity Over Context Windows
 
-Agents work in waves. They pull a few strong anchors, expand into adjacent
+Actors work in waves. They pull a few strong anchors, expand into adjacent
 evidence, synthesize the resulting web, and then eventually hit compression
 pressure. Context windows compact. Terminal history scrolls away. Thin
 summaries preserve headlines but lose the path that made those headlines
@@ -42,7 +42,7 @@ ephemeral. A session can be reopened, inspected, extended, handed off, or
 compacted and rehydrated without losing the shape of the work.
 
 The medium-term bet is equally deliberate: native CLI working surfaces remain
-one of the strongest places for serious agent work. They provide room to
+one of the strongest places for serious actor work. They provide room to
 inspect, correlate, transform, act on, and resume real evidence. `gotta`
 leans into that by treating retrieval, memory, and action as part of the same
 working surface.
@@ -219,7 +219,7 @@ of prior interactions.
 
 ## Retrieval And Materialization
 
-Provider-first usage without `work` is first-class:
+Provider-first usage without extra selector scaffolding is first-class:
 
 ```bash
 gotta jira status
@@ -324,7 +324,8 @@ $WS/
   LOGS.md
   GOAL.md
   OOPS.md
-  peers/
+  session -> ../../sessions/<session-id>
+  content -> ../../sessions/<session-id>/content
   bin/
 ```
 
@@ -334,7 +335,7 @@ Inside the session surface:
 - `state/todo.jsonl` is canonical and projects into `TODO.md`
 - `state/logs.jsonl` is canonical and projects into `LOGS.md`
 - `state/oops.jsonl` is canonical and projects into `OOPS.md`
-- peer lifecycle state, peer notes state, and the session evidence web carry
+- actor lifecycle state, actor notes state, and the session evidence web carry
   shared coordination
 
 This split is deliberate:
@@ -365,45 +366,54 @@ Search results were followable, but one direct fetch still had a continuity gap.
 EOF
 ```
 
-## Flat Linked Peer Sessions
+## Shared Sessions
 
-Peers are linked sessions, not hierarchical sub-objects.
+Each shared session now owns its evidence web directly and carries nested
+actor-local session areas beneath it.
 
-- `peers/<actor>/` is a symlink to that linked peer session root
-- `state/peers/<actor>/` is a symlink to that peer session's `state/`
-- peer-local planning and lifecycle state stay peer-local
-- shared coordination surfaces stay shared by explicit links
+- shared session roots live at `sessions/<session-id>/`
+- actor-local session areas live at `sessions/<session-id>/actors/<actor>/`
+- the active fingerprint points at one actor-local root through
+  `bindings/<fingerprint>`
+- shared evidence lives under `sessions/<session-id>/content/`
+- actor-local planning and lifecycle state stay local to each actor root
+- actor targeting is explicit actor selection inside the current session, not
+  path traversal under `actors/`
 
 Examples:
 
 ```bash
-gotta peer with Claude
-gotta want --session peers/claude --stdin <<'EOF'
+gotta session bind retry-review
+gotta actor bind Claude
+gotta want --actor claude --stdin <<'EOF'
 Trace retry ownership from the first strong source anchor.
 EOF
-gotta goal --session peers/claude --stdin <<'EOF'
-Materialize the peer-local evidence contract before launch.
+gotta goal --actor claude --stdin <<'EOF'
+Materialize the actor-local evidence contract before launch.
 EOF
-gotta peer launch Claude
-gotta notes show claude
-gotta todo extend --session peers/claude <<'EOF'
+gotta actor launch Claude
+gotta notes show --actor claude
+gotta todo extend --actor claude <<'EOF'
 - Compare retry behavior across the earliest design docs.
 EOF
 ```
 
 Important invariants:
 
-- `gotta peer with ...` configures linked peer sessions but does not launch
-  them
-- peer-local `WANT.md` and `GOAL.md` are seeded placeholders that must be
-  rewritten before launch with `gotta want --session peers/<peer> ...` and
-  `gotta goal --session peers/<peer> ...`
-- peer-local `TODO.md` is seeded automatically and can be extended
-- peer notes are supervisory visibility, not a separate truth store
-- peer evidence often lands in the shared manifest, timeline, and graph before
+- `gotta session bind ...` switches the active fingerprint binding to one
+  session-local actor root
+- `gotta actor bind ...` binds sibling actor sessions inside that shared
+  session
+  but does not launch them
+- actor-local `WANT.md` and `GOAL.md` are seeded placeholders that must be
+  rewritten before launch with `gotta want --actor <actor> ...` and
+  `gotta goal --actor <actor> ...`
+- actor-local `TODO.md` is seeded automatically and can be extended
+- actor notes are supervisory visibility, not a separate truth store
+- actor evidence often lands in the shared manifest, timeline, and graph before
   notes fully catch up
 
-The important property is continuity under delegation. Peers can branch, gather
+The important property is continuity under delegation. Actors can branch, gather
 evidence, and rejoin the shared working set without flattening everything into
 a single chat transcript.
 
@@ -445,7 +455,7 @@ Core currently ships these top-level plugins:
 - `logs`
 - `notes`
 - `oops`
-- `peer`
+- `actor`
 - `read`
 - `session`
 - `slack`

@@ -56,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("target", nargs="?")
+    parser.add_argument("--session", help=argparse.SUPPRESS)
+    parser.add_argument("--actor", help=argparse.SUPPRESS)
     parser.add_argument(
         "--recursive",
         action="store_true",
@@ -89,10 +91,20 @@ def parse_args(argv: list[str]) -> ReadRequest:
             routed_plugin=None,
             routed_argv=(),
         )
-    values: dict[str, object] = {"recursive": False, "max_depth": 3, "head": 0, "tail": 0, "section": ""}
+    values: dict[str, object] = {
+        "recursive": False,
+        "max_depth": 3,
+        "head": 0,
+        "tail": 0,
+        "section": "",
+    }
     flags = {"--recursive": "recursive"}
     int_fields = {"--max-depth": "max_depth", "--head": "head", "--tail": "tail"}
-    str_fields = {"--section": "section"}
+    str_fields = {
+        "--section": "section",
+        "--session": "session",
+        "--actor": "actor",
+    }
     residual: list[str] = []
     index = 0
     while index < len(argv):
@@ -149,7 +161,7 @@ def _routed_plugins() -> list[PluginSpec]:
             spec
             for spec in (get_plugin(name) for name in available_plugins())
             if spec
-            and spec.name not in {"read", "session", "work"}
+            and spec.name not in {"read", "session"}
             and spec.route_target is not None
         ],
         key=lambda item: (item.route_priority, item.name),

@@ -1,51 +1,53 @@
-"""Shared peer-session path helpers."""
+"""Shared actor-session path helpers."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from gotta import content
+from gotta import topology
 
 
-PEER_SESSION_ACTOR_ENV = "GOTTA_WORK_SESSION_ACTOR"
+SESSION_ACTOR_ENV = "GOTTA_SESSION_ACTOR"
 SUPERVISOR_STOP_STATUS = "failed"
 SUPERVISOR_GRACEFUL_STOP_MODE = "stop"
 SUPERVISOR_GRACEFUL_STOP_STATUS = "signed_off"
 SUPERVISOR_STOP_FALLBACK_STATUSES = {"starting", "active", "stalled"}
 
 
-def normalize_peer_name(value: str) -> str:
+def normalize_actor_name(value: str) -> str:
     return content.sanitize_name(value.strip().lower())
 
 
 def session_actor(root: Path) -> str:
     state = content.load_state_env_at_root(root)
-    return normalize_peer_name(str(state.get(PEER_SESSION_ACTOR_ENV) or ""))
+    return normalize_actor_name(str(state.get(SESSION_ACTOR_ENV) or ""))
 
 
-def peer_session_id(parent_root: Path, peer_name: str) -> str:
-    return content.sanitize_name(
-        f"{content.session_id(parent_root)}-{normalize_peer_name(peer_name)}"
+def actor_session_id(parent_root: Path, actor_name: str) -> str:
+    return topology.default_actor_session_id(
+        content.session_shared_id(parent_root),
+        normalize_actor_name(actor_name),
     )
 
 
-def peer_link_path(parent_root: Path, peer_name: str) -> Path:
-    return parent_root / "peers" / normalize_peer_name(peer_name)
+def actor_link_path(parent_root: Path, actor_name: str) -> Path:
+    return topology.session_root_for(
+        content.session_shared_id(parent_root),
+        normalize_actor_name(actor_name),
+    )
 
 
-def peer_state_link_dir(parent_root: Path, peer_name: str) -> Path:
-    return parent_root / "state" / "peers" / normalize_peer_name(peer_name)
+def actor_state_link_dir(parent_root: Path, actor_name: str) -> Path:
+    return actor_link_path(parent_root, actor_name) / "state"
 
 
-def peer_session_root(parent_root: Path, peer_name: str) -> Path:
-    normalized = normalize_peer_name(peer_name)
+def actor_session_root(parent_root: Path, actor_name: str) -> Path:
+    normalized = normalize_actor_name(actor_name)
     if session_actor(parent_root) == normalized:
         return parent_root.resolve()
-    link = peer_link_path(parent_root, normalized)
-    if link.exists() or link.is_symlink():
-        return link.resolve()
-    return content.DEFAULT_SESSION_ROOT.expanduser().resolve() / peer_session_id(
-        parent_root,
+    return topology.session_root_for(
+        content.session_shared_id(parent_root),
         normalized,
     )
 
@@ -79,7 +81,7 @@ def requested_disposition_label(status_payload: dict[str, object]) -> str:
 
 
 def supervisor_stop_message(
-    peer_name: str,
+    actor_name: str,
     *,
     status_payload: dict[str, object] | None = None,
     summary: str = "",
@@ -104,7 +106,7 @@ def supervisor_stop_message(
             requested_mode == SUPERVISOR_GRACEFUL_STOP_MODE
             and requested_status == SUPERVISOR_GRACEFUL_STOP_STATUS
         )
-        else ". Any further work may be discarded. Stop new retrieval, append one "
+        else ". Any further activity may be discarded. Stop new retrieval, append one "
         + "final durable note, and sign off ASAP with "
     )
-    return message + suffix + f"`gotta peer signoff {normalize_peer_name(peer_name)} --summary ...`."
+    return message + suffix + f"`gotta actor signoff {normalize_actor_name(actor_name)} --summary ...`."

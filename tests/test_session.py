@@ -10,13 +10,13 @@ from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
 from gotta import content, dispatch
 from gotta import leads
 from gotta import main as cli
-from gotta.peer import PEER_SESSION_ACTOR_ENV
+from gotta.actor import SESSION_ACTOR_ENV
 from gotta import session as sessionlib
 from gotta import todo as session_todo
-from gotta.notes import peer_notes_surface_path
+from gotta.notes import actor_notes_surface_path
 from gotta.plugins import goal
 from gotta.plugins import notes
-from gotta.plugins import peer
+from gotta.plugins import actor
 from gotta.plugins import session
 from gotta.plugins import want
 
@@ -31,7 +31,7 @@ def local_session_registry(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv(content.SESSION_REPO_ENV, raising=False)
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
     monkeypatch.delenv(ACTOR_CALLEE_ENV, raising=False)
-    monkeypatch.delenv(PEER_SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
 
 
 def make_dirs(root: Path) -> content.ResolvedDirs:
@@ -56,8 +56,8 @@ def _init_session(root: Path, capsys) -> None:
     assert capsys.readouterr().out.strip() == str(root.resolve())
 
 
-def _configure_peers(root: Path, capsys, *actors: str) -> str:
-    assert peer.main(["with", *actors, "--session", str(root)]) == 0
+def _bind_actors(root: Path, capsys, *actors: str) -> str:
+    assert actor.main(["bind", *actors, "--session", str(root)]) == 0
     return capsys.readouterr().out
 
 
@@ -109,10 +109,9 @@ def test_session_init_scaffolds_surface_and_preserves_context_state(
     state = content.load_state_env_at_root(root)
     assert state[content.CONTEXT_ID_ENV] == "ctx-123"
     assert state[content.CONTEXT_SOURCE_ENV] == "test"
-    assert state[content.WORK_INITIALIZED_ENV] == "1"
+    assert state[content.SESSION_INITIALIZED_ENV] == "1"
     for name in ("WANT.md", "GOAL.md", "TODO.md", "LOGS.md", "OOPS.md"):
         assert (root / name).exists()
-    assert not (root / "WORK.md").exists()
     assert "_empty_" in (root / "WANT.md").read_text(encoding="utf-8")
     assert "Mission seed" not in (root / "WANT.md").read_text(encoding="utf-8")
 
@@ -198,110 +197,93 @@ def test_want_and_goal_reject_inline_positional_text(
     assert goal_exc.value.code == 2
 
 
-def test_want_and_goal_can_target_linked_peer_sessions(
+def test_want_and_goal_can_target_actor_sessions_by_identity(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
+    _bind_actors(root, capsys, "Claude")
     monkeypatch.setenv(content.SESSION_ENV, str(root))
     monkeypatch.setenv(content.CONTENT_ENV, str(root / "content"))
-    peer_root = sessionlib._peer_session_dir(root, "claude")
-    charter_dir = peer_root / "charters"
+    actor_root = sessionlib._actor_session_dir(root, "claude")
+    charter_dir = actor_root / "charters"
     charter_dir.mkdir(parents=True, exist_ok=True)
-    (charter_dir / "want.txt").write_text("Peer-specific intent\n", encoding="utf-8")
-    (charter_dir / "goal.txt").write_text("Peer-specific goal\n", encoding="utf-8")
+    (charter_dir / "want.txt").write_text("Actor-specific intent\n", encoding="utf-8")
+    (charter_dir / "goal.txt").write_text("Actor-specific goal\n", encoding="utf-8")
 
-    assert want.main(["--session", "peers/claude", "--from-file", "charters/want.txt"]) == 0
+    assert want.main(["--session", str(actor_root), "--from-file", "charters/want.txt"]) == 0
     capsys.readouterr()
-    assert goal.main(["--session", "peers/claude", "--from-file", "charters/goal.txt"]) == 0
+    assert goal.main(["--session", str(actor_root), "--from-file", "charters/goal.txt"]) == 0
     capsys.readouterr()
 
-    assert (peer_root / "WANT.md").read_text(encoding="utf-8") == "Peer-specific intent\n"
-    assert (peer_root / "GOAL.md").read_text(encoding="utf-8") == "Peer-specific goal\n"
+    assert (actor_root / "WANT.md").read_text(encoding="utf-8") == "Actor-specific intent\n"
+    assert (actor_root / "GOAL.md").read_text(encoding="utf-8") == "Actor-specific goal\n"
 
 
-def test_peer_with_configures_linked_peer_surfaces_without_launching(
+def test_actor_bind_binds_grouped_actor_surfaces_without_launching(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    output = _configure_peers(root, capsys, "Claude", "Codex")
+    output = _bind_actors(root, capsys, "Claude", "Codex")
 
-    assert "configured Claude workspace" in output
-    assert "configured Codex workspace" in output
-    assert "gotta want --session peers/claude --stdin" in output
-    assert "gotta goal --session peers/claude --stdin" in output
-    for peer_name in ("claude", "codex"):
-        peer_root = sessionlib._peer_session_dir(root, peer_name)
-        assert peer_root.exists()
-        assert (root / "peers" / peer_name).resolve() == peer_root.resolve()
-        assert (root / "bin" / peer_name).is_file()
-        assert (peer_root / "README.md").is_file()
-        assert (peer_root / "TODO.md").is_file()
-        assert sessionlib._read_peer_state(root, peer_name)["status"] == "configured"
+    assert "bound Claude session" in output
+    assert "bound Codex session" in output
+    assert "gotta want --actor claude --stdin" in output
+    assert "gotta goal --actor claude --stdin" in output
+    for actor_name in ("claude", "codex"):
+        actor_root = sessionlib._actor_session_dir(root, actor_name)
+        assert actor_root.exists()
+        assert (root / "bin" / actor_name).is_file()
+        assert (actor_root / "README.md").is_file()
+        assert (actor_root / "TODO.md").is_file()
+        assert sessionlib._read_actor_state(root, actor_name)["status"] == "bound"
 
 
-def test_peer_launch_blockers_emit_native_peer_charter_commands(
+def test_actor_launch_blockers_emit_native_actor_charter_commands(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
+    _bind_actors(root, capsys, "Claude")
 
-    blockers = sessionlib._peer_launch_blockers(root, peer_name="claude")
+    blockers = sessionlib._actor_launch_blockers(root, actor_name="claude")
 
-    assert any("gotta want --session peers/claude --stdin" in blocker for blocker in blockers)
-    assert any("gotta goal --session peers/claude --stdin" in blocker for blocker in blockers)
+    assert any("gotta want --actor claude --stdin" in blocker for blocker in blockers)
+    assert any("gotta goal --actor claude --stdin" in blocker for blocker in blockers)
 
 
-def test_peer_launch_blockers_report_linked_peer_paths(
+def test_actor_launch_blockers_report_linked_actor_paths(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
+    _bind_actors(root, capsys, "Claude")
 
-    blockers = sessionlib._peer_launch_blockers(root, peer_name="claude")
+    blockers = sessionlib._actor_launch_blockers(root, actor_name="claude")
 
-    assert any(str(root / "peers" / "claude" / "WANT.md") in blocker for blocker in blockers)
-    assert any(str(root / "peers" / "claude" / "GOAL.md") in blocker for blocker in blockers)
-    assert not any(
-        str(sessionlib._peer_session_dir(root, "claude")) in blocker for blocker in blockers
-    )
+    assert any(str(sessionlib._actor_session_dir(root, "claude") / "WANT.md") in blocker for blocker in blockers)
+    assert any(str(sessionlib._actor_session_dir(root, "claude") / "GOAL.md") in blocker for blocker in blockers)
 
 
-def test_peer_status_empty_guidance_points_to_peer_with(
+def test_actor_status_empty_guidance_points_to_actor_bind(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
 
-    assert peer.main(["status", "--session", str(root)]) == 0
+    assert actor.main(["status", "--session", str(root)]) == 0
     output = capsys.readouterr().out
-    assert "no peers configured for this session" in output
-    assert "gotta peer with Claude" in output
+    assert "no actors bound for this session" in output
+    assert "gotta actor bind Claude" in output
 
 
-def test_notes_show_empty_guidance_points_to_peer_with(
-    tmp_path: Path, capsys
-) -> None:
-    root = tmp_path / "session"
-
-    _init_session(root, capsys)
-
-    assert notes.main(["show", "--session", str(root)]) == 0
-    output = capsys.readouterr().out
-    assert "no peers configured for this session" in output
-    assert "gotta peer with Claude" in output
-
-
-def test_notes_show_unconfigured_peer_fails_without_materializing_surface(
+def test_notes_show_requires_explicit_actor(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -309,24 +291,75 @@ def test_notes_show_unconfigured_peer_fails_without_materializing_surface(
     _init_session(root, capsys)
 
     with pytest.raises(SystemExit) as excinfo:
-        notes.main(["show", "claude", "--session", str(root)])
-
-    assert "claude is not configured for this session" in str(excinfo.value)
-    assert not (root / "peers" / "claude").exists()
-    assert not (root / "state" / "peers" / "claude").exists()
+        notes.main(["show", "--session", str(root)])
+    assert "missing actor; use `gotta notes show --actor <actor>`" in str(excinfo.value)
 
 
-def test_peer_complete_becomes_terminal_immediately_and_survives_heartbeat(
+def test_notes_show_unbound_actor_fails_without_materializing_surface(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(root, "claude", {"status": "active"})
+
+    with pytest.raises(SystemExit) as excinfo:
+        notes.main(["show", "--actor", "claude", "--session", str(root)])
+
+    assert "claude is not bound for this session" in str(excinfo.value)
+    assert not sessionlib._actor_session_dir(root, "claude").exists()
+
+
+def test_bound_session_root_prefers_explicit_identity_over_hyphen_split(
+    tmp_path: Path, monkeypatch
+) -> None:
+    registry = tmp_path / "sessions"
+    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+
+    foo_root = registry / "foo" / "actors" / "bar"
+    foo_content = registry / "foo" / "content"
+    foo_root.mkdir(parents=True, exist_ok=True)
+    foo_content.mkdir(parents=True, exist_ok=True)
+    content.write_session_state(
+        content.ResolvedDirs(session_dir=foo_root, content_dir=foo_content),
+        {
+            content.SESSION_ID_ENV: "foo",
+            content.SESSION_ACTOR_ENV: "bar",
+        },
+    )
+
+    foo_bar_root = registry / "foo-bar" / "actors" / "baz"
+    foo_bar_content = registry / "foo-bar" / "content"
+    foo_bar_root.mkdir(parents=True, exist_ok=True)
+    foo_bar_content.mkdir(parents=True, exist_ok=True)
+    content.write_session_state(
+        content.ResolvedDirs(session_dir=foo_bar_root, content_dir=foo_bar_content),
+        {
+            content.SESSION_ID_ENV: "foo-bar",
+            content.SESSION_ACTOR_ENV: "baz",
+        },
+    )
+
+    monkeypatch.delenv(content.SESSION_ENV, raising=False)
+    monkeypatch.setenv(content.SESSION_ID_ENV, "foo-bar")
+    monkeypatch.setenv(content.SESSION_ACTOR_ENV, "baz")
 
     assert (
-        peer.main(
+        content.bound_session_root(include_context_session=False)
+        == foo_bar_root.resolve()
+    )
+
+
+def test_actor_complete_becomes_terminal_immediately_and_survives_heartbeat(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(root, "claude", {"status": "active"})
+
+    assert (
+        actor.main(
             [
                 "complete",
                 "claude",
@@ -339,27 +372,27 @@ def test_peer_complete_becomes_terminal_immediately_and_survives_heartbeat(
         == 0
     )
     capsys.readouterr()
-    payload = sessionlib._peer_status_payload(root, "claude")
+    payload = sessionlib._actor_status_payload(root, "claude")
     assert payload["status"] == "completed"
     assert payload["requested_pending"] is False
     assert payload["summary"] == "ready for review"
 
-    assert peer.main(["heartbeat", "claude", "--session", str(root)]) == 0
+    assert actor.main(["heartbeat", "claude", "--session", str(root)]) == 0
     capsys.readouterr()
-    assert sessionlib._peer_status_payload(root, "claude")["status"] == "completed"
+    assert sessionlib._actor_status_payload(root, "claude")["status"] == "completed"
 
 
-def test_peer_signoff_becomes_terminal_immediately_and_survives_heartbeat(
+def test_actor_signoff_becomes_terminal_immediately_and_survives_heartbeat(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(root, "claude", {"status": "active"})
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(root, "claude", {"status": "active"})
 
     assert (
-        peer.main(
+        actor.main(
             [
                 "signoff",
                 "claude",
@@ -372,52 +405,52 @@ def test_peer_signoff_becomes_terminal_immediately_and_survives_heartbeat(
         == 0
     )
     capsys.readouterr()
-    payload = sessionlib._peer_status_payload(root, "claude")
+    payload = sessionlib._actor_status_payload(root, "claude")
     assert payload["status"] == "signed_off"
     assert payload["requested_pending"] is False
     assert payload["signoff_summary"] == "accepted by operator"
 
-    assert peer.main(["heartbeat", "claude", "--session", str(root)]) == 0
+    assert actor.main(["heartbeat", "claude", "--session", str(root)]) == 0
     capsys.readouterr()
-    assert sessionlib._peer_status_payload(root, "claude")["status"] == "signed_off"
+    assert sessionlib._actor_status_payload(root, "claude")["status"] == "signed_off"
 
 
-def test_peer_status_treats_signoff_timestamp_as_authoritative(
+def test_actor_status_treats_signoff_timestamp_as_authoritative(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(
         root,
         "claude",
         {
             "status": "active",
             "heartbeat_at": "2026-03-17T00:00:00Z",
             "signoff_at": "2026-03-17T00:01:00Z",
-            "signoff_summary": "peer closed itself cleanly",
+            "signoff_summary": "actor closed itself cleanly",
         },
     )
 
-    payload = sessionlib._peer_status_payload(root, "claude")
+    payload = sessionlib._actor_status_payload(root, "claude")
 
     assert payload["status"] == "signed_off"
     assert payload["still_running"] is False
-    assert payload["signoff_summary"] == "peer closed itself cleanly"
+    assert payload["signoff_summary"] == "actor closed itself cleanly"
 
 
-def test_peer_fail_stays_pending_while_live_and_notes_render_stop_warning(
+def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(root, "claude", {"status": "active"})
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(root, "claude", {"status": "active"})
 
     assert (
-        peer.main(
+        actor.main(
             [
                 "fail",
                 "claude",
@@ -430,28 +463,28 @@ def test_peer_fail_stays_pending_while_live_and_notes_render_stop_warning(
         == 0
     )
     output = capsys.readouterr().out
-    payload = sessionlib._peer_status_payload(root, "claude")
+    payload = sessionlib._actor_status_payload(root, "claude")
 
     assert "authoritative status stays active" in output
     assert payload["status"] == "active"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "failed"
-    notes_text = peer_notes_surface_path(root, "claude").read_text(encoding="utf-8")
+    notes_text = actor_notes_surface_path(root, "claude").read_text(encoding="utf-8")
     assert "Supervisor requested `failed` (operator stopped this run)." in notes_text
     assert "pending_disposition: failed: operator stopped this run" in notes_text
 
 
-def test_peer_stop_stays_pending_while_live_and_notes_render_graceful_warning(
+def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(root, "claude", {"status": "active"})
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(root, "claude", {"status": "active"})
 
     assert (
-        peer.main(
+        actor.main(
             [
                 "stop",
                 "claude",
@@ -464,7 +497,7 @@ def test_peer_stop_stays_pending_while_live_and_notes_render_graceful_warning(
         == 0
     )
     output = capsys.readouterr().out
-    payload = sessionlib._peer_status_payload(root, "claude")
+    payload = sessionlib._actor_status_payload(root, "claude")
 
     assert "recorded stop request for claude" in output
     assert payload["status"] == "active"
@@ -472,7 +505,7 @@ def test_peer_stop_stays_pending_while_live_and_notes_render_graceful_warning(
     assert payload["requested_status"] == "signed_off"
     assert payload["requested_mode"] == "stop"
     assert payload["requested_label"] == "stop"
-    notes_text = peer_notes_surface_path(root, "claude").read_text(encoding="utf-8")
+    notes_text = actor_notes_surface_path(root, "claude").read_text(encoding="utf-8")
     assert (
         "Supervisor requested a graceful stop (finish the current wave and close out)."
         in notes_text
@@ -486,8 +519,8 @@ def test_notes_projection_skips_supervisor_warning_for_nonfailed_pending_request
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(
         root,
         "claude",
         {
@@ -496,54 +529,54 @@ def test_notes_projection_skips_supervisor_warning_for_nonfailed_pending_request
             "requested_summary": "looked done from the operator side",
         },
     )
-    sessionlib._sync_peer_projection_surfaces(root, "claude")
+    sessionlib._sync_actor_projection_surfaces(root, "claude")
 
-    notes_text = peer_notes_surface_path(root, "claude").read_text(encoding="utf-8")
+    notes_text = actor_notes_surface_path(root, "claude").read_text(encoding="utf-8")
     assert "Supervisor requested `failed`" not in notes_text
     assert "pending_disposition: signed off: looked done from the operator side" in notes_text
 
 
-def test_peer_with_reconciles_preexisting_shared_log_file(
+def test_actor_bind_preserves_preexisting_actor_local_log_file(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    peer_root = sessionlib._peer_session_dir(root, "claude")
-    peer_root.mkdir(parents=True, exist_ok=True)
-    (peer_root / "LOGS.md").write_text("stale log placeholder\n", encoding="utf-8")
-    peer_state_dir = peer_root / "state"
-    peer_state_dir.mkdir(parents=True, exist_ok=True)
-    (peer_state_dir / "peer.json").write_text(
+    actor_root = sessionlib._actor_session_dir(root, "claude")
+    actor_root.mkdir(parents=True, exist_ok=True)
+    (actor_root / "LOGS.md").write_text("stale log placeholder\n", encoding="utf-8")
+    actor_state_dir = actor_root / "state"
+    actor_state_dir.mkdir(parents=True, exist_ok=True)
+    (actor_state_dir / "actor.json").write_text(
         json.dumps(
             {
-                "peer": "claude",
+                "actor": "claude",
                 "label": "Claude",
                 "status": "signed_off",
-                "signoff_summary": "stale orphaned peer state",
+                "signoff_summary": "stale orphaned actor state",
             }
         )
         + "\n",
         encoding="utf-8",
     )
-    (peer_root / "NOTES.md").write_text("# Claude Notes\n\nstale\n", encoding="utf-8")
+    (actor_root / "NOTES.md").write_text("# Claude Notes\n\nstale\n", encoding="utf-8")
 
-    assert peer.main(["with", "Claude", "--session", str(root)]) == 0
+    assert actor.main(["bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
 
-    assert (peer_root / "LOGS.md").is_symlink()
-    assert (peer_root / "LOGS.md").resolve() == (root / "LOGS.md").resolve()
-    assert sessionlib._peer_status_payload(root, "claude")["status"] == "configured"
+    assert (actor_root / "LOGS.md").is_file()
+    assert "stale log placeholder" in (actor_root / "LOGS.md").read_text(encoding="utf-8")
+    assert sessionlib._actor_status_payload(root, "claude")["status"] == "bound"
 
 
-def test_peer_status_reports_recent_activity_and_recent_artifacts(
+def test_actor_status_reports_recent_activity_and_recent_artifacts(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(
         root,
         "claude",
         {
@@ -552,7 +585,7 @@ def test_peer_status_reports_recent_activity_and_recent_artifacts(
             "signoff_summary": "accepted by operator",
         },
     )
-    events_path = sessionlib._peer_events_path(root, "claude")
+    events_path = sessionlib._actor_events_path(root, "claude")
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
         "\n".join(
@@ -560,7 +593,7 @@ def test_peer_status_reports_recent_activity_and_recent_artifacts(
                 json.dumps(
                     {
                         "timestamp": "2026-03-17T00:01:00Z",
-                        "peer": "claude",
+                        "actor": "claude",
                         "event": "heartbeat",
                         "detail": "",
                     }
@@ -568,7 +601,7 @@ def test_peer_status_reports_recent_activity_and_recent_artifacts(
                 json.dumps(
                     {
                         "timestamp": "2026-03-17T00:02:00Z",
-                        "peer": "claude",
+                        "actor": "claude",
                         "event": "signed_off",
                         "detail": "accepted by operator",
                     }
@@ -576,7 +609,7 @@ def test_peer_status_reports_recent_activity_and_recent_artifacts(
                 json.dumps(
                     {
                         "timestamp": "2026-03-17T00:03:00Z",
-                        "peer": "claude",
+                        "actor": "claude",
                         "event": "note",
                         "detail": "Wave 2 landed",
                     }
@@ -610,7 +643,7 @@ def test_peer_status_reports_recent_activity_and_recent_artifacts(
             timestamp=f"2026-03-17T00:0{index}:00.000001Z",
         )
 
-    assert peer.main(["status", "claude", "--session", str(root)]) == 0
+    assert actor.main(["status", "claude", "--session", str(root)]) == 0
     output = capsys.readouterr().out
     assert "artifacts: 4" in output
     assert "recent_activity: 2026-03-17T00:03:00Z Wave 2 landed" in output
@@ -622,15 +655,15 @@ def test_peer_status_reports_recent_activity_and_recent_artifacts(
     assert "heartbeat" not in output
 
 
-def test_peer_status_json_reports_recent_activity_and_last_activity_summary(
+def test_actor_status_json_reports_recent_activity_and_last_activity_summary(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _configure_peers(root, capsys, "Claude")
-    sessionlib._write_peer_state(root, "claude", {"status": "active"})
-    events_path = sessionlib._peer_events_path(root, "claude")
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(root, "claude", {"status": "active"})
+    events_path = sessionlib._actor_events_path(root, "claude")
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
         "\n".join(
@@ -638,7 +671,7 @@ def test_peer_status_json_reports_recent_activity_and_last_activity_summary(
                 json.dumps(
                     {
                         "timestamp": "2026-03-17T00:00:00Z",
-                        "peer": "claude",
+                        "actor": "claude",
                         "event": "heartbeat",
                         "detail": "",
                     }
@@ -646,7 +679,7 @@ def test_peer_status_json_reports_recent_activity_and_last_activity_summary(
                 json.dumps(
                     {
                         "timestamp": "2026-03-17T00:01:00Z",
-                        "peer": "claude",
+                        "actor": "claude",
                         "event": "note",
                         "detail": "Wave 1 landed",
                     }
@@ -654,9 +687,9 @@ def test_peer_status_json_reports_recent_activity_and_last_activity_summary(
                 json.dumps(
                     {
                         "timestamp": "2026-03-17T00:02:00Z",
-                        "peer": "claude",
+                        "actor": "claude",
                         "event": "runtime_exit",
-                        "detail": "peer process exited with code 0",
+                        "detail": "actor process exited with code 0",
                     }
                 ),
             ]
@@ -665,23 +698,64 @@ def test_peer_status_json_reports_recent_activity_and_last_activity_summary(
         encoding="utf-8",
     )
 
-    assert peer.main(["status", "claude", "--session", str(root), "--output", "json"]) == 0
+    assert actor.main(["status", "claude", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)["claude"]
     assert payload["last_activity_at"] == "2026-03-17T00:02:00Z"
-    assert payload["last_activity_summary"] == "runtime exit: peer process exited with code 0"
+    assert payload["last_activity_summary"] == "runtime exit: actor process exited with code 0"
     assert [item["event"] for item in payload["recent_activity"]] == ["runtime_exit", "note"]
     assert payload["artifact_count"] == 0
 
 
-def test_work_plugin_is_removed_without_redirect_shims(capsys) -> None:
-    assert cli.main(["work"]) == 2
-    err = capsys.readouterr().err
-    assert "unknown gotta plugin: work" in err
-    assert "peer with" not in err
+def test_session_bind_can_switch_active_session(tmp_path: Path, monkeypatch, capsys) -> None:
+    registry = tmp_path / "sessions"
+    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["work", "on", "legacy mission"]) == 2
-    err = capsys.readouterr().err
-    assert "unknown gotta plugin: work" in err
+    assert cli.main(["session", "bind", "legacy-mission"]) == 0
+    payload = dict(line.split("\t", 1) for line in capsys.readouterr().out.strip().splitlines())
+    assert payload["session"] == "legacy-mission"
+    assert payload["actor"] == cli._session_token("thread-123")
+    assert payload["root"].endswith(
+        f"/sessions/legacy-mission/actors/{cli._session_token('thread-123')}"
+    )
+
+
+def test_session_bind_without_id_returns_to_private_default(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "sessions"
+    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "legacy-mission"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["session", "bind"]) == 0
+    payload = dict(line.split("\t", 1) for line in capsys.readouterr().out.strip().splitlines())
+    fingerprint = cli._session_token("thread-123")
+    assert payload["session"] == fingerprint
+    assert payload["actor"] == fingerprint
+    assert payload["root"].endswith(f"/sessions/{fingerprint}/actors/{fingerprint}")
+
+
+def test_actor_bind_uses_current_bound_shared_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "sessions"
+    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "retry-review"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["actor", "bind", "Claude"]) == 0
+    output = capsys.readouterr().out
+    assert "bound Claude session" in output
+    assert (registry / "retry-review" / "actors" / "claude" / "WANT.md").exists()
+    assert not (registry / cli._session_token("thread-123") / "actors" / "claude").exists()
 
 
 def test_session_show_works_from_initialized_session_root(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -935,7 +1009,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
         timestamp="2026-03-11T00:00:00.000001Z",
     )
     content.materialize_bytes(
-        b"peer body",
+        b"actor body",
         dirs=dirs,
         preferred_name="4373708801.md",
         metadata={
@@ -1639,6 +1713,22 @@ def test_session_timeline_acquired_includes_native_local_activity(
     assert payload["events"][1]["locator"] == "LOGS.md"
     assert payload["events"][1]["event_kind"] == "local"
     assert payload["events"][1]["fetched_at"] == "2026-03-11T00:00:01Z"
+
+
+def test_session_timeline_labels_local_surface_snapshots_as_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+    local_root.joinpath("GOAL.md").write_text("# Goal\n", encoding="utf-8")
+
+    assert session.main(["timeline", "--session", str(local_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    goal_event = next(event for event in payload["events"] if event["locator"] == "GOAL.md")
+    assert goal_event["plugin"] == "session"
+    assert goal_event["mode"] == "local"
+    assert goal_event["follow_command"] == "gotta read 'GOAL.md'"
 
 
 def test_session_timeline_best_effort_mode_prefers_created_and_surfaces_gaps(

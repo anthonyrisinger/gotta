@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from gotta.compat import UTC, datetime
-from gotta.content import load_state_env_at_root, write_text_atomic
+from gotta.content import (
+    SESSION_REPO_ENV,
+    load_state_env_at_root,
+    session_identity,
+    write_text_atomic,
+)
 from gotta.projection import append_chunk, append_jsonl, read_jsonl_records
 
 
@@ -36,7 +41,7 @@ def logs_payload(work_dir: Path, *, limit: int = 0) -> dict[str, object]:
 
 def _repo_display_name(work_dir: Path) -> str:
     state = load_state_env_at_root(work_dir)
-    repo_path = str(state.get("GOTTA_WORK_REPO") or "").strip()
+    repo_path = str(state.get(SESSION_REPO_ENV) or "").strip()
     if not repo_path:
         return "Session"
     return Path(repo_path).name.capitalize() or "Session"
@@ -87,13 +92,13 @@ def append_log_record(
     work_dir: Path,
     *,
     message: str,
-    actor: str = "primary",
+    actor: str = "",
     timestamp: str | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "timestamp": timestamp or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "message": message,
-        "actor": actor,
+        "actor": actor or session_identity(work_dir),
         "channel": "logs",
     }
     log_path = logs_state_path(work_dir)

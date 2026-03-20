@@ -60,7 +60,7 @@ def test_materialize_bytes_creates_content_directory_and_manifest(tmp_path: Path
     manifest = json.loads(manifest_lines[0])
     assert manifest["plugin"] == "read"
     assert manifest["locator"] == "demo"
-    assert manifest["actor"] == "primary"
+    assert manifest["actor"] == "ws"
     assert manifest["preferred_name"] == "demo.md"
     assert Path(manifest["fetch_link"]).name == result.fetch_link.name
     assert Path(manifest["canonical_path"]).name == "data"
@@ -124,7 +124,7 @@ def test_activity_events_round_trip(tmp_path: Path) -> None:
     assert records == [
         {
             "action": "append",
-            "actor": "primary",
+            "actor": "ws",
             "detail": "appended 1 logs entry",
             "follow_command": "gotta read 'LOGS.md'",
             "locator": "LOGS.md",
@@ -161,8 +161,16 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", default_root)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
-    bound_root = default_root / content.session_token("thread-123")
-    dirs = initialize_session(bound_root)
+    fingerprint = content.session_token("thread-123")
+    bound_root = default_root / fingerprint / "actors" / fingerprint
+    dirs = content.ResolvedDirs(
+        session_dir=bound_root,
+        content_dir=default_root / fingerprint / "content",
+    )
+    dirs.session_dir.mkdir(parents=True, exist_ok=True)
+    dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    content.write_state_env(dirs)
+    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     content.write_session_state(
         dirs,
         {
@@ -173,7 +181,7 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
 
     resolved = content.resolve_dirs(content.CommonOptions(), create=False)
     assert resolved.session_dir == bound_root.resolve()
-    assert resolved.content_dir == (bound_root / "content").resolve()
+    assert resolved.content_dir == (default_root / fingerprint / "content").resolve()
 
 
 def test_current_context_binding_uses_term_session_as_first_class_identity(
@@ -255,16 +263,16 @@ def test_session_is_initialized_depends_on_state_env_only(tmp_path: Path) -> Non
     assert content.session_is_initialized(root) is True
 
 
-def test_work_is_initialized_requires_want_surface(tmp_path: Path) -> None:
+def test_session_surface_initialized_requires_want_surface(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     initialize_session(root)
     for name in ("TODO.md", "LOGS.md", "GOAL.md", "OOPS.md"):
         (root / name).write_text("", encoding="utf-8")
 
-    assert content.work_is_initialized(root) is False
+    assert content.session_surface_initialized(root) is False
 
     (root / "WANT.md").write_text("", encoding="utf-8")
-    assert content.work_is_initialized(root) is True
+    assert content.session_surface_initialized(root) is True
 
 
 def test_stdin_has_readable_text_rejects_empty_stringio(monkeypatch) -> None:

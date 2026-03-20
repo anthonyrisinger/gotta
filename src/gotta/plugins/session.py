@@ -14,6 +14,7 @@ import urllib.parse
 import uuid
 
 from gotta.compat import UTC, datetime
+from gotta import binding as binding_helpers
 from gotta.content import (
     CONTEXT_ID_ENV,
     CONTEXT_SOURCE_ENV,
@@ -30,13 +31,14 @@ from gotta.content import (
     SESSION_ACTIVATION_ENV,
     SESSION_CREATED_ENV,
     SESSION_REPO_ENV,
+    session_identity,
     session_is_initialized,
     sh_quote,
     state_env_path,
     load_state_env_at_root,
     write_text_atomic,
     write_session_state,
-    work_is_initialized,
+    session_surface_initialized,
 )
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.leads import (
@@ -49,7 +51,7 @@ from gotta.leads import (
     snapshot_last_fetched_at,
     snapshot_locator,
 )
-from gotta.notes import peer_notes_ready
+from gotta.notes import actor_notes_ready
 
 TIMELINE_MODE_ALIASES = {
     "acquisition": "acquired",
@@ -94,6 +96,15 @@ AGGREGATE_SOURCE_SUBCOMMANDS = {
 }
 
 
+def _fallback_actor(session_root: Path) -> str:
+    return session_identity(session_root) or "unknown"
+
+
+def _rendered_actor(raw: object, *, session_root: Path) -> str:
+    value = str(raw or "").strip()
+    return value or _fallback_actor(session_root)
+
+
 def _state_file(root: Path) -> Path:
     return state_env_path(root)
 
@@ -106,6 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     init = sub.add_parser("init")
+    bind = sub.add_parser("bind")
     show = sub.add_parser("show")
     doctor = sub.add_parser("doctor")
     manifest = sub.add_parser("manifest")
@@ -131,7 +143,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     for parser_ in (init, show, doctor, manifest, timeline, graph, analyze, leads):
         parser_.add_argument("--session", help="session root")
+        parser_.add_argument("--actor", help="actor within the current session")
         parser_.add_argument("--content-dir", help="explicit content directory override")
+
+    bind.add_argument("session_id", nargs="?", help="shared session id")
+    bind.add_argument("--actor", help="actor to bind inside that session")
+    bind.add_argument("--output", choices=["summary", "json", "path"], default="summary")
 
     init.add_argument(
         "--output",
@@ -155,7 +172,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
     )
     manifest.add_argument("--plugin")
-    manifest.add_argument("--actor")
     manifest.add_argument("--locator")
     manifest.add_argument("--limit", type=int, default=100)
     manifest.add_argument("--output", choices=["json", "text"], default="text")
@@ -200,6 +216,7 @@ def _options_from_args(
     return CommonOptions(
         session_dir=getattr(args, "session", None),
         content_dir=getattr(args, "content_dir", None),
+        actor=getattr(args, "actor", None),
     )
 
 def _require_started_session(dirs) -> None:
@@ -233,6 +250,14 @@ def cmd_show(args: argparse.Namespace) -> int:
     dirs = resolve_dirs(_options_from_args(args), create=False)
     _require_started_session(dirs)
     return _print_dirs(args, env_mapping(dirs))
+
+
+def cmd_bind(args: argparse.Namespace) -> int:
+    return binding_helpers.bind_current_context(
+        session_ref=getattr(args, "session_id", None),
+        actor=getattr(args, "actor", None),
+        output=getattr(args, "output", "summary"),
+    )
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -271,7 +296,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     )
     payload["session_created"] = state.get(SESSION_CREATED_ENV, "")
     payload["session_repo"] = state.get(SESSION_REPO_ENV, "")
-    payload["work_initialized"] = "yes" if work_is_initialized(dirs.session_dir) else "no"
+    payload["session_initialized"] = "yes" if session_surface_initialized(dirs.session_dir) else "no"
     return _print_dirs(args, payload)
 
 
@@ -303,7 +328,7 @@ def _filter_manifest_entries(
     for entry in entries:
         if plugin_filter and entry.get("plugin", "") != plugin_filter:
             continue
-        if actor_filter and entry.get("actor", "primary") != actor_filter:
+        if actor_filter and entry.get("actor", "") != actor_filter:
             continue
         if locator_filter:
             canonical = entry.get("canonical_locator", "")
@@ -531,7 +556,7 @@ def _meaningful_local_surface(path: Path) -> bool:
     if not path.is_file():
         return False
     if path.name == "NOTES.md":
-        return peer_notes_ready(path.parents[2], path.parent.name)
+        return actor_notes_ready(path.parents[2], path.parent.name)
     if path.name != "NOTES.md":
         return True
     return False
@@ -555,8 +580,8 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "source_updated_at": "",
                 "source_published_at": "",
                 "fetched_at": timestamp,
-                "plugin": str(raw.get("plugin") or "work").strip() or "work",
-                "actor": str(raw.get("actor") or "primary").strip() or "primary",
+                "plugin": str(raw.get("plugin") or "session").strip() or "session",
+                "actor": _rendered_actor(raw.get("actor"), session_root=dirs.session_dir),
                 "locator": locator,
                 "preferred_name": str(raw.get("preferred_name") or locator).strip() or locator,
                 "checksum": "",
@@ -567,19 +592,22 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "event_kind": "local",
             }
         )
-    relative_paths = list(LOCAL_TIMELINE_FILES)
-    relative_paths.extend(
-        str(path.relative_to(dirs.session_dir))
-        for pattern in ("peers/*/NOTES.md",)
-        for path in sorted(dirs.session_dir.glob(pattern))
-    )
-    for relative in relative_paths:
-        path = dirs.session_dir / relative
-        if relative in seen_locators or not _meaningful_local_surface(path):
+    candidates: list[tuple[str, Path, str, str]] = [
+        ("session", dirs.session_dir / relative, relative, f"gotta read {relative!r}")
+        for relative in LOCAL_TIMELINE_FILES
+    ]
+    for sibling in sorted(dirs.session_dir.parent.glob("*/NOTES.md")):
+        if sibling.parent.resolve() == dirs.session_dir.resolve():
+            continue
+        actor = sibling.parent.name
+        locator = f"actor:{actor}:notes"
+        follow = f"gotta read 'NOTES.md' --actor {actor}"
+        candidates.append(("actor", sibling, locator, follow))
+    for plugin, path, locator, follow_command in candidates:
+        if locator in seen_locators or not _meaningful_local_surface(path):
             continue
         timestamp = _iso_utc_from_timestamp(path.stat().st_mtime)
-        plugin = "peer" if relative.startswith("peers/") else "work"
-        actor = relative.split("/")[1] if relative.startswith("peers/") else "primary"
+        actor = path.parent.name if plugin == "actor" else _fallback_actor(dirs.session_dir)
         events.append(
             {
                 "mode": "local",
@@ -591,12 +619,12 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "fetched_at": timestamp,
                 "plugin": plugin,
                 "actor": actor,
-                "locator": relative,
+                "locator": locator,
                 "preferred_name": path.name,
                 "checksum": "",
                 "content_locator": "",
                 "artifact_locator": "",
-                "follow_command": f"gotta read {relative!r}",
+                "follow_command": follow_command,
                 "detail": "local surface snapshot",
                 "event_kind": "local",
             }
@@ -629,7 +657,10 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
                     "source_updated_at": source_timestamps.get("source_updated_at", ""),
                     "source_published_at": source_timestamps.get("source_published_at", ""),
                     "plugin": str(snapshot.metadata.get("plugin", "")).strip() or "unknown-plugin",
-                    "actor": str(snapshot.metadata.get("actor", "")).strip() or "primary",
+                    "actor": _rendered_actor(
+                        snapshot.metadata.get("actor"),
+                        session_root=dirs.session_dir,
+                    ),
                     "locator": locator,
                     "preferred_name": snapshot_display_name(snapshot),
                     "checksum": snapshot.digest,
@@ -670,7 +701,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
             "mode": "acquired",
             "fetched_at": str(entry.get("fetched_at", "")).strip(),
             "plugin": str(entry.get("plugin", "")).strip() or "unknown-plugin",
-            "actor": str(entry.get("actor", "")).strip() or "primary",
+            "actor": _rendered_actor(entry.get("actor"), session_root=dirs.session_dir),
             "locator": str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown",
             "preferred_name": str(entry.get("preferred_name", "")).strip() or "data",
             "checksum": str(entry.get("checksum", "")).strip(),
@@ -990,7 +1021,10 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
                         snapshot.metadata.get("preferred_name", "") or event.link_name
                     ),
                     "plugin": str(snapshot.metadata.get("plugin", "") or "unknown"),
-                    "actor": str(snapshot.metadata.get("actor", "") or "primary"),
+                    "actor": _rendered_actor(
+                        snapshot.metadata.get("actor"),
+                        session_root=snapshot.content_dir.parent.parent,
+                    ),
                     "rendering": _render_variant_label(variant),
                 }
             )
@@ -1050,7 +1084,7 @@ def _analysis_payload(dirs) -> dict[str, object]:
         locator = entry.get("locator") or source
         source_state["locators"].add(locator)
         plugin = entry.get("plugin") or "unknown"
-        actor = entry.get("actor") or "primary"
+        actor = _rendered_actor(entry.get("actor"), session_root=dirs.session_dir)
         source_state["plugins"].add(plugin)
         source_state["actors"].add(actor)
         source_state["entries"] = int(source_state["entries"]) + 1
@@ -1767,7 +1801,7 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     for entry in payload["entries"]:
         fetched_at = str(entry.get("fetched_at", "")).strip() or "unknown-time"
         plugin = str(entry.get("plugin", "")).strip() or "unknown-plugin"
-        actor = str(entry.get("actor", "")).strip() or "primary"
+        actor = _rendered_actor(entry.get("actor"), session_root=dirs.session_dir)
         locator = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown"
         preferred_name = str(entry.get("preferred_name", "")).strip() or "data"
         checksum = str(entry.get("checksum", "")).strip()
@@ -1924,6 +1958,8 @@ def main(argv: list[str]) -> int:
     try:
         args = parser.parse_args(argv)
         command = args.command or "show"
+        if command == "bind":
+            return cmd_bind(args)
         if command == "show":
             return cmd_show(args)
         if command == "init":

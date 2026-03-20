@@ -1,47 +1,52 @@
-"""Canonical peer notes state and readable projections."""
+"""Canonical actor notes state and readable projections."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from gotta.compat import UTC, datetime
-from gotta.actors import PRIMARY_ACTOR, resolve_actor_context
-from gotta.peer import (
-    peer_session_root,
+from gotta.actors import resolve_actor_context
+from gotta.actor import (
+    actor_session_root,
     requested_disposition_label,
     supervisor_stop_message,
     supervisor_stop_pending,
 )
+from gotta.content import SESSION_ACTOR_ENV, current_context_binding, session_token
 from gotta.projection import append_jsonl, read_jsonl_records, write_projection_if_changed
 
 
-PEER_NOTES_LOG_NAME = "notes.jsonl"
+ACTOR_NOTES_LOG_NAME = "notes.jsonl"
 
 
-def peer_notes_log_path(work_dir: Path, peer_name: str) -> Path:
-    return peer_session_root(work_dir, peer_name) / "state" / PEER_NOTES_LOG_NAME
+def actor_notes_log_path(work_dir: Path, actor_name: str) -> Path:
+    return actor_session_root(work_dir, actor_name) / "state" / ACTOR_NOTES_LOG_NAME
 
 
-def peer_notes_surface_path(work_dir: Path, peer_name: str) -> Path:
-    return peer_session_root(work_dir, peer_name) / "NOTES.md"
+def actor_notes_surface_path(work_dir: Path, actor_name: str) -> Path:
+    return actor_session_root(work_dir, actor_name) / "NOTES.md"
 
 
-def peer_notes_records(work_dir: Path, peer_name: str) -> list[dict[str, object]]:
-    return read_jsonl_records(peer_notes_log_path(work_dir, peer_name))
+def actor_notes_records(work_dir: Path, actor_name: str) -> list[dict[str, object]]:
+    return read_jsonl_records(actor_notes_log_path(work_dir, actor_name))
 
 
-def peer_notes_ready(work_dir: Path, peer_name: str) -> bool:
-    return any(str(record.get("message") or "").strip() for record in peer_notes_records(work_dir, peer_name))
+def actor_notes_ready(work_dir: Path, actor_name: str) -> bool:
+    return any(str(record.get("message") or "").strip() for record in actor_notes_records(work_dir, actor_name))
 
 
 def _author_name() -> str:
-    speaker = resolve_actor_context().speaker
-    return str(speaker or PRIMARY_ACTOR).strip() or PRIMARY_ACTOR
+    default_speaker = os.environ.get(SESSION_ACTOR_ENV, "").strip() or session_token(
+        current_context_binding()[0]
+    )
+    speaker = resolve_actor_context(default_speaker=default_speaker).speaker
+    return str(speaker or default_speaker).strip() or default_speaker
 
 
-def append_peer_note(
+def append_actor_note(
     work_dir: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     message: str,
     author: str = "",
@@ -50,38 +55,38 @@ def append_peer_note(
     payload = {
         "timestamp": timestamp or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "author": author.strip() or _author_name(),
-        "peer": peer_name,
+        "actor": actor_name,
         "message": message,
     }
-    append_jsonl(peer_notes_log_path(work_dir, peer_name), payload)
+    append_jsonl(actor_notes_log_path(work_dir, actor_name), payload)
     return payload
 
 
-def peer_notes_payload(
+def actor_notes_payload(
     work_dir: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     label: str,
     status_payload: dict[str, object],
 ) -> dict[str, object]:
     records = sorted(
-        peer_notes_records(work_dir, peer_name),
+        actor_notes_records(work_dir, actor_name),
         key=lambda item: str(item.get("timestamp") or ""),
     )
     return {
-        "peer": peer_name,
+        "actor": actor_name,
         "label": label,
-        "notes": str(peer_notes_surface_path(work_dir, peer_name)),
-        "notes_log": str(peer_notes_log_path(work_dir, peer_name)),
+        "notes": str(actor_notes_surface_path(work_dir, actor_name)),
+        "notes_log": str(actor_notes_log_path(work_dir, actor_name)),
         "status": status_payload,
         "entry_count": len(records),
         "entries": records,
     }
 
 
-def render_peer_notes_markdown(
+def render_actor_notes_markdown(
     work_dir: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     label: str,
     status_payload: dict[str, object],
@@ -89,9 +94,9 @@ def render_peer_notes_markdown(
     lines = [
         f"# {label} Notes",
         "",
-        f"> Generated automatically from `state/{PEER_NOTES_LOG_NAME}`.",
-        "> This is a human-readable projection; the structured peer notes log is canonical.",
-        "> Prefer `gotta notes append <peer> ...` for mutation.",
+        f"> Generated automatically from `state/{ACTOR_NOTES_LOG_NAME}`.",
+        "> This is a human-readable projection; the structured actor notes log is canonical.",
+        "> Prefer `gotta notes append --actor <actor> ...` for mutation.",
         "> Shared live pulse still lands in `LOGS.md` and the session evidence web.",
         "",
     ]
@@ -99,13 +104,13 @@ def render_peer_notes_markdown(
         lines.extend(
             [
                 "> [!WARNING]",
-                f"> {supervisor_stop_message(peer_name, status_payload=status_payload)}",
+                f"> {supervisor_stop_message(actor_name, status_payload=status_payload)}",
                 "",
             ]
         )
     lines.extend(
         [
-            "## Live Peer State",
+            "## Live Actor State",
             "",
             f"- status: `{status_payload.get('status', 'pending')}`",
             f"- notes_status: `{status_payload.get('notes_status', 'empty')}`",
@@ -134,7 +139,7 @@ def render_peer_notes_markdown(
         lines.append(f"- next_step: {status_payload['next_step']}")
     lines.extend(["", "## Entries", ""])
     records = sorted(
-        peer_notes_records(work_dir, peer_name),
+        actor_notes_records(work_dir, actor_name),
         key=lambda item: str(item.get("timestamp") or ""),
     )
     if not records:
@@ -142,13 +147,13 @@ def render_peer_notes_markdown(
             [
                 "- none yet",
                 "",
-                "Live peer evidence can still appear in session manifest, timeline, leads, and graph before notes are written.",
+                "Live actor evidence can still appear in session manifest, timeline, leads, and graph before notes are written.",
             ]
         )
         return "\n".join(lines) + "\n"
     for record in records:
         timestamp = str(record.get("timestamp") or "unknown-time")
-        author = str(record.get("author") or peer_name)
+        author = str(record.get("author") or actor_name)
         message = str(record.get("message") or "").strip() or "empty note"
         message_lines = message.splitlines() or ["empty note"]
         lines.append(f"- `{timestamp}` [{author}] {message_lines[0]}")
@@ -157,18 +162,18 @@ def render_peer_notes_markdown(
     return "\n".join(lines) + "\n"
 
 
-def sync_peer_notes_projection(
+def sync_actor_notes_projection(
     work_dir: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     label: str,
     status_payload: dict[str, object],
 ) -> None:
     write_projection_if_changed(
-        peer_notes_surface_path(work_dir, peer_name),
-        render_peer_notes_markdown(
+        actor_notes_surface_path(work_dir, actor_name),
+        render_actor_notes_markdown(
             work_dir,
-            peer_name,
+            actor_name,
             label=label,
             status_payload=status_payload,
         ),

@@ -10,13 +10,18 @@ import pytest
 from gotta import builtin
 from gotta import content
 from gotta import main as cli
-from gotta.peer import PEER_SESSION_ACTOR_ENV
+from gotta.actor import SESSION_ACTOR_ENV
 from gotta.plugins import jira
 
 
 def _set_default_session_root(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", root)
     monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", root)
+
+
+def _grouped_root(registry: Path, context_id: str, *, identity: str | None = None) -> Path:
+    fingerprint = cli._session_token(context_id)
+    return registry / fingerprint / "actors" / (identity or fingerprint)
 
 
 def test_main_rejects_unknown_plugin(capsys) -> None:
@@ -46,7 +51,9 @@ def test_main_creates_and_reuses_context_bound_session(
     assert cli.main(["jira", "status"]) == 0
     first_err = capsys.readouterr().err
     session_root = Path(seen[-1][1])
-    assert session_root.parent == (tmp_path / "session")
+    assert session_root.parent.name == "actors"
+    assert session_root.parent.parent == (tmp_path / "session" / cli._session_token("thread-123"))
+    assert session_root.name == cli._session_token("thread-123")
     assert (session_root / "state" / "env").exists()
     assert (session_root / "content").is_dir()
     assert (session_root / "WANT.md").is_file()
@@ -111,7 +118,7 @@ def test_main_session_init_creates_scaffolded_bound_session(
 
     assert cli.main(["session", "init"]) == 0
 
-    session_root = registry / cli._session_token("thread-123")
+    session_root = _grouped_root(registry, "thread-123")
     assert capsys.readouterr().out.strip() == str(session_root.resolve())
     assert (session_root / "WANT.md").is_file()
     assert (session_root / "GOAL.md").is_file()
@@ -204,7 +211,7 @@ def test_main_session_show_and_doctor_create_and_reuse_bound_session(
 
     assert cli.main(["session", "show"]) == 0
     show_output = capsys.readouterr().out
-    session_root = registry / cli._session_token("thread-123")
+    session_root = _grouped_root(registry, "thread-123")
     assert show_output.strip() == str(session_root.resolve())
     assert (session_root / "state" / "env").exists()
     assert (session_root / "content").is_dir()
@@ -213,7 +220,7 @@ def test_main_session_show_and_doctor_create_and_reuse_bound_session(
     assert cli.main(["session", "doctor"]) == 0
     doctor_output = json.loads(capsys.readouterr().out)
     assert doctor_output["GOTTA_SESSION_DIR"] == str(session_root.resolve())
-    assert doctor_output["work_initialized"] == "yes"
+    assert doctor_output["session_initialized"] == "yes"
 
 
 def test_main_failed_session_init_seed_does_not_leave_half_session(
@@ -228,7 +235,7 @@ def test_main_failed_session_init_seed_does_not_leave_half_session(
     err = capsys.readouterr().err
 
     assert excinfo.value.code == 2
-    session_root = registry / cli._session_token("thread-123")
+    session_root = _grouped_root(registry, "thread-123")
     assert "unrecognized arguments: legacy mission" in err
     assert (session_root / "WANT.md").is_file()
     assert (session_root / "GOAL.md").is_file()
@@ -257,14 +264,14 @@ def test_main_want_and_goal_reject_inline_positional_text(
     assert goal_exc.value.code == 2
 
 
-def test_main_explicit_relative_peer_session_resolves_from_bound_session(
+def test_main_explicit_actor_target_resolves_grouped_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     registry = tmp_path / "session"
     _set_default_session_root(monkeypatch, registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    parent_root = registry / cli._session_token("thread-123")
+    parent_root = _grouped_root(registry, "thread-123")
     parent_dirs = content.ResolvedDirs(
         session_dir=parent_root,
         content_dir=parent_root / "content",
@@ -279,21 +286,79 @@ def test_main_explicit_relative_peer_session_resolves_from_bound_session(
     )
     parent_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
 
-    peer_root = registry / f"{parent_root.name}-claude"
-    peer_dirs = content.ResolvedDirs(
-        session_dir=peer_root,
-        content_dir=peer_root / "content",
+    actor_root = registry / cli._session_token("thread-123") / "actors" / "claude"
+    actor_dirs = content.ResolvedDirs(
+        session_dir=actor_root,
+        content_dir=registry / cli._session_token("thread-123") / "content",
     )
-    peer_dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(peer_dirs)
-    peer_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
+    actor_dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    content.write_session_state(
+        actor_dirs,
+        {
+            content.SESSION_ID_ENV: cli._session_token("thread-123"),
+            content.SESSION_ACTOR_ENV: "claude",
+        },
+    )
+    actor_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
 
-    peer_link = parent_root / "peers" / "claude"
-    peer_link.parent.mkdir(parents=True, exist_ok=True)
-    peer_link.symlink_to(os.path.relpath(peer_root, start=peer_link.parent))
+    assert cli.main(["session", "show", "--actor", "claude"]) == 0
+    assert capsys.readouterr().out.strip() == str(actor_root.resolve())
 
-    assert cli.main(["session", "show", "--session", "peers/claude"]) == 0
-    assert capsys.readouterr().out.strip() == str(peer_root.resolve())
+
+def test_main_resolves_absolute_shared_session_root_to_active_identity(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "retry-review", "--actor", "claude"]) == 0
+    capsys.readouterr()
+
+    shared_root = registry / "retry-review"
+    expected_root = shared_root / "actors" / "claude"
+
+    assert cli.main(["session", "show", "--session", str(shared_root)]) == 0
+
+    assert capsys.readouterr().out.strip() == str(expected_root.resolve())
+    assert not (shared_root / "state" / "env").exists()
+
+
+def test_main_read_only_explicit_session_inspection_uses_existing_actor_root(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    shared_root = registry / "retry-review"
+    actor_root = shared_root / "actors" / "claude"
+    dirs = content.resolve_dirs(
+        content.CommonOptions(
+            session_dir=str(actor_root),
+            content_dir=str(shared_root / "content"),
+            actor="claude",
+        ),
+        create=True,
+    )
+    content.write_session_state(
+        dirs,
+        {
+            content.SESSION_ID_ENV: "retry-review",
+            content.SESSION_ACTOR_ENV: "claude",
+        },
+    )
+    shared_root.joinpath("session.json").write_text("{}\n", encoding="utf-8")
+
+    assert cli.main(["session", "timeline", "--session", "retry-review", "--output", "json"]) == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["sessionDir"] == str(actor_root.resolve())
+    assert "created a new gotta session" not in captured.err
+    assert not (
+        shared_root / "actors" / cli._session_token("thread-123") / "state" / "env"
+    ).exists()
 
 
 def test_main_uses_term_session_id_for_deterministic_binding(
@@ -320,13 +385,15 @@ def test_main_uses_term_session_id_for_deterministic_binding(
     assert cli.main(["jira", "status"]) == 0
 
     session_root = Path(seen[-1][1])
-    assert session_root.parent == (tmp_path / "session")
+    assert session_root.parent.name == "actors"
+    assert session_root.parent.parent == (tmp_path / "session" / cli._session_token("term-session-1"))
+    assert session_root.name == cli._session_token("term-session-1")
     assert seen[-1][2] == "term-session-1"
     assert seen[-1][3] == "term_session"
     assert "created a new gotta session" in capsys.readouterr().err
 
 
-def test_main_warns_peer_when_supervisor_requested_failed_disposition(
+def test_main_warns_actor_when_supervisor_requested_failed_disposition(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     seen: list[list[str]] = []
@@ -338,50 +405,53 @@ def test_main_warns_peer_when_supervisor_requested_failed_disposition(
         return 0
 
     monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
-    peer_root = registry / "peer-root"
-    peer_dirs = content.ResolvedDirs(
-        session_dir=peer_root,
-        content_dir=peer_root / "content",
+    shared_root = registry / "actor-root"
+    actor_root = shared_root / "actors" / "claude"
+    actor_dirs = content.ResolvedDirs(
+        session_dir=actor_root,
+        content_dir=shared_root / "content",
     )
-    peer_dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    actor_dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_session_state(
-        peer_dirs,
+        actor_dirs,
         {
             content.CONTEXT_ID_ENV: "thread-123",
             content.CONTEXT_SOURCE_ENV: "codex_thread",
-            PEER_SESSION_ACTOR_ENV: "claude",
+            content.SESSION_ID_ENV: "actor-root",
+            content.SESSION_ACTOR_ENV: "claude",
+            SESSION_ACTOR_ENV: "claude",
         },
     )
-    peer_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
-    peer_state_path = peer_root / "state" / "peer.json"
-    peer_state_path.parent.mkdir(parents=True, exist_ok=True)
-    peer_state_path.write_text(
+    actor_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
+    actor_state_path = actor_root / "state" / "actor.json"
+    actor_state_path.parent.mkdir(parents=True, exist_ok=True)
+    actor_state_path.write_text(
         json.dumps(
             {
-                "peer": "claude",
+                "actor": "claude",
                 "label": "Claude",
                 "status": "active",
                 "requested_status": "failed",
-                "requested_summary": "operator chose to stop this peer run",
+                "requested_summary": "operator chose to stop this actor run",
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("GOTTA_SESSION_DIR", str(peer_root))
+    monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
     monkeypatch.setenv("GOTTA_CONTEXT_ID", "thread-123")
     monkeypatch.setenv("GOTTA_CONTEXT_SOURCE", "codex_thread")
-    monkeypatch.setenv("GOTTA_WORK_SESSION_ACTOR", "claude")
+    monkeypatch.setenv("GOTTA_SESSION_ACTOR", "claude")
 
     assert cli.main(["jira", "status"]) == 0
     err = capsys.readouterr().err
 
     assert seen == [["jira", "status"]]
-    assert "Supervisor requested `failed` (operator chose to stop this peer run)." in err
-    assert "Any further work may be discarded." in err
-    assert "gotta peer signoff claude --summary ..." in err
+    assert "Supervisor requested `failed` (operator chose to stop this actor run)." in err
+    assert "Any further activity may be discarded." in err
+    assert "gotta actor signoff claude --summary ..." in err
 
 
-def test_main_warns_peer_when_supervisor_requested_graceful_stop(
+def test_main_warns_actor_when_supervisor_requested_graceful_stop(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     seen: list[list[str]] = []
@@ -393,27 +463,30 @@ def test_main_warns_peer_when_supervisor_requested_graceful_stop(
         return 0
 
     monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
-    peer_root = registry / "peer-root"
-    peer_dirs = content.ResolvedDirs(
-        session_dir=peer_root,
-        content_dir=peer_root / "content",
+    shared_root = registry / "actor-root"
+    actor_root = shared_root / "actors" / "claude"
+    actor_dirs = content.ResolvedDirs(
+        session_dir=actor_root,
+        content_dir=shared_root / "content",
     )
-    peer_dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    actor_dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_session_state(
-        peer_dirs,
+        actor_dirs,
         {
             content.CONTEXT_ID_ENV: "thread-123",
             content.CONTEXT_SOURCE_ENV: "codex_thread",
-            PEER_SESSION_ACTOR_ENV: "claude",
+            content.SESSION_ID_ENV: "actor-root",
+            content.SESSION_ACTOR_ENV: "claude",
+            SESSION_ACTOR_ENV: "claude",
         },
     )
-    peer_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
-    peer_state_path = peer_root / "state" / "peer.json"
-    peer_state_path.parent.mkdir(parents=True, exist_ok=True)
-    peer_state_path.write_text(
+    actor_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
+    actor_state_path = actor_root / "state" / "actor.json"
+    actor_state_path.parent.mkdir(parents=True, exist_ok=True)
+    actor_state_path.write_text(
         json.dumps(
             {
-                "peer": "claude",
+                "actor": "claude",
                 "label": "Claude",
                 "status": "active",
                 "requested_mode": "stop",
@@ -423,20 +496,20 @@ def test_main_warns_peer_when_supervisor_requested_graceful_stop(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("GOTTA_SESSION_DIR", str(peer_root))
+    monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
     monkeypatch.setenv("GOTTA_CONTEXT_ID", "thread-123")
     monkeypatch.setenv("GOTTA_CONTEXT_SOURCE", "codex_thread")
-    monkeypatch.setenv("GOTTA_WORK_SESSION_ACTOR", "claude")
+    monkeypatch.setenv("GOTTA_SESSION_ACTOR", "claude")
 
     assert cli.main(["jira", "status"]) == 0
     err = capsys.readouterr().err
 
     assert seen == [["jira", "status"]]
     assert "Supervisor requested a graceful stop (finish the current wave and close out)." in err
-    assert "gotta peer signoff claude --summary ..." in err
+    assert "gotta actor signoff claude --summary ..." in err
 
 
-def test_main_does_not_warn_peer_for_nonfailed_pending_disposition(
+def test_main_does_not_warn_actor_for_nonfailed_pending_disposition(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     seen: list[list[str]] = []
@@ -448,27 +521,27 @@ def test_main_does_not_warn_peer_for_nonfailed_pending_disposition(
         return 0
 
     monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
-    peer_root = registry / "peer-root"
-    peer_dirs = content.ResolvedDirs(
-        session_dir=peer_root,
-        content_dir=peer_root / "content",
+    actor_root = registry / "actor-root"
+    actor_dirs = content.ResolvedDirs(
+        session_dir=actor_root,
+        content_dir=actor_root / "content",
     )
-    peer_dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    actor_dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_session_state(
-        peer_dirs,
+        actor_dirs,
         {
             content.CONTEXT_ID_ENV: "thread-123",
             content.CONTEXT_SOURCE_ENV: "codex_thread",
-            PEER_SESSION_ACTOR_ENV: "claude",
+            SESSION_ACTOR_ENV: "claude",
         },
     )
-    peer_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
-    peer_state_path = peer_root / "state" / "peer.json"
-    peer_state_path.parent.mkdir(parents=True, exist_ok=True)
-    peer_state_path.write_text(
+    actor_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
+    actor_state_path = actor_root / "state" / "actor.json"
+    actor_state_path.parent.mkdir(parents=True, exist_ok=True)
+    actor_state_path.write_text(
         json.dumps(
             {
-                "peer": "claude",
+                "actor": "claude",
                 "label": "Claude",
                 "status": "active",
                 "requested_status": "signed_off",
@@ -477,10 +550,10 @@ def test_main_does_not_warn_peer_for_nonfailed_pending_disposition(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("GOTTA_SESSION_DIR", str(peer_root))
+    monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
     monkeypatch.setenv("GOTTA_CONTEXT_ID", "thread-123")
     monkeypatch.setenv("GOTTA_CONTEXT_SOURCE", "codex_thread")
-    monkeypatch.setenv("GOTTA_WORK_SESSION_ACTOR", "claude")
+    monkeypatch.setenv("GOTTA_SESSION_ACTOR", "claude")
 
     assert cli.main(["jira", "status"]) == 0
     err = capsys.readouterr().err
@@ -489,7 +562,7 @@ def test_main_does_not_warn_peer_for_nonfailed_pending_disposition(
     assert "Supervisor requested `failed`" not in err
 
 
-def test_main_does_not_warn_nonpeer_session(
+def test_main_does_not_warn_nonactor_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     seen: list[list[str]] = []
@@ -518,7 +591,7 @@ def test_main_does_not_warn_nonpeer_session(
     monkeypatch.setenv("GOTTA_SESSION_DIR", str(root))
     monkeypatch.setenv("GOTTA_CONTEXT_ID", "thread-123")
     monkeypatch.setenv("GOTTA_CONTEXT_SOURCE", "codex_thread")
-    monkeypatch.delenv("GOTTA_WORK_SESSION_ACTOR", raising=False)
+    monkeypatch.delenv("GOTTA_SESSION_ACTOR", raising=False)
 
     assert cli.main(["jira", "status"]) == 0
     err = capsys.readouterr().err
@@ -532,7 +605,7 @@ def test_bind_session_root_treats_raced_creation_as_reuse(
 ) -> None:
     _set_default_session_root(monkeypatch, tmp_path / "session")
     context_id = "thread-123"
-    canonical = (tmp_path / "session" / cli._session_token(context_id)).resolve()
+    canonical = _grouped_root(tmp_path / "session", context_id).resolve()
 
     @contextmanager
     def fake_lock(base_dir: Path, locked_context_id: str):

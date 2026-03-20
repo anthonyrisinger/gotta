@@ -128,7 +128,7 @@ def render_bytes(data: bytes, language: str = "txt") -> None:
 
 
 def fetch_url(target: str) -> tuple[bytes, str]:
-    request = urllib.request.Request(target, headers={"User-Agent": "gotta-read"})
+    request = urllib.request.Request(target, headers={"User-Actor": "gotta-read"})
     try:
         with urllib.request.urlopen(request) as response:
             return response.read(), response.headers.get("Content-Type", "")
@@ -424,11 +424,6 @@ def main(argv: list[str]) -> int:
             f"error: local target '{target}' does not exist at `{path}` under the current "
             "session context"
         )
-        if target.startswith("peers/"):
-            detail += (
-                "; if this peer-local surface should exist, write it first or target the linked "
-                "peer session directly with `--session peers/<peer>`"
-            )
         return die(detail, code=2)
     if resolved.kind == "missing_session_relative":
         return die(

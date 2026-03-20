@@ -26,7 +26,7 @@ TODO_BULLET_INPUT_RE = re.compile(r"^(?P<indent>\s*)[-*+]\s+(?P<body>.+?)\s*$")
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--session", help="session root")
+    session_plugin.add_target_args(parser)
 
 
 def build_parser(command_name: str = "gotta todo") -> argparse.ArgumentParser:
@@ -34,7 +34,7 @@ def build_parser(command_name: str = "gotta todo") -> argparse.ArgumentParser:
         prog=command_name,
         description=(
             "Inspect or mutate the canonical session TODO checklist. "
-            "Peer-managed checklist items advance through `gotta peer ...`; "
+            "Actor-managed checklist items advance through `gotta actor ...`; "
             "for prose or Markdown, prefer stdin, --stdin, or --from-file."
         ),
     )
@@ -248,12 +248,13 @@ def main(argv: list[str] | None = None) -> int:
         if int(exc.code or 0) == 0:
             return 0
         raise
-    work_dir = session_plugin._work_workspace_dir(
-        explicit_session=getattr(args, "session", None)
+    work_dir = session_plugin._session_dir(
+        explicit_session=getattr(args, "session", None),
+        explicit_actor=getattr(args, "actor", None),
     )
-    session_plugin._sync_peer_todo_state(work_dir)
+    session_plugin._sync_actor_todo_state(work_dir)
     action = args.action or "show"
-    todo_path = session_plugin._work_surface_path(work_dir, "TODO.md")
+    todo_path = session_plugin._session_surface_path(work_dir, "TODO.md")
     if action == "show":
         payload = todo_payload(work_dir, status=args.status, limit=max(args.limit, 0))
         if args.output == "json":
@@ -281,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             section="Captured Work",
             text=session_plugin._normalize_entry_text(payload, input_name="TODO item text"),
         )
-        session_plugin._record_work_activity(
+        session_plugin._record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",
@@ -307,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                     text=str(item["text"]),
                     checked=bool(item["checked"]),
                 )
-        session_plugin._record_work_activity(
+        session_plugin._record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",
@@ -330,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if len(updated_items) == 1:
             updated = updated_items[0]
-            session_plugin._record_work_activity(
+            session_plugin._record_session_activity(
                 work_dir,
                 plugin="todo",
                 surface="todo",
@@ -343,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{updated['id']} {updated['section']} :: {updated['text']}"
             )
             return 0
-        session_plugin._record_work_activity(
+        session_plugin._record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",

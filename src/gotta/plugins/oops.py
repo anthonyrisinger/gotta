@@ -16,6 +16,7 @@ from gotta.content import (
     stdin_has_readable_text,
 )
 from gotta.helptext import format_long_help, is_long_help_request
+from gotta import session as session_plugin
 from gotta.friction import (
     append_oops_record,
     filtered_oops_records,
@@ -99,7 +100,12 @@ def _normalize_text(text: str, *, input_name: str) -> str:
 def _resolve_session_root(*, explicit_session: str | None) -> Path:
     session_raw = explicit_session
     try:
-        dirs = resolve_dirs(CommonOptions(session_dir=session_raw), create=False)
+        dirs = resolve_dirs(
+            CommonOptions(
+                session_dir=session_raw,
+            ),
+            create=False,
+        )
     except ContentError as exc:
         raise SystemExit(str(exc)) from exc
     session_dir = dirs.session_dir
@@ -122,7 +128,7 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
     )
     parser.add_argument("action", nargs="?", choices=["append", "extend", "list", "summary"])
     parser.add_argument("value", nargs="*")
-    parser.add_argument("--session", help="session root")
+    session_plugin.add_target_args(parser)
     parser.add_argument(
         "--from-file",
         help="read friction text from a UTF-8 file instead of inline text; use '-' for stdin",
@@ -159,7 +165,10 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
 
 
 def cmd_oops(args: argparse.Namespace) -> int:
-    session_dir = _resolve_session_root(explicit_session=getattr(args, "session", None))
+    session_dir = session_plugin._session_dir(
+        explicit_session=getattr(args, "session", None),
+        explicit_actor=getattr(args, "actor", None),
+    )
     action = args.action or "summary"
     if action == "append":
         payload = _read_text_source(

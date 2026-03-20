@@ -255,17 +255,17 @@ def goal_plugin() -> PluginSpec:
 def notes_plugin() -> PluginSpec:
     return PluginSpec(
         name="notes",
-        description="inspect and mutate canonical peer notes inside the active session",
+        description="inspect and mutate canonical actor notes inside the active session",
         runner=_runner("gotta.plugins.notes"),
         should_materialize=lambda argv: False,
     )
 
 
-def peer_plugin() -> PluginSpec:
+def actor_plugin() -> PluginSpec:
     return PluginSpec(
-        name="peer",
-        description="configure, launch, and disposition linked peer sessions inside the active session",
-        runner=_runner("gotta.plugins.peer"),
+        name="actor",
+        description="configure, launch, and disposition sibling actor sessions inside the active session",
+        runner=_runner("gotta.plugins.actor"),
         should_materialize=lambda argv: False,
     )
 
@@ -377,7 +377,7 @@ def _builtin_core_plugins() -> dict[str, PluginSpec]:
         logs_plugin,
         notes_plugin,
         oops_plugin,
-        peer_plugin,
+        actor_plugin,
         read_plugin,
         session_plugin,
         slack_plugin,

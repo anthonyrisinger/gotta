@@ -1,4 +1,4 @@
-"""Top-level linked-peer control surface."""
+"""Top-level linked-actor control surface."""
 
 from __future__ import annotations
 
@@ -12,27 +12,27 @@ from textwrap import dedent
 
 from gotta.compat import UTC, datetime
 from gotta.actors import ACTOR_SPEAKER_ENV, resolve_actor_context
-from gotta.content import load_state_env_at_root
+from gotta.content import SESSION_REPO_ENV, load_state_env_at_root, session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
-from gotta.notes import peer_notes_log_path
-from gotta.peer import (
+from gotta.notes import actor_notes_log_path
+from gotta.actor import (
     SUPERVISOR_GRACEFUL_STOP_MODE,
     SUPERVISOR_GRACEFUL_STOP_STATUS,
-    peer_session_root,
+    actor_session_root,
 )
 from gotta import session as session_plugin
 from gotta.session import (
     _actor_registry_from_state,
-    _normalize_peer_name,
-    _peer_goal_path,
-    _peer_label,
-    _peer_want_path,
-    _read_peer_state,
-    _write_peer_state,
+    _normalize_actor_name,
+    _actor_goal_path,
+    _actor_label,
+    _actor_want_path,
+    _read_actor_state,
+    _write_actor_state,
 )
 
 
-PEER_HEARTBEAT_SECONDS = 30
+ACTOR_HEARTBEAT_SECONDS = 30
 LIVE_STATUSES = {"starting", "active", "producing_evidence", "stalled"}
 TERMINAL_STATUSES = {"completed", "failed", "incomplete", "rejected", "signed_off"}
 
@@ -43,7 +43,7 @@ def _normalize_args(argv: list[str]) -> list[str]:
     first = argv[0]
     actions = {
         "status",
-        "with",
+        "bind",
         "launch",
         "heartbeat",
         "complete",
@@ -57,88 +57,88 @@ def _normalize_args(argv: list[str]) -> list[str]:
     return ["status", *argv]
 
 
-def _peer_prompt(*, work_root: Path, peer_name: str) -> str:
-    peer_dir = peer_session_root(work_root, peer_name)
-    peer_want = _peer_want_path(work_root, peer_name)
-    peer_goal = _peer_goal_path(work_root, peer_name)
-    notes_file = session_plugin.peer_notes_surface_path(work_root, peer_name)
-    notes_log = peer_notes_log_path(work_root, peer_name)
-    label = _peer_label(peer_name)
-    want_text = peer_want.read_text(encoding="utf-8").strip()
-    goal_text = peer_goal.read_text(encoding="utf-8").strip()
+def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
+    actor_dir = actor_session_root(work_root, actor_name)
+    actor_want = _actor_want_path(work_root, actor_name)
+    actor_goal = _actor_goal_path(work_root, actor_name)
+    notes_file = session_plugin.actor_notes_surface_path(work_root, actor_name)
+    notes_log = actor_notes_log_path(work_root, actor_name)
+    label = _actor_label(actor_name)
+    want_text = actor_want.read_text(encoding="utf-8").strip()
+    goal_text = actor_goal.read_text(encoding="utf-8").strip()
     return dedent(
         f"""\
-        You are {label.lower()} inside a first-class peer gotta session that shares one evidence web.
+        You are {label.lower()} inside a first-class gotta session for one shared session.
 
         Use `gotta` itself as the primary investigation surface. If a native path
         is thin and you must use another tool, disclose that move through
-        `gotta notes append {peer_name} ...` together with why the native path
-        was insufficient.
+        `gotta notes append --actor {actor_name} ...` together with why the
+        native path was insufficient.
 
         Session layout:
 
-        - your peer session root: `{peer_dir}`
-        - linked shared evidence store: `{peer_dir / 'content'}`
+        - your actor session root: `{actor_dir}`
+        - shared evidence store: `{actor_dir / 'content'}`
 
-        Readable peer surfaces:
+        Readable actor surfaces:
 
-        - peer-local WANT present before launch: `{peer_want}`
-        - peer-local GOAL present before launch: `{peer_goal}`
-        - peer-local TODO projection: `{peer_dir / 'TODO.md'}`
+        - actor-local WANT present before launch: `{actor_want}`
+        - actor-local GOAL present before launch: `{actor_goal}`
+        - actor-local TODO projection: `{actor_dir / 'TODO.md'}`
         - notes projection: `{notes_file}`
-        - shared live pulse: `{peer_dir / 'LOGS.md'}`
-        - shared friction log: `{peer_dir / 'OOPS.md'}`
+        - actor-local execution log: `{actor_dir / 'LOGS.md'}`
+        - actor-local friction log: `{actor_dir / 'OOPS.md'}`
 
-        Canonical peer mutation state:
+        Canonical actor mutation state:
 
-        - peer-local todo log: `{peer_dir / 'state' / 'todo.jsonl'}`
+        - actor-local todo log: `{actor_dir / 'state' / 'todo.jsonl'}`
         - notes log: `{notes_log}`
 
-        Current peer want / intent frame:
+        Current actor want / intent frame:
 
-        - `{peer_want}`
+        - `{actor_want}`
         {want_text or "_empty_"}
 
-        Current peer goal frame:
+        Current actor goal frame:
 
-        - `{peer_goal}`
+        - `{actor_goal}`
         {goal_text or "_empty_"}
 
-        Evidence-first peer contract:
+        Evidence-first actor contract:
 
         - prefer `gotta` commands over side channels
-        - use `gotta read`, `gotta session ...`, `gotta peer ...`, `gotta todo ...`, `gotta logs ...`, `gotta oops ...`, and `gotta notes ...` first for native inspection and mutation
+        - use `gotta read`, `gotta session ...`, `gotta actor ...`, `gotta todo ...`, `gotta logs ...`, `gotta oops ...`, and `gotta notes ...` first for native inspection and mutation
         - for large native outputs, try `gotta read --head`, `--tail`, or `--section` before shell slicing
         - if no native path exists, disclose that gap in a durable note instead of silently routing around it through shell traversal
-        - treat peer-local WANT.md and GOAL.md as operator-authored live surfaces, not hidden templates that need to be rediscovered
-        - treat peer-local WANT/GOAL/TODO plus the shared LOGS/OOPS surfaces and the evidence web as the live truth surfaces
+        - treat actor-local WANT.md and GOAL.md as operator-authored live surfaces, not hidden templates that need to be rediscovered
+        - treat actor-local WANT/GOAL/TODO/LOGS/OOPS plus the shared evidence web as the live truth surfaces
         - disclose any non-native move as a native-coverage gap instead of hiding it
         - materialized evidence becomes usable immediately through manifest, timeline, leads, and graph even before notes catch up
         - append a first durable note immediately after the first strong anchor or branch; do not wait for a full evidence wave
         - append another durable note after each material evidence wave or when the plan changes
         - if you materially expanded the evidence web since your last note, append a new durable note before requesting completion or sign-off
-        - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final durable note, and run `gotta peer signoff {peer_name} --summary "<one-line sign-off>"` promptly
+        - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final durable note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
         - native `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
-        - do not author the final dossier, final brief, or top-level synthesis from this peer workspace
+        - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
-        - append running notes with `gotta notes append {peer_name} --stdin`; empty notes at closeout are a visibility failure, not success
+        - append running notes with `gotta notes append --actor {actor_name} --stdin`; empty notes at closeout are a visibility failure, not success
         - when you are truly done, run:
-          `gotta peer signoff {peer_name} --summary "<one-line sign-off>"`
+          `gotta actor signoff {actor_name} --summary "<one-line sign-off>"`
         """
     )
 
 
-def _peer_runtime_env(work_root: Path, peer_name: str) -> dict[str, str]:
-    peer_dir = peer_session_root(work_root, peer_name)
+def _actor_runtime_env(work_root: Path, actor_name: str) -> dict[str, str]:
+    actor_dir = actor_session_root(work_root, actor_name)
     env = os.environ.copy()
-    env.update(load_state_env_at_root(peer_dir))
-    env["GOTTA_PEER_LABEL"] = _normalize_peer_name(peer_name)
-    env["GOTTA_PEER_DIR"] = str(peer_dir)
-    env["GOTTA_PEER_NOTES_PATH"] = str(session_plugin.peer_notes_surface_path(work_root, peer_name))
-    env["GOTTA_PEER_NOTES_LOG_PATH"] = str(peer_notes_log_path(work_root, peer_name))
-    env[ACTOR_SPEAKER_ENV] = _normalize_peer_name(peer_name)
-    repo = env.get("GOTTA_WORK_REPO", "").strip()
-    env["PATH"] = f"{peer_dir / 'bin'}:{env.get('PATH', '')}"
+    env.update(load_state_env_at_root(actor_dir))
+    env["GOTTA_ACTOR_LABEL"] = _normalize_actor_name(actor_name)
+    env["GOTTA_ACTOR_DIR"] = str(actor_dir)
+    env["GOTTA_ACTOR_NOTES_PATH"] = str(session_plugin.actor_notes_surface_path(work_root, actor_name))
+    env["GOTTA_ACTOR_NOTES_LOG_PATH"] = str(actor_notes_log_path(work_root, actor_name))
+    env[ACTOR_SPEAKER_ENV] = _normalize_actor_name(actor_name)
+    repo = env.get(SESSION_REPO_ENV, "").strip()
+    env["PATH"] = f"{actor_dir / 'bin'}:{env.get('PATH', '')}"
     if repo:
         venv_bin = Path(repo) / ".venv" / "bin"
         if venv_bin.is_dir():
@@ -147,21 +147,21 @@ def _peer_runtime_env(work_root: Path, peer_name: str) -> dict[str, str]:
     return env
 
 
-def _mark_peer_runtime_active(work_root: Path, peer_name: str) -> None:
-    current = _read_peer_state(work_root, peer_name)
+def _mark_actor_runtime_active(work_root: Path, actor_name: str) -> None:
+    current = _read_actor_state(work_root, actor_name)
     if str(current.get("status") or "") in {"completed", "failed", "incomplete", "rejected", "signed_off"}:
-        _write_peer_state(
+        _write_actor_state(
             work_root,
-            peer_name,
+            actor_name,
             {
                 "heartbeat_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
         )
-        session_plugin._sync_peer_projection_surfaces(work_root, peer_name)
+        session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
         return
-    _write_peer_state(
+    _write_actor_state(
         work_root,
-        peer_name,
+        actor_name,
         {
             "status": "active",
             "heartbeat_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -172,14 +172,14 @@ def _mark_peer_runtime_active(work_root: Path, peer_name: str) -> None:
             "exit_code": None,
         },
     )
-    session_plugin._sync_peer_projection_surfaces(work_root, peer_name)
+    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
 
 
-def _peer_action_is_authoritative(peer_name: str) -> bool:
-    return resolve_actor_context().speaker == _normalize_peer_name(peer_name)
+def _actor_action_is_authoritative(actor_name: str) -> bool:
+    return resolve_actor_context().speaker == _normalize_actor_name(actor_name)
 
 
-def _spawn_peer_process(
+def _spawn_actor_process(
     argv: list[str],
     *,
     cwd: Path,
@@ -188,14 +188,14 @@ def _spawn_peer_process(
     return subprocess.Popen(argv, cwd=cwd, env=env)
 
 
-def _finalize_peer_runtime_exit(
+def _finalize_actor_runtime_exit(
     work_root: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     returncode: int,
     finished_at: str,
 ) -> int:
-    current = _read_peer_state(work_root, peer_name)
+    current = _read_actor_state(work_root, actor_name)
     current_status = str(current.get("status") or "pending")
     requested_status = str(current.get("requested_status") or "")
     requested_summary = str(current.get("requested_summary") or "")
@@ -230,42 +230,42 @@ def _finalize_peer_runtime_exit(
     updates["requested_status"] = None
     updates["requested_summary"] = None
     updates["requested_at"] = None
-    _write_peer_state(work_root, peer_name, updates)
-    session_plugin._append_peer_event(
+    _write_actor_state(work_root, actor_name, updates)
+    session_plugin._append_actor_event(
         work_root,
-        peer_name,
+        actor_name,
         event="runtime_exit",
-        detail=f"peer process exited with code {returncode}",
+        detail=f"actor process exited with code {returncode}",
         extra={"exit_code": returncode},
     )
     if final_status == "signed_off":
-        session_plugin._peer_log_line(work_root, peer_name, "signed off and exited")
+        session_plugin._actor_log_line(work_root, actor_name, "signed off and exited")
     elif final_status == "completed":
-        session_plugin._peer_log_line(work_root, peer_name, "completed")
+        session_plugin._actor_log_line(work_root, actor_name, "completed")
     elif final_status == "failed":
-        session_plugin._peer_log_line(
+        session_plugin._actor_log_line(
             work_root,
-            peer_name,
+            actor_name,
             f"failed with exit code {returncode}",
         )
     else:
-        session_plugin._peer_log_line(
-            work_root, peer_name, f"{final_status.replace('_', ' ')} and exited"
+        session_plugin._actor_log_line(
+            work_root, actor_name, f"{final_status.replace('_', ' ')} and exited"
         )
-    session_plugin._sync_peer_todo_state(work_root)
-    session_plugin._sync_peer_projection_surfaces(work_root, peer_name)
+    session_plugin._sync_actor_todo_state(work_root)
+    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
     return int(returncode)
 
 
 def _with_heartbeat(
     work_root: Path,
-    peer_name: str,
+    actor_name: str,
     stop_event: threading.Event,
 ) -> threading.Thread:
     def beat() -> None:
-        while not stop_event.wait(PEER_HEARTBEAT_SECONDS):
-            _mark_peer_runtime_active(work_root, peer_name)
-            session_plugin._append_peer_event(work_root, peer_name, event="heartbeat")
+        while not stop_event.wait(ACTOR_HEARTBEAT_SECONDS):
+            _mark_actor_runtime_active(work_root, actor_name)
+            session_plugin._append_actor_event(work_root, actor_name, event="heartbeat")
 
     thread = threading.Thread(target=beat, daemon=True)
     thread.start()
@@ -273,16 +273,16 @@ def _with_heartbeat(
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--session", help="session root")
+    session_plugin.add_target_args(parser)
 
 
-def build_parser(command_name: str = "gotta peer") -> argparse.ArgumentParser:
+def build_parser(command_name: str = "gotta actor") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=command_name,
         description=(
-            "Configure, launch, and disposition linked peer sessions inside the "
-            "active session. Peer launch requires a real WANT.md and GOAL.md first; "
-            "rewrite peer charters with `gotta want|goal --session peers/<peer> ...`."
+            "Bind, launch, and disposition sibling actor sessions inside the "
+            "active session. Actor launch requires a real WANT.md and GOAL.md first; "
+            "rewrite actor charters with `gotta want|goal --actor <actor> ...`."
         ),
     )
     parser.add_argument(
@@ -290,7 +290,7 @@ def build_parser(command_name: str = "gotta peer") -> argparse.ArgumentParser:
         nargs="?",
         choices=[
             "status",
-            "with",
+            "bind",
             "launch",
             "heartbeat",
             "complete",
@@ -299,9 +299,9 @@ def build_parser(command_name: str = "gotta peer") -> argparse.ArgumentParser:
             "settle",
             "signoff",
         ],
-        help="configure, inspect, launch, or disposition linked peers",
+        help="bind, inspect, launch, or disposition linked actors",
     )
-    parser.add_argument("peers", nargs="*")
+    parser.add_argument("actors", nargs="*")
     _add_root_args(parser)
     parser.add_argument("--output", choices=["json", "text"], default="text")
     parser.add_argument("--summary", default="")
@@ -312,48 +312,57 @@ def _timestamp() -> str:
     return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _work_root(args: argparse.Namespace) -> Path:
-    return session_plugin._work_workspace_dir(explicit_session=getattr(args, "session", None)).resolve()
+def _session_root(args: argparse.Namespace) -> Path:
+    root = session_plugin._current_session_dir(
+        explicit_session=getattr(args, "session", None),
+        explicit_actor=None,
+    )
+    if root is None or not session_is_initialized(root):
+        raise SystemExit(
+            "start or bind a session first with `gotta ...` or bootstrap one "
+            "manually with `gotta session init --session \"$WS\"`"
+        )
+    return root.resolve()
 
 
-def _peer_names(args: argparse.Namespace) -> list[str]:
+def _actor_names(args: argparse.Namespace) -> list[str]:
     return [
-        _normalize_peer_name(peer)
-        for peer in getattr(args, "peers", [])
-        if str(peer).strip()
+        _normalize_actor_name(actor)
+        for actor in getattr(args, "actors", [])
+        if str(actor).strip()
     ]
 
 
-def _peer_name(args: argparse.Namespace, action: str) -> str:
-    names = _peer_names(args)
+def _actor_name(args: argparse.Namespace, action: str) -> str:
+    names = _actor_names(args)
     if action == "status" and not names:
         return ""
     if len(names) != 1:
-        raise SystemExit(f"`gotta peer {action}` requires exactly one peer")
+        raise SystemExit(f"`gotta actor {action}` requires exactly one actor")
     return names[0]
 
 
-def _require_peer_name(peer_name: str, action: str) -> None:
-    if not peer_name:
-        raise SystemExit(f"missing peer for `gotta peer {action}`")
+def _require_actor_name(actor_name: str, action: str) -> None:
+    if not actor_name:
+        raise SystemExit(f"missing actor for `gotta actor {action}`")
 
 
-def _status_peers(work_root: Path, peer_name: str) -> list[str]:
+def _status_actors(work_root: Path, actor_name: str) -> list[str]:
     selected = list(session_plugin._selected_actor_ids(work_root))
-    if not peer_name:
+    if not actor_name:
         return selected
-    if peer_name not in selected:
+    if actor_name not in selected:
         raise SystemExit(
-            f"{peer_name} is not configured for this session; choose them first with "
-            f"`gotta peer with {_peer_label(peer_name)}`"
+            f"{actor_name} is not bound for this session; bind them first with "
+            f"`gotta actor bind {_actor_label(actor_name)}`"
         )
-    return [peer_name]
+    return [actor_name]
 
 
 def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
-    for peer_name, state in payload.items():
+    for actor_name, state in payload.items():
         line = (
-            f"{peer_name}: {state['status']} "
+            f"{actor_name}: {state['status']} "
             f"(notes: {state['notes_status']}, artifacts: {state['artifact_count']})"
         )
         if state.get("still_running"):
@@ -383,15 +392,15 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
             print(f"  next_step: {state['next_step']}")
 
 
-def _sync_peer_outputs(work_root: Path, peer_name: str, *, sync_todo: bool = False) -> None:
+def _sync_actor_outputs(work_root: Path, actor_name: str, *, sync_todo: bool = False) -> None:
     if sync_todo:
-        session_plugin._sync_peer_todo_state(work_root)
-    session_plugin._sync_peer_projection_surfaces(work_root, peer_name)
+        session_plugin._sync_actor_todo_state(work_root)
+    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
 
 
 def _record_requested_disposition(
     work_root: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     requested_status: str,
     requested_mode: str = "",
@@ -405,9 +414,9 @@ def _record_requested_disposition(
         "sign-off" if requested_status == "signed_off" else requested_status.replace("_", "-")
     )
     timestamp = _timestamp()
-    _write_peer_state(
+    _write_actor_state(
         work_root,
-        peer_name,
+        actor_name,
         {
             "requested_mode": requested_mode or None,
             "requested_status": requested_status,
@@ -415,19 +424,19 @@ def _record_requested_disposition(
             "requested_at": timestamp,
         },
     )
-    session_plugin._append_peer_event(work_root, peer_name, event=event, detail=summary)
-    session_plugin._peer_log_line(work_root, peer_name, log_message)
-    _sync_peer_outputs(work_root, peer_name)
+    session_plugin._append_actor_event(work_root, actor_name, event=event, detail=summary)
+    session_plugin._actor_log_line(work_root, actor_name, log_message)
+    _sync_actor_outputs(work_root, actor_name)
     print(
-        f"recorded {disposition_label} request for {peer_name}; "
-        f"peer is still live so authoritative status stays {current_status}"
+        f"recorded {disposition_label} request for {actor_name}; "
+        f"actor is still live so authoritative status stays {current_status}"
     )
     return 0
 
 
 def _write_terminal_disposition(
     work_root: Path,
-    peer_name: str,
+    actor_name: str,
     *,
     status: str,
     summary: str,
@@ -462,19 +471,19 @@ def _write_terminal_disposition(
         if status == "failed":
             payload["signoff_at"] = None
             payload["signoff_summary"] = None
-    _write_peer_state(work_root, peer_name, payload)
-    session_plugin._append_peer_event(
+    _write_actor_state(work_root, actor_name, payload)
+    session_plugin._append_actor_event(
         work_root,
-        peer_name,
+        actor_name,
         event=event,
         detail=detail if detail is not None else summary,
     )
-    session_plugin._peer_log_line(work_root, peer_name, log_message)
-    _sync_peer_outputs(work_root, peer_name, sync_todo=True)
+    session_plugin._actor_log_line(work_root, actor_name, log_message)
+    _sync_actor_outputs(work_root, actor_name, sync_todo=True)
     if status == "signed_off":
-        print(f"recorded sign-off for {peer_name}")
+        print(f"recorded sign-off for {actor_name}")
     else:
-        print(f"marked {peer_name} {status}")
+        print(f"marked {actor_name} {status}")
     return 0
 
 
@@ -483,45 +492,45 @@ def _runtime_closeout_note(current: dict[str, object]) -> bool:
     return bool(current.get("runtime_live")) or status in LIVE_STATUSES
 
 
-def _cmd_status(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
-    peers = _status_peers(work_root, peer_name)
+def _cmd_status(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
+    actors = _status_actors(work_root, actor_name)
     payload = {
-        current_peer: session_plugin._peer_status_payload(work_root, current_peer)
-        for current_peer in peers
+        current_actor: session_plugin._actor_status_payload(work_root, current_actor)
+        for current_actor in actors
     }
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
-    if not peers:
+    if not actors:
         print(
-            "no peers configured for this session; choose one intentionally with "
-            + session_plugin._work_with_examples(prefix="gotta peer with")
+            "no actors bound for this session; bind one intentionally with "
+            + session_plugin._actor_bind_examples(prefix="gotta actor bind")
         )
         return 0
     _render_status_text(payload)
     return 0
 
 
-def _cmd_with(work_root: Path, peer_names: list[str]) -> int:
-    if not peer_names:
-        raise SystemExit("`gotta peer with` requires at least one actor")
+def _cmd_bind(work_root: Path, actor_names: list[str]) -> int:
+    if not actor_names:
+        raise SystemExit("`gotta actor bind` requires at least one actor")
     results: list[str] = []
-    for peer_name in peer_names:
-        results.append(session_plugin._configure_peer(work_root, peer_name))
+    for actor_name in actor_names:
+        results.append(session_plugin._bind_actor(work_root, actor_name))
     for result in results:
         print(result)
     return 0
 
 
-def _cmd_heartbeat(work_root: Path, peer_name: str) -> int:
-    _mark_peer_runtime_active(work_root, peer_name)
-    session_plugin._append_peer_event(work_root, peer_name, event="heartbeat")
-    print(f"heartbeat recorded for {peer_name}")
+def _cmd_heartbeat(work_root: Path, actor_name: str) -> int:
+    _mark_actor_runtime_active(work_root, actor_name)
+    session_plugin._append_actor_event(work_root, actor_name, event="heartbeat")
+    print(f"heartbeat recorded for {actor_name}")
     return 0
 
 
-def _cmd_complete(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
-    current = session_plugin._peer_status_payload(work_root, peer_name)
+def _cmd_complete(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
+    current = session_plugin._actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
     detail = (
         f"{args.summary}; closed while runtime still live"
@@ -537,7 +546,7 @@ def _cmd_complete(args: argparse.Namespace, work_root: Path, peer_name: str) -> 
     )
     return _write_terminal_disposition(
         work_root,
-        peer_name,
+        actor_name,
         status="completed",
         summary=args.summary,
         event="completed",
@@ -546,13 +555,13 @@ def _cmd_complete(args: argparse.Namespace, work_root: Path, peer_name: str) -> 
     )
 
 
-def _cmd_fail(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
-    current = session_plugin._peer_status_payload(work_root, peer_name)
+def _cmd_fail(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
+    current = session_plugin._actor_status_payload(work_root, actor_name)
     current_status = str(current.get("status") or "")
-    if current_status in LIVE_STATUSES and not _peer_action_is_authoritative(peer_name):
+    if current_status in LIVE_STATUSES and not _actor_action_is_authoritative(actor_name):
         return _record_requested_disposition(
             work_root,
-            peer_name,
+            actor_name,
             requested_status="failed",
             summary=args.summary,
             event="failed_requested",
@@ -561,7 +570,7 @@ def _cmd_fail(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
         )
     return _write_terminal_disposition(
         work_root,
-        peer_name,
+        actor_name,
         status="failed",
         summary=args.summary,
         event="failed",
@@ -569,14 +578,14 @@ def _cmd_fail(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
     )
 
 
-def _cmd_stop(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
-    current = session_plugin._peer_status_payload(work_root, peer_name)
+def _cmd_stop(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
+    current = session_plugin._actor_status_payload(work_root, actor_name)
     current_status = str(current.get("status") or "")
     live_closeout = _runtime_closeout_note(current)
-    if current_status in LIVE_STATUSES and not _peer_action_is_authoritative(peer_name):
+    if current_status in LIVE_STATUSES and not _actor_action_is_authoritative(actor_name):
         return _record_requested_disposition(
             work_root,
-            peer_name,
+            actor_name,
             requested_status=SUPERVISOR_GRACEFUL_STOP_STATUS,
             requested_mode=SUPERVISOR_GRACEFUL_STOP_MODE,
             summary=args.summary,
@@ -599,7 +608,7 @@ def _cmd_stop(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
     )
     return _write_terminal_disposition(
         work_root,
-        peer_name,
+        actor_name,
         status="signed_off",
         summary=args.summary,
         event="stopped",
@@ -621,7 +630,7 @@ def _settled_status(current: dict[str, object]) -> str:
     return "incomplete"
 
 
-def _live_peer_settle_override(current: dict[str, object]) -> bool:
+def _live_actor_settle_override(current: dict[str, object]) -> bool:
     return (
         bool(current.get("runtime_live"))
         and str(current.get("status") or "").strip() == "stalled"
@@ -629,20 +638,20 @@ def _live_peer_settle_override(current: dict[str, object]) -> bool:
     )
 
 
-def _cmd_settle(work_root: Path, peer_name: str) -> int:
-    current = session_plugin._peer_status_payload(work_root, peer_name)
-    if bool(current.get("runtime_live")) and not _live_peer_settle_override(current):
+def _cmd_settle(work_root: Path, actor_name: str) -> int:
+    current = session_plugin._actor_status_payload(work_root, actor_name)
+    if bool(current.get("runtime_live")) and not _live_actor_settle_override(current):
         requested_status = str(current.get("requested_status") or "").strip()
         requested_label = str(current.get("requested_label") or "").strip()
         raise SystemExit(
-            f"{peer_name} is still live; "
+            f"{actor_name} is still live; "
             + (
                 f"the pending `{requested_label}` request will become authoritative when "
                 "the runtime exits. "
                 if requested_status
                 else ""
             )
-            + f"Recheck `gotta peer status {peer_name}` before settling."
+            + f"Recheck `gotta actor status {actor_name}` before settling."
         )
     final_status = _settled_status(current)
     requested_summary = str(current.get("requested_summary") or "").strip()
@@ -669,26 +678,26 @@ def _cmd_settle(work_root: Path, peer_name: str) -> int:
         if final_status == "failed":
             updates["signoff_at"] = None
             updates["signoff_summary"] = None
-    _write_peer_state(work_root, peer_name, updates)
-    session_plugin._append_peer_event(
+    _write_actor_state(work_root, actor_name, updates)
+    session_plugin._append_actor_event(
         work_root,
-        peer_name,
+        actor_name,
         event="settled",
-        detail=f"settled peer lifecycle as {final_status}",
+        detail=f"settled actor lifecycle as {final_status}",
     )
-    session_plugin._peer_log_line(
-        work_root, peer_name, f"settled as {final_status.replace('_', ' ')}"
+    session_plugin._actor_log_line(
+        work_root, actor_name, f"settled as {final_status.replace('_', ' ')}"
     )
-    _sync_peer_outputs(work_root, peer_name, sync_todo=True)
-    print(f"settled {peer_name} as {final_status}")
+    _sync_actor_outputs(work_root, actor_name, sync_todo=True)
+    print(f"settled {actor_name} as {final_status}")
     return 0
 
 
-def _cmd_signoff(args: argparse.Namespace, work_root: Path, peer_name: str) -> int:
+def _cmd_signoff(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
     summary = str(args.summary or "").strip()
     if not summary:
         raise SystemExit("signoff requires `--summary`")
-    current = session_plugin._peer_status_payload(work_root, peer_name)
+    current = session_plugin._actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
     detail = (
         f"{summary}; closed while runtime still live"
@@ -702,7 +711,7 @@ def _cmd_signoff(args: argparse.Namespace, work_root: Path, peer_name: str) -> i
     )
     return _write_terminal_disposition(
         work_root,
-        peer_name,
+        actor_name,
         status="signed_off",
         summary=summary,
         event="signed_off",
@@ -712,33 +721,33 @@ def _cmd_signoff(args: argparse.Namespace, work_root: Path, peer_name: str) -> i
     )
 
 
-def _cmd_launch(work_root: Path, peer_name: str) -> int:
-    current = session_plugin._peer_status_payload(work_root, peer_name)
+def _cmd_launch(work_root: Path, actor_name: str) -> int:
+    current = session_plugin._actor_status_payload(work_root, actor_name)
     if current["status"] in {"starting", "active"}:
         raise SystemExit(
-            f"{peer_name} is already {current['status']}; inspect with `gotta peer status {peer_name}`"
+            f"{actor_name} is already {current['status']}; inspect with `gotta actor status {actor_name}`"
         )
     goal_path = work_root / "GOAL.md"
     if not goal_path.is_file():
         raise SystemExit(f"goal file does not exist: {goal_path}")
-    blockers = session_plugin._peer_launch_blockers(work_root, peer_name=peer_name)
+    blockers = session_plugin._actor_launch_blockers(work_root, actor_name=actor_name)
     if blockers:
         raise SystemExit(
-            "peer launch is blocked until the work framing is real: "
+            "actor launch is blocked until the session framing is real: "
             + "; ".join(blockers)
-            + ". Rewrite WANT first, then GOAL, then relaunch the peer."
+            + ". Rewrite WANT first, then GOAL, then relaunch the actor."
         )
-    session_plugin._ensure_peer_surface(work_root, peer_name)
-    prompt = _peer_prompt(work_root=work_root, peer_name=peer_name)
-    env = _peer_runtime_env(work_root, peer_name)
+    session_plugin._ensure_actor_surface(work_root, actor_name)
+    prompt = _actor_prompt(work_root=work_root, actor_name=actor_name)
+    env = _actor_runtime_env(work_root, actor_name)
     state = load_state_env_at_root(work_root)
-    actor = _actor_registry_from_state(state).get(peer_name)
+    actor = _actor_registry_from_state(state).get(actor_name)
     if actor is None:
-        raise SystemExit(f"unknown peer: {peer_name}")
+        raise SystemExit(f"unknown actor: {actor_name}")
     model = str(actor.get("model") or "")
     resume_uuid = str(actor.get("resume_uuid") or "")
-    repo_root = str(state.get("GOTTA_WORK_REPO") or "").strip()
-    peer_dir = peer_session_root(work_root, peer_name)
+    repo_root = str(state.get(SESSION_REPO_ENV) or "").strip()
+    actor_dir = actor_session_root(work_root, actor_name)
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     argv = [
         "copilot",
@@ -759,12 +768,12 @@ def _cmd_launch(work_root: Path, peer_name: str) -> int:
         f"--prompt={prompt}",
     ]
     try:
-        proc = _spawn_peer_process(argv, cwd=peer_dir, env=env)
+        proc = _spawn_actor_process(argv, cwd=actor_dir, env=env)
     except OSError as exc:
-        raise SystemExit(f"failed to launch {peer_name}: {exc}") from exc
-    _write_peer_state(
+        raise SystemExit(f"failed to launch {actor_name}: {exc}") from exc
+    _write_actor_state(
         work_root,
-        peer_name,
+        actor_name,
         {
             "status": "starting",
             "started_at": started_at,
@@ -783,21 +792,21 @@ def _cmd_launch(work_root: Path, peer_name: str) -> int:
             "requested_at": None,
         },
     )
-    session_plugin._append_peer_event(work_root, peer_name, event="starting", detail=str(goal_path))
-    session_plugin._peer_log_line(work_root, peer_name, f"starting with {model}")
-    session_plugin._sync_peer_todo_state(work_root)
-    session_plugin._sync_peer_projection_surfaces(work_root, peer_name)
+    session_plugin._append_actor_event(work_root, actor_name, event="starting", detail=str(goal_path))
+    session_plugin._actor_log_line(work_root, actor_name, f"starting with {model}")
+    session_plugin._sync_actor_todo_state(work_root)
+    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
     stop_event = threading.Event()
-    heartbeat = _with_heartbeat(work_root, peer_name, stop_event)
+    heartbeat = _with_heartbeat(work_root, actor_name, stop_event)
     try:
         returncode = proc.wait()
     finally:
         stop_event.set()
         heartbeat.join(timeout=1)
     finished_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return _finalize_peer_runtime_exit(
+    return _finalize_actor_runtime_exit(
         work_root,
-        peer_name,
+        actor_name,
         returncode=returncode,
         finished_at=finished_at,
     )
@@ -811,26 +820,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     action = args.action or "status"
-    work_root = _work_root(args)
-    if action == "with":
-        return _cmd_with(work_root, _peer_names(args))
-    peer_name = _peer_name(args, action)
+    work_root = _session_root(args)
+    if action == "bind":
+        return _cmd_bind(work_root, _actor_names(args))
+    actor_name = _actor_name(args, action)
     if action == "status":
-        return _cmd_status(args, work_root, peer_name)
-    _require_peer_name(peer_name, action)
+        return _cmd_status(args, work_root, actor_name)
+    _require_actor_name(actor_name, action)
     if action == "launch":
-        return _cmd_launch(work_root, peer_name)
-    session_plugin._ensure_peer_surface(work_root, peer_name)
+        return _cmd_launch(work_root, actor_name)
+    session_plugin._ensure_actor_surface(work_root, actor_name)
     if action == "heartbeat":
-        return _cmd_heartbeat(work_root, peer_name)
+        return _cmd_heartbeat(work_root, actor_name)
     if action == "complete":
-        return _cmd_complete(args, work_root, peer_name)
+        return _cmd_complete(args, work_root, actor_name)
     if action == "fail":
-        return _cmd_fail(args, work_root, peer_name)
+        return _cmd_fail(args, work_root, actor_name)
     if action == "stop":
-        return _cmd_stop(args, work_root, peer_name)
+        return _cmd_stop(args, work_root, actor_name)
     if action == "settle":
-        return _cmd_settle(work_root, peer_name)
+        return _cmd_settle(work_root, actor_name)
     if action == "signoff":
-        return _cmd_signoff(args, work_root, peer_name)
-    raise SystemExit(f"unsupported peer action: {action}")
+        return _cmd_signoff(args, work_root, actor_name)
+    raise SystemExit(f"unsupported actor action: {action}")

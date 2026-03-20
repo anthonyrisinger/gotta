@@ -1,12 +1,12 @@
 from __future__ import annotations
-import os
 from pathlib import Path
 
 import pytest
 
 from gotta import content
+from gotta import session as sessionlib
 from gotta import target
-from gotta.plugins import peer, read, session
+from gotta.plugins import actor, read, session
 
 
 def test_read_local_directory_renders_native_listing(tmp_path: Path, capsys) -> None:
@@ -37,7 +37,7 @@ def test_read_requires_session_context_for_relative_hidden_file(
     config.write_text("[remote \"origin\"]\n\turl = git@github.com:acme/widgets.git\n", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GOTTA_WORK_REPO", str(repo))
+    monkeypatch.setenv("GOTTA_SESSION_REPO", str(repo))
 
     assert read.main([".git/config"]) == 2
     err = capsys.readouterr().err
@@ -167,7 +167,7 @@ def test_read_can_follow_artifact_locator_from_session_root_state_env(
     assert "# Search Artifact" in output
 
 
-def test_read_can_follow_artifact_locator_from_peer_root_state_env(
+def test_read_can_follow_artifact_locator_from_actor_root_state_env(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
@@ -181,13 +181,13 @@ def test_read_can_follow_artifact_locator_from_peer_root_state_env(
         preferred_name="slack-search-abc.md",
         metadata={"plugin": "slack", "locator": "demo", "canonical_locator": "demo"},
     )
-    peer_root = session_root / "peers" / "claude"
-    peer_state = peer_root / "state"
-    peer_state.mkdir(parents=True, exist_ok=True)
-    (peer_state / "env").write_text(
+    actor_root = tmp_path / "session-actor"
+    actor_state = actor_root / "state"
+    actor_state.mkdir(parents=True, exist_ok=True)
+    (actor_state / "env").write_text(
         "\n".join(
             [
-                f"export GOTTA_SESSION_DIR='{peer_root}'",
+                f"export GOTTA_SESSION_DIR='{actor_root}'",
                 f"export GOTTA_SESSION_CONTENT_DIR='{dirs.content_dir}'",
             ]
         )
@@ -197,76 +197,65 @@ def test_read_can_follow_artifact_locator_from_peer_root_state_env(
 
     monkeypatch.delenv("GOTTA_SESSION_DIR", raising=False)
     monkeypatch.delenv("GOTTA_SESSION_CONTENT_DIR", raising=False)
-    monkeypatch.chdir(peer_root)
+    monkeypatch.chdir(actor_root)
 
     assert read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
 
 
-def test_read_missing_peer_local_surface_reports_missing_local_path(
+def test_read_missing_actor_local_surface_reports_missing_local_path(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
-    session_root = tmp_path / "session"
-    peer_root = tmp_path / "session-claude"
-    session_root.mkdir()
-    peer_root.mkdir()
-    (session_root / "peers").mkdir()
-    (session_root / "peers" / "claude").symlink_to(
-        os.path.relpath(peer_root, start=(session_root / "peers")),
-    )
+    actor_root = tmp_path / "session-claude"
+    actor_root.mkdir()
 
-    monkeypatch.setenv("GOTTA_SESSION_DIR", str(session_root))
-    monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(session_root / "content"))
+    monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
+    monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(actor_root / "content"))
 
-    assert read.main(["peers/claude/WANT.md"]) == 2
+    assert read.main(["WANT.md"]) == 2
     err = capsys.readouterr().err
-    assert "local target 'peers/claude/WANT.md' does not exist" in err
+    assert "local target 'WANT.md' does not exist" in err
     assert "unsupported target" not in err
 
 
-def test_read_missing_peer_goal_surface_reports_missing_local_path(
+def test_read_missing_actor_goal_surface_reports_missing_local_path(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
-    session_root = tmp_path / "session"
-    peer_root = tmp_path / "session-claude"
-    session_root.mkdir()
-    peer_root.mkdir()
-    (session_root / "peers").mkdir()
-    (session_root / "peers" / "claude").symlink_to(
-        os.path.relpath(peer_root, start=(session_root / "peers")),
-    )
+    actor_root = tmp_path / "session-claude"
+    actor_root.mkdir()
 
-    monkeypatch.setenv("GOTTA_SESSION_DIR", str(session_root))
-    monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(session_root / "content"))
+    monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
+    monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(actor_root / "content"))
 
-    assert read.main(["peers/claude/GOAL.md"]) == 2
+    assert read.main(["GOAL.md"]) == 2
     err = capsys.readouterr().err
-    assert "local target 'peers/claude/GOAL.md' does not exist" in err
+    assert "local target 'GOAL.md' does not exist" in err
     assert "unsupported target" not in err
 
 
-def test_read_seeded_peer_local_charter_surfaces(monkeypatch, tmp_path: Path, capsys) -> None:
-    root = tmp_path / "work-root"
+def test_read_seeded_actor_local_charter_surfaces(monkeypatch, tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
 
     assert session.main(["init", "--session", str(root)]) == 0
     capsys.readouterr()
     (root / "WANT.md").write_text("# Want\n\nReal intent.\n", encoding="utf-8")
     (root / "GOAL.md").write_text("# Goal\n\nReal goal.\n", encoding="utf-8")
 
-    assert peer.main(["with", "Claude", "--session", str(root)]) == 0
+    assert actor.main(["bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
 
-    monkeypatch.setenv("GOTTA_SESSION_DIR", str(root))
-    monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(root / "content"))
+    actor_root = sessionlib._actor_session_dir(root, "claude")
+    monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
+    monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(actor_root / "content"))
 
-    assert read.main(["peers/claude/WANT.md"]) == 0
+    assert read.main(["WANT.md"]) == 0
     want_output = capsys.readouterr().out
-    assert "# Peer Want Placeholder" in want_output
+    assert "# Actor Want Placeholder" in want_output
 
-    assert read.main(["peers/claude/GOAL.md"]) == 0
+    assert read.main(["GOAL.md"]) == 0
     goal_output = capsys.readouterr().out
-    assert "# Seed Peer Goal Placeholder" in goal_output
+    assert "# Seed Actor Goal Placeholder" in goal_output
 
 
 def test_read_does_not_materialize_local_artifact_rereads(monkeypatch, tmp_path: Path) -> None:

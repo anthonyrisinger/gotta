@@ -8,17 +8,11 @@ import threading
 from gotta import content
 from gotta import friction
 from gotta.plugins import oops
+from gotta.plugins import session as session_plugin
 
 
 def initialize_session(root: Path) -> None:
-    dirs = content.ResolvedDirs(
-        session_dir=root,
-        content_dir=root / "content",
-    )
-    dirs.session_dir.mkdir(parents=True, exist_ok=True)
-    dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
+    assert session_plugin.main(["init", "--session", str(root)]) == 0
 
 
 def _projection_entry_count(path: Path) -> int:

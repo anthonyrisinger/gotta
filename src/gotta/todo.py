@@ -8,8 +8,8 @@ from pathlib import Path
 import uuid
 
 from gotta.compat import UTC, datetime
-from gotta.content import load_state_env_at_root, write_text_atomic
-from gotta.peer import PEER_SESSION_ACTOR_ENV
+from gotta.content import SESSION_REPO_ENV, load_state_env_at_root, write_text_atomic
+from gotta.actor import SESSION_ACTOR_ENV
 from gotta.projection import append_jsonl, read_jsonl_records
 
 
@@ -21,7 +21,7 @@ DEFAULT_SECTION_ORDER = (
     "File Battery",
     "Drift / Truth Battery",
     "Mechanical / Safety Battery",
-    "Peer Checklist",
+    "Actor Checklist",
     "Captured Work",
 )
 
@@ -43,15 +43,15 @@ def is_todo_id(value: str) -> bool:
 
 def _repo_display_name(work_dir: Path) -> str:
     state = load_state_env_at_root(work_dir)
-    repo_path = str(state.get("GOTTA_WORK_REPO") or "").strip()
+    repo_path = str(state.get(SESSION_REPO_ENV) or "").strip()
     if not repo_path:
-        return "Work"
-    return Path(repo_path).name.capitalize() or "Work"
+        return "Session"
+    return Path(repo_path).name.capitalize() or "Session"
 
 
 def _session_actor_id(work_dir: Path) -> str:
     state = load_state_env_at_root(work_dir)
-    return str(state.get(PEER_SESSION_ACTOR_ENV) or "").strip().lower()
+    return str(state.get(SESSION_ACTOR_ENV) or "").strip().lower()
 
 
 def _next_todo_id(used_ids: set[str]) -> str:
@@ -154,8 +154,8 @@ def _render_section_items(items: list[dict[str, object]]) -> list[str]:
 def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
     from gotta.session import (
         _default_actor_summary,
-        _peer_label,
-        _work_with_examples,
+        _actor_label,
+        _actor_bind_examples,
     )
 
     grouped: OrderedDict[str, list[dict[str, object]]] = OrderedDict()
@@ -180,7 +180,7 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
         "",
         "- Active targets examined against live local truth.",
         "- Truth conflicts corrected, removed, or explicitly parked with rationale.",
-        "- Peer findings incorporated or explicitly dispositioned.",
+        "- Actor findings incorporated or explicitly dispositioned.",
         "- Final verification rerun against the active target set.",
         "- Final sign-off collected from the selected team.",
         "",
@@ -203,7 +203,7 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
     else:
         lines.extend(
             [
-                "- Seed placeholder. Replace with concrete truth-mismatch work as soon as it is",
+                "- Seed placeholder. Replace with concrete truth-mismatch session state as soon as it is",
                 "  discovered.",
             ]
         )
@@ -220,7 +220,7 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
         lines.extend(
             [
                 "- Seed placeholder. Replace with concrete mechanical, anchor, link, and",
-                "  dangerous-guidance work as soon as it is discovered.",
+                "  dangerous-guidance session state as soon as it is discovered.",
             ]
         )
     lines.extend(
@@ -230,30 +230,30 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
             "",
         ]
     )
-    peer_actor = _session_actor_id(work_dir)
-    if peer_actor:
+    actor_actor = _session_actor_id(work_dir)
+    if actor_actor:
         lines.extend(
             [
-                f"- This session is already the linked peer workspace for {_peer_label(peer_actor)}.",
-                "- `WANT.md`, `GOAL.md`, and `TODO.md` here are peer-local session surfaces.",
-                "- `LOGS.md` and `OOPS.md` remain shared across the linked investigation.",
-                f"- Append running notes with `gotta notes append {peer_actor} ...`.",
-                "- Append at least one durable note before requesting completion or sign-off so shared peer visibility lands before closure.",
-                f"- When materially done, record peer completion through `gotta peer complete {peer_actor}`; use `gotta peer stop {peer_actor}` for a graceful operator-directed wind-down, `gotta peer fail {peer_actor}` for actual failure, and finish durable review with `gotta peer signoff {peer_actor} --summary ...`.",
+                f"- This session is already the {_actor_label(actor_actor)} actor root for this shared concern.",
+                "- `WANT.md`, `GOAL.md`, and `TODO.md` here are actor-local session surfaces.",
+                "- `LOGS.md` and `OOPS.md` here are actor-local continuous surfaces.",
+                f"- Append running notes with `gotta notes append --actor {actor_actor} ...`.",
+                "- Append at least one durable note before requesting completion or sign-off so shared actor visibility lands before closure.",
+                f"- When materially done, record actor completion through `gotta actor complete {actor_actor}`; use `gotta actor stop {actor_actor}` for a graceful operator-directed wind-down, `gotta actor fail {actor_actor}` for actual failure, and finish durable review with `gotta actor signoff {actor_actor} --summary ...`.",
             ]
         )
     else:
         lines.extend(
             [
                 f"- Choose the team intentionally. Available actors today are {_default_actor_summary()}.",
-                f"- `gotta peer with <actor...>` configures linked peer sessions, shims, and readable projections only; use {_work_with_examples(prefix='gotta peer with')}.",
-                "- If you choose an actor, actually consult them with `gotta peer launch <actor>`.",
-                "- Peer checklist pressure begins only after a launched actor starts real evidence collection.",
+                f"- `gotta actor bind <actor...>` binds sibling actor sessions inside this shared session; use {_actor_bind_examples(prefix='gotta actor bind')}.",
+                "- If you choose an actor, actually consult them with `gotta actor launch <actor>`.",
+                "- Actor checklist pressure begins only after a launched actor starts real evidence collection.",
             ]
         )
-    if grouped["Peer Checklist"]:
-        lines.extend(["", "## Peer Checklist", ""])
-        lines.extend(_render_section_items(grouped["Peer Checklist"]))
+    if grouped["Actor Checklist"]:
+        lines.extend(["", "## Actor Checklist", ""])
+        lines.extend(_render_section_items(grouped["Actor Checklist"]))
     lines.extend(["", "## Captured Work", ""])
     lines.extend(_render_section_items(grouped["Captured Work"]) or ["- none yet"])
 

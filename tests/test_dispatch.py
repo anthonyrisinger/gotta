@@ -502,7 +502,6 @@ def test_builtin_core_plugins_are_available_without_reinstalled_metadata() -> No
         assert "logs" in plugins
         assert "todo" in plugins
         assert "want" in plugins
-        assert "work" not in plugins
         assert plugin_api.get_plugin("goal") is not None
         assert plugin_api.get_plugin("logs") is not None
         assert plugin_api.get_plugin("todo") is not None
@@ -612,16 +611,19 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
     assert "## gotta logs" in output
     assert "## gotta notes" in output
     assert "## gotta oops" in output
-    assert "## gotta peer" in output
+    assert "## gotta actor" in output
     assert "## gotta todo" in output
     assert "usage: gotta ask <surface> [args...]" in output
     assert "usage: gotta logs" in output
     assert "usage: gotta notes" in output
     assert "usage: gotta oops" in output
-    assert "usage: gotta peer" in output
+    assert "usage: gotta actor" in output
     assert "usage: gotta todo" in output
     assert "## gotta session" in output
-    assert "{init,show,doctor,manifest,timeline,graph,analyze,leads}" in output or "{init,show,doctor,manifest,timeline,graph,leads,analyze}" in output
+    assert (
+        "{init,bind,show,doctor,manifest,timeline,graph,analyze,leads}" in output
+        or "{init,bind,show,doctor,manifest,timeline,graph,leads,analyze}" in output
+    )
     assert "Use --help-all for recursive command help." not in output
     assert "Use --help-all for the same long-form usage output." not in output
     assert "End of top-level long help for `gotta`." in output
@@ -920,7 +922,7 @@ def test_materialize_invocation_extracts_github_commit_history_markdown_source_r
     assert metadata["source_updated_at"] == "2026-03-11T02:14:24Z"
 
 
-def test_materialize_invocation_captures_peer_actor_metadata(
+def test_materialize_invocation_captures_actor_actor_metadata(
     tmp_path: Path, monkeypatch
 ) -> None:
     dirs = content.ResolvedDirs(
@@ -930,8 +932,8 @@ def test_materialize_invocation_captures_peer_actor_metadata(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("GOTTA_PEER_LABEL", "claude")
-    monkeypatch.setenv("GOTTA_PEER_DIR", str(dirs.session_dir / "peers" / "claude"))
+    monkeypatch.setenv("GOTTA_ACTOR_LABEL", "claude")
+    monkeypatch.setenv("GOTTA_ACTOR_DIR", str(dirs.session_dir / "actors" / "claude"))
 
     result = dispatch._materialize_invocation(
         "read",
@@ -944,7 +946,7 @@ def test_materialize_invocation_captures_peer_actor_metadata(
     assert result is not None
     manifest = json.loads((dirs.content_dir / "manifest.jsonl").read_text(encoding="utf-8"))
     assert manifest["actor"] == "claude"
-    assert manifest["peer_dir"].endswith("/peers/claude")
+    assert manifest["actor_dir"].endswith("/actors/claude")
 
 
 def test_github_route_prefers_markdown_for_common_github_targets() -> None:

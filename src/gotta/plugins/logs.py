@@ -11,7 +11,7 @@ from gotta import session as session_plugin
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--session", help="session root")
+    session_plugin.add_target_args(parser)
 
 
 def build_parser(command_name: str = "gotta logs") -> argparse.ArgumentParser:
@@ -61,8 +61,9 @@ def main(argv: list[str] | None = None) -> int:
         if int(exc.code or 0) == 0:
             return 0
         raise
-    work_dir = session_plugin._work_workspace_dir(
-        explicit_session=getattr(args, "session", None)
+    work_dir = session_plugin._session_dir(
+        explicit_session=getattr(args, "session", None),
+        explicit_actor=getattr(args, "actor", None),
     )
     action = args.action or "show"
     log_path = logs_surface_path(work_dir)
@@ -75,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"entries: {payload['entry_count']}")
         for record in payload["entries"]:
             timestamp = str(record.get("timestamp") or "unknown-time")
-            actor = str(record.get("actor") or "primary")
+            actor = str(record.get("actor") or session_plugin.session_identity(work_dir))
             message = str(record.get("message") or "").strip() or "unspecified log entry"
             message_lines = message.splitlines() or ["unspecified log entry"]
             print(f"- `{timestamp}` [{actor}] {message_lines[0]}")
@@ -95,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
                 work_dir,
                 message=session_plugin._normalize_entry_text(entry, input_name="log entry text"),
             )
-        session_plugin._record_work_activity(
+        session_plugin._record_session_activity(
             work_dir,
             plugin="logs",
             surface="logs",
@@ -116,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         work_dir,
         message=session_plugin._normalize_entry_text(payload, input_name="log entry text"),
     )
-    session_plugin._record_work_activity(
+    session_plugin._record_session_activity(
         work_dir,
         plugin="logs",
         surface="logs",

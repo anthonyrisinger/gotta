@@ -36,7 +36,7 @@ DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_EXPORT_LIMIT = 20
 DEFAULT_NOTE_TIME_RANGE = "last_90_days"
 DEFAULT_TRANSCRIPT_SEARCH_TIME_RANGE = "last_30_days"
-USER_AGENT = "Granola/5.354.0"
+USER_ACTOR = "Granola/5.354.0"
 CLIENT_VERSION = "5.354.0"
 DOCUMENT_ID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -413,7 +413,7 @@ def request_json(url: str, token: str, payload: dict[str, Any]) -> Any:
     request.add_header("Accept", "*/*")
     request.add_header("Accept-Encoding", "gzip")
     request.add_header("Content-Type", "application/json")
-    request.add_header("User-Agent", USER_AGENT)
+    request.add_header("User-Actor", USER_ACTOR)
     request.add_header("X-Client-Version", CLIENT_VERSION)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
