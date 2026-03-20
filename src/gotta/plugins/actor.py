@@ -58,6 +58,16 @@ def _normalize_args(argv: list[str]) -> list[str]:
     return ["status", *argv]
 
 
+def session_access_mode(argv: list[str]) -> str:
+    normalized = _normalize_args(list(argv or []))
+    positionals = session_plugin.argv_positionals(
+        normalized,
+        valued_flags=("--session", "--actor", "--output"),
+    )
+    action = positionals[0] if positionals else "status"
+    return "read" if action == "status" else "write"
+
+
 def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
     actor_name = session_plugin._resolve_bound_actor_name(work_root, actor_name)
     actor_dir = actor_session_root(work_root, actor_name)
@@ -121,7 +131,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - append another durable note after each material evidence wave or when the plan changes
         - if you materially expanded the evidence web since your last note, append a new durable note before requesting completion or sign-off
         - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final durable note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
-        - native `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
+        - session-rooted `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
         - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
         - append running notes with `gotta notes append --actor {actor_name} --stdin`; empty notes at closeout are a visibility failure, not success

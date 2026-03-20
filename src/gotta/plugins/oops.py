@@ -164,6 +164,29 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
     return parser
 
 
+def session_access_mode(argv: list[str]) -> str:
+    positionals = session_plugin.argv_positionals(
+        argv,
+        valued_flags=(
+            "--session",
+            "--actor",
+            "--from-file",
+            "--surface",
+            "--command",
+            "--kind",
+            "--affordance",
+            "--workaround",
+            "--severity",
+            "--reproducibility",
+            "--resolution-state",
+            "--output",
+            "--limit",
+        ),
+    )
+    action = positionals[0] if positionals else "summary"
+    return "write" if action in {"append", "extend"} else "read"
+
+
 def cmd_oops(args: argparse.Namespace) -> int:
     session_dir = session_plugin._session_dir(
         explicit_session=getattr(args, "session", None),

@@ -52,6 +52,20 @@ def build_parser(command_name: str = "gotta notes") -> argparse.ArgumentParser:
     return parser
 
 
+def session_access_mode(argv: list[str]) -> str:
+    positionals = session_plugin.argv_positionals(
+        argv,
+        valued_flags=(
+            "--session",
+            "--actor",
+            "--from-file",
+            "--output",
+        ),
+    )
+    action = positionals[0] if positionals else "show"
+    return "write" if action == "append" else "read"
+
+
 def _normalize_args(argv: list[str]) -> list[str]:
     if not argv:
         return argv

@@ -66,6 +66,22 @@ def build_parser(command_name: str = "gotta todo") -> argparse.ArgumentParser:
     return parser
 
 
+def session_access_mode(argv: list[str]) -> str:
+    positionals = session_plugin.argv_positionals(
+        argv,
+        valued_flags=(
+            "--session",
+            "--actor",
+            "--from-file",
+            "--output",
+            "--status",
+            "--limit",
+        ),
+    )
+    action = positionals[0] if positionals else "show"
+    return "write" if action in {"append", "extend", "check"} else "read"
+
+
 def _format_markdown_bullet(body: str, *, prefix: str = "- ") -> str:
     lines = session_plugin._normalize_entry_text(body, input_name="entry text").split("\n")
     first = f"{prefix}{lines[0].strip()}"

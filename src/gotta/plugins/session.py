@@ -15,6 +15,7 @@ import uuid
 
 from gotta.compat import UTC, datetime
 from gotta import binding as binding_helpers
+from gotta import session as sessionlib
 from gotta.content import (
     CONTEXT_ID_ENV,
     CONTEXT_SOURCE_ENV,
@@ -107,6 +108,15 @@ def _rendered_actor(raw: object, *, session_root: Path) -> str:
 
 def _state_file(root: Path) -> Path:
     return state_env_path(root)
+
+
+def session_access_mode(argv: list[str]) -> str:
+    positionals = sessionlib.argv_positionals(
+        argv,
+        valued_flags=("--session", "--actor", "--content-dir", "--output", "--limit"),
+    )
+    subcommand = positionals[0] if positionals else "show"
+    return "write" if subcommand in {"init", "bind"} else "read"
 
 
 def build_parser() -> argparse.ArgumentParser:

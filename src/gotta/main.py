@@ -12,6 +12,7 @@ import sys
 import time
 import json
 
+from gotta.builtin import SessionAccessMode, get_plugin
 from gotta.compat import UTC, datetime
 from gotta.actors import resolve_actor_context, seed_actor_context
 from gotta.dispatch import available_plugins, print_usage, run_plugin
@@ -433,6 +434,29 @@ def _explicit_actor_arg(argv: list[str]) -> str | None:
     return _flag_value(argv, "--actor")
 
 
+def _resolve_shared_explicit_session(raw: str) -> Path | None:
+    normalized = raw.strip()
+    if not normalized:
+        return None
+    candidate = Path(normalized).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+        if topology.parse_shared_session_root(resolved) is not None:
+            return resolved
+        if topology.parse_grouped_session_root(resolved) is not None:
+            return resolved
+        return None
+    if "/" in normalized:
+        root = resolve_session_reference(normalized, allow_missing=False)
+        if root is None:
+            return None
+        return root
+    shared_root = topology.shared_session_root_for(normalized)
+    if shared_root.exists() or shared_root.is_symlink():
+        return shared_root.resolve()
+    return None
+
+
 def _prefer_bound_session_root() -> Path | None:
     explicit = os.environ.get(SESSION_ENV, "").strip()
     if explicit:
@@ -465,28 +489,18 @@ def _is_nonbinding_help(argv: list[str]) -> bool:
     return "--help" in argv or "--help-all" in argv
 
 
-def _is_read_only_explicit_target(argv: list[str]) -> bool:
+def _session_access_mode(argv: list[str]) -> SessionAccessMode:
     if not argv:
-        return False
-    if argv[0] == "session":
-        subcommand = "show"
-        if len(argv) >= 2 and not argv[1].startswith("-"):
-            subcommand = argv[1]
-        return subcommand in {
-            "show",
-            "doctor",
-            "manifest",
-            "timeline",
-            "graph",
-            "leads",
-            "analyze",
-        }
-    if argv[0] == "actor":
-        subcommand = "status"
-        if len(argv) >= 2 and not argv[1].startswith("-"):
-            subcommand = argv[1]
-        return subcommand == "status"
-    return False
+        return "none"
+    spec = get_plugin(argv[0])
+    if spec is None:
+        return "write"
+    access = spec.session_access
+    if access is None:
+        return "write"
+    if callable(access):
+        return access(argv[1:])
+    return access
 
 
 def _existing_actor_root_for_session(
@@ -517,6 +531,25 @@ def _existing_actor_root_for_session(
     return next(iter(initialized.values()), None)
 
 
+def _preferred_read_only_session_identities(
+    root: Path,
+    *,
+    explicit_actor: str | None,
+) -> list[str]:
+    preferred: list[str] = []
+    if explicit_actor:
+        preferred.append(explicit_actor)
+    current = _prefer_bound_session_root()
+    if current is None:
+        return preferred
+    if topology.shared_session_id(current) != topology.shared_session_id(root):
+        return preferred
+    current_identity = topology.session_identity(current)
+    if current_identity and not topology.is_placeholder_identity(current_identity):
+        preferred.append(current_identity)
+    return preferred
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     normalized = normalize_help_aliases(args)
@@ -527,38 +560,44 @@ def main(argv: list[str] | None = None) -> int:
         context_id, context_source = current_context_binding()
         explicit_session = _explicit_session_arg(normalized)
         explicit_actor = _explicit_actor_arg(normalized)
+        session_access = _session_access_mode(normalized)
         if plugin_name == "session" and len(normalized) >= 2 and normalized[1] in {"bind"}:
             return _gotta_main(normalized)
+        if session_access == "none":
+            return _gotta_main(normalized)
         if explicit_session:
-            target_identity = topology.normalize_identity(
-                explicit_actor or _active_identity(context_id)
-            )
-            explicit_root = resolve_session_reference(
-                explicit_session,
-                identity=target_identity,
-                allow_missing=False,
-            )
-            if explicit_root is not None and explicit_actor:
-                resolved_actor = session_plugin._resolve_bound_actor_name(
-                    explicit_root,
-                    explicit_actor,
-                )
-                root = topology.session_root_for(
-                    session_id(explicit_root),
-                    resolved_actor,
-                )
-            elif explicit_root is not None:
-                root = explicit_root
+            if session_access == "read" and not explicit_actor:
+                root = _resolve_shared_explicit_session(explicit_session)
             else:
-                if explicit_actor:
-                    return die(
-                        "explicit actor targeting requires an existing shared session and a bound actor"
-                    )
-                root = resolve_session_reference(
+                target_identity = topology.normalize_identity(
+                    explicit_actor or _active_identity(context_id)
+                )
+                explicit_root = resolve_session_reference(
                     explicit_session,
                     identity=target_identity,
-                    allow_missing=True,
+                    allow_missing=False,
                 )
+                if explicit_root is not None and explicit_actor:
+                    resolved_actor = session_plugin._resolve_bound_actor_name(
+                        explicit_root,
+                        explicit_actor,
+                    )
+                    root = topology.session_root_for(
+                        session_id(explicit_root),
+                        resolved_actor,
+                    )
+                elif explicit_root is not None:
+                    root = explicit_root
+                else:
+                    if explicit_actor:
+                        return die(
+                            "explicit actor targeting requires an existing shared session and a bound actor"
+                        )
+                    root = resolve_session_reference(
+                        explicit_session,
+                        identity=target_identity,
+                        allow_missing=True,
+                    )
             if root is None:
                 return die(
                     "session references must be an absolute path, a shared session id, "
@@ -568,8 +607,13 @@ def main(argv: list[str] | None = None) -> int:
             current = _prefer_bound_session_root()
             if current is None:
                 current = _resolve_existing_session_root(context_id, context_source)
-            if current is None:
+            if current is None and session_access == "write":
                 current, _created = _bind_session_root(context_id, context_source)
+            if current is None:
+                return die(
+                    "this command requires an existing session; run `gotta session bind` "
+                    "first or pass `--session <session-id>`"
+                )
             resolved_actor = session_plugin._resolve_bound_actor_name(
                 current,
                 explicit_actor,
@@ -577,26 +621,28 @@ def main(argv: list[str] | None = None) -> int:
             root = topology.session_root_for(session_id(current), resolved_actor)
         else:
             root = _prefer_bound_session_root()
-        read_only_explicit_target = bool(explicit_session) and _is_read_only_explicit_target(
-            normalized
-        )
         created = False
         if root is None:
             root = _resolve_existing_session_root(context_id, context_source)
-        if root is None:
+        if root is None and session_access == "write":
             root, created = _bind_session_root(context_id, context_source)
-        if read_only_explicit_target and not session_is_initialized(root):
+        if root is None:
+            return die(
+                "this command requires an existing session; run `gotta session bind` "
+                "first or pass `--session <session-id>`"
+            )
+        if session_access == "read" and not session_is_initialized(root):
             existing = _existing_actor_root_for_session(
                 root,
-                preferred_identities=[
-                    explicit_actor or "",
-                    _active_identity(context_id),
-                ],
+                preferred_identities=_preferred_read_only_session_identities(
+                    root,
+                    explicit_actor=explicit_actor,
+                ),
             )
             if existing is not None:
                 root = existing
         scaffold_created = False
-        if read_only_explicit_target:
+        if session_access == "read":
             if not session_is_initialized(root):
                 return die(
                     "explicit session inspection requires an initialized actor root in the "

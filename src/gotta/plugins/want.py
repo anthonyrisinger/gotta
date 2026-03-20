@@ -5,6 +5,10 @@ from __future__ import annotations
 from gotta import session as sessionlib
 
 
+def session_access_mode(argv: list[str]) -> str:
+    return sessionlib.charter_session_access_mode(list(argv or []))
+
+
 def main(argv: list[str] | None = None) -> int:
     return sessionlib.run_charter_surface(
         argv,

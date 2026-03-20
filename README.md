@@ -167,11 +167,14 @@ Durable OAuth state lands under gotta's OS-native state directory:
 
 ## Canonical Session Model
 
-The canonical top-level root is a session root under gotta's OS-native data
-directory:
+The canonical top-level root is a shared session root under gotta's OS-native
+data directory:
 
 ```text
 <gotta data dir>/sessions/<session-id>/
+  session.json
+  content/
+  actors/<actor-id>/
 ```
 
 Examples:
@@ -179,22 +182,37 @@ Examples:
 - macOS: `~/Library/Application Support/gotta/sessions/<session-id>/`
 - Linux: `~/.local/share/gotta/sessions/<session-id>/`
 
-Session roots are context-derived, not mission-name-derived. They are durable
-working sets for evidence, coordination, and resumption.
+Each shared session owns:
 
-Each session root owns:
+- `session.json` for shared session membership and actor metadata
+- `content/` for the shared evidence web and append-only manifest
+- `actors/<actor-id>/` for actor-local writable surfaces and state
+
+Each actor root then owns its local working surfaces:
 
 ```text
-$WS/
+actors/<actor-id>/
+  WANT.md
+  GOAL.md
+  TODO.md
+  LOGS.md
+  OOPS.md
+  NOTES.md
   state/
-    env
   bin/
-  content/
-  graph.mmd
-  graph.json
-  semantic-graph.mmd
-  semantic-graph.json
-  summary.json
+  content -> ../../content
+```
+
+Top-level fingerprint bindings live separately:
+
+```text
+<gotta data dir>/bindings/<fingerprint> -> ../sessions/<session-id>/actors/<actor-id>
+```
+
+The default private session for an unbound fingerprint is:
+
+```text
+sessions/<fingerprint>/actors/<fingerprint>/
 ```
 
 Stored artifacts have two native reopen handles:
@@ -219,7 +237,7 @@ of prior interactions.
 
 ## Retrieval And Materialization
 
-Provider-first usage without extra selector scaffolding is first-class:
+Provider-first usage without session scaffolding is first-class:
 
 ```bash
 gotta jira status
@@ -237,8 +255,9 @@ gotta slack search "handoff failure"
 gotta read https://github.com/org/repo/blob/main/README.md
 ```
 
-Those commands bind or create a session automatically and materialize durable
-evidence under that session.
+These commands no longer synthesize a private session just to inspect provider
+state. Direct provider `status`, `search`, and `get` surfaces are sessionless
+unless they intentionally materialize durable evidence.
 
 `gotta read` is the canonical retrieval entrypoint. It supports:
 
@@ -302,11 +321,12 @@ structure rather than a thin summary.
 
 ## Session Coordination
 
-Scaffold the active session in place, then rewrite the operator-owned charter
-surfaces explicitly:
+Bind one shared session explicitly, then rewrite the operator-owned charter
+surfaces inside the active actor root:
 
 ```bash
-gotta session init
+gotta session bind retry-review
+gotta actor bind Claude
 gotta want --stdin <<'EOF'
 Queue retry context review.
 EOF
@@ -315,28 +335,39 @@ Build the execution charter for the current session from live context.
 EOF
 ```
 
-That scaffolds the canonical session files plus readable projections:
+That yields one shared session plus one actor-local working root:
 
 ```text
-$WS/
-  WANT.md
-  TODO.md
-  LOGS.md
-  GOAL.md
-  OOPS.md
-  session -> ../../sessions/<session-id>
-  content -> ../../sessions/<session-id>/content
-  bin/
+sessions/retry-review/
+  session.json
+  content/
+  actors/<actor-id>/
+    WANT.md
+    GOAL.md
+    TODO.md
+    LOGS.md
+    OOPS.md
+    NOTES.md
+    state/
+    bin/
+    content -> ../../content
 ```
 
-Inside the session surface:
+Inside this topology:
 
-- `WANT.md` and `GOAL.md` are intentional rewrites
-- `state/todo.jsonl` is canonical and projects into `TODO.md`
-- `state/logs.jsonl` is canonical and projects into `LOGS.md`
-- `state/oops.jsonl` is canonical and projects into `OOPS.md`
-- actor lifecycle state, actor notes state, and the session evidence web carry
-  shared coordination
+- `WANT.md` and `GOAL.md` are actor-local intentional rewrites
+- `state/todo.jsonl` is actor-local truth and projects into `TODO.md`
+- `state/logs.jsonl` is actor-local truth and projects into `LOGS.md`
+- `state/oops.jsonl` is actor-local truth and projects into `OOPS.md`
+- `state/notes.jsonl` is actor-local truth and projects into `NOTES.md`
+- `sessions/<session-id>/content/` is shared across all actors bound into that
+  session
+
+Read-only session-rooted surfaces such as `gotta oops`, `gotta logs`,
+`gotta todo`, `gotta want`, `gotta goal`, `gotta actor status`, and
+`gotta session show` require either an existing bound session or an explicit
+`--session <session-id>`. They do not silently synthesize a new private session
+just to inspect state.
 
 This split is deliberate:
 

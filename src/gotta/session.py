@@ -212,6 +212,44 @@ def add_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--actor", help="actor within the current session")
 
 
+def argv_has_flag(argv: list[str], flag: str) -> bool:
+    return any(token == flag or token.startswith(f"{flag}=") for token in argv)
+
+
+def argv_positionals(
+    argv: list[str],
+    *,
+    valued_flags: tuple[str, ...] = (),
+) -> list[str]:
+    positionals: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            positionals.extend(part for part in argv[index + 1 :] if part)
+            break
+        if token in valued_flags:
+            index += 2
+            continue
+        matched_flag = next(
+            (flag for flag in valued_flags if token.startswith(f"{flag}=")),
+            "",
+        )
+        if matched_flag:
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    return positionals
+
+
+def charter_session_access_mode(argv: list[str]) -> str:
+    return "write" if (argv_has_flag(argv, "--stdin") or argv_has_flag(argv, "--from-file")) else "read"
+
+
 def _read_charter_text_source(
     *,
     session_root: Path,

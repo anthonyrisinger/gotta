@@ -49,6 +49,21 @@ def build_parser(command_name: str = "gotta logs") -> argparse.ArgumentParser:
     return parser
 
 
+def session_access_mode(argv: list[str]) -> str:
+    positionals = session_plugin.argv_positionals(
+        argv,
+        valued_flags=(
+            "--session",
+            "--actor",
+            "--from-file",
+            "--output",
+            "--limit",
+        ),
+    )
+    action = positionals[0] if positionals else "show"
+    return "write" if action in {"append", "extend"} else "read"
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv or [])
     if is_long_help_request(argv):
