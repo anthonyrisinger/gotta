@@ -83,6 +83,15 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
         ["jira", "status"],
         ["slack", "status"],
         ["grafana", "status"],
+        ["confluence", "search", "platform"],
+        ["gdocs", "search", "platform"],
+        ["gdrive", "search", "platform"],
+        ["grafana", "search", "platform"],
+        ["granola", "search", "platform"],
+        ["gsheets", "search", "platform"],
+        ["github", "search", "platform"],
+        ["jira", "search", "platform"],
+        ["slack", "search", "platform"],
     ],
 )
 def test_main_provider_status_surfaces_do_not_create_session(

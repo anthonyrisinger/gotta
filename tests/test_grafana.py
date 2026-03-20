@@ -96,6 +96,18 @@ def test_grafana_search_renders_markdown(monkeypatch, capsys) -> None:
     assert "https://grafana.example.com/d/cIBgcSjkk/production-overview" in output
 
 
+def test_grafana_headers_use_non_default_user_agent(monkeypatch) -> None:
+    monkeypatch.setenv(grafana.GRAFANA_BASE_URL_ENV, "https://grafana.example.com")
+    monkeypatch.setenv(grafana.GRAFANA_TOKEN_ENV, "glsa_secret")
+
+    session = grafana._load_session()
+
+    headers = grafana._headers(session)
+
+    assert headers["Authorization"] == "Bearer glsa_secret"
+    assert headers["User-Agent"] == grafana.DEFAULT_USER_AGENT
+
+
 def test_grafana_get_renders_markdown(monkeypatch, capsys) -> None:
     monkeypatch.setenv(grafana.GRAFANA_BASE_URL_ENV, "https://grafana.example.com")
     monkeypatch.setenv(grafana.GRAFANA_TOKEN_ENV, "glsa_secret")

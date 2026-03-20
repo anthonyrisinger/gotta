@@ -353,6 +353,12 @@ def _generic_should_materialize(plugin: str, argv: list[str]) -> bool:
     spec = _plugin_spec(plugin)
     if spec and spec.should_materialize is not None:
         return bool(spec.should_materialize(argv))
+    if spec is not None:
+        access = spec.session_access
+        if callable(access):
+            access = access(argv)
+        if access == "none":
+            return False
     if plugin == "session":
         return False
     if not argv:
