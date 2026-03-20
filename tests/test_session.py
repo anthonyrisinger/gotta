@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -706,6 +707,55 @@ def test_actor_status_json_reports_recent_activity_and_last_activity_summary(
     assert payload["artifact_count"] == 0
 
 
+def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    sessionlib._write_actor_state(
+        root,
+        "claude",
+        {
+            "status": "active",
+            "started_at": sessionlib.datetime.now(tz=sessionlib.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+
+    payload = sessionlib._actor_status_payload(root, "claude")
+    assert payload["notes_status"] == "empty"
+    assert "heartbeat note now" in payload["next_step"]
+
+
+def test_actor_recent_activity_carries_cross_actor_author(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    events_path = sessionlib._actor_events_path(root, "claude")
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    events_path.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-17T00:03:00Z",
+                "actor": "claude",
+                "author": "thread-123",
+                "event": "note",
+                "detail": "Wave 2 landed",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = sessionlib._actor_status_payload(root, "claude")
+    assert payload["recent_activity"][0]["author"] == "thread-123"
+    assert payload["recent_activity"][0]["summary"] == "thread-123: Wave 2 landed"
+
+
 def test_session_bind_can_switch_active_session(tmp_path: Path, monkeypatch, capsys) -> None:
     registry = tmp_path / "sessions"
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
@@ -753,8 +803,17 @@ def test_actor_bind_uses_current_bound_shared_session(
 
     assert cli.main(["actor", "bind", "Claude"]) == 0
     output = capsys.readouterr().out
+    fingerprint = cli._session_token("thread-123")
+    active_root = registry / "retry-review" / "actors" / fingerprint
+    claude_root = registry / "retry-review" / "actors" / "claude"
     assert "bound Claude session" in output
-    assert (registry / "retry-review" / "actors" / "claude" / "WANT.md").exists()
+    assert (claude_root / "WANT.md").exists()
+    assert (active_root / "content").is_symlink()
+    assert os.readlink(active_root / "content") == "../../content"
+    assert not (active_root / "session").exists()
+    assert (claude_root / "content").is_symlink()
+    assert os.readlink(claude_root / "content") == "../../content"
+    assert not (claude_root / "session").exists()
     assert not (registry / cli._session_token("thread-123") / "actors" / "claude").exists()
 
 

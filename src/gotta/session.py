@@ -24,6 +24,7 @@ from gotta.content import (
     SESSION_INITIALIZED_ENV,
     CommonOptions,
     append_activity_event,
+    current_actor,
     discover_state_env,
     env_mapping,
     load_state_env_at_root,
@@ -31,7 +32,9 @@ from gotta.content import (
     session_identity,
     session_is_initialized,
     session_relative_path,
+    session_shared_id,
     sh_quote,
+    shared_session_root,
     state_dir_path,
     state_env_path,
     stdin_has_readable_text,
@@ -674,7 +677,8 @@ def _bootstrap_actor_goal(*, label: str, actor_dir: Path, work_dir: Path) -> str
         - Read actor-local `WANT.md` first.
         - Turn that charter into concrete evidence-collection steps.
         - Treat `TODO.md` as the live actor-local checklist.
-        - Append durable notes during the run; do not wait until the end.
+        - Append an initial durable heartbeat note immediately after launch, even before the first evidence wave.
+        - Continue appending durable notes during the run; do not wait until the end.
         - Do not author the final dossier from this session.
 
         Native rewrite:
@@ -1080,7 +1084,6 @@ def _ensure_actor_session_exports(
     actor_dir: Path,
     *,
     content_dir: Path,
-    session_dir: Path,
 ) -> dict[str, str]:
     dirs = resolve_dirs(
         CommonOptions(session_dir=str(actor_dir), content_dir=str(content_dir)),
@@ -1089,7 +1092,9 @@ def _ensure_actor_session_exports(
     write_session_state(dirs)
     dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     _ensure_symlink(actor_dir / "content", content_dir)
-    _ensure_symlink(actor_dir / "session", session_dir)
+    session_link = actor_dir / "session"
+    if session_link.is_symlink() or session_link.is_file():
+        session_link.unlink(missing_ok=True)
     return env_mapping(dirs)
 
 
@@ -1104,6 +1109,11 @@ def _ensure_actor_initial_todo(actor_dir: Path) -> None:
         actor_dir,
         section="Status",
         text="Rewrite WANT.md and GOAL.md into a concrete actor-local checklist in TODO.md.",
+    )
+    create_todo_item(
+        actor_dir,
+        section="Status",
+        text="Append an initial durable heartbeat note immediately after the actor is alive, even before the first evidence wave.",
     )
     create_todo_item(
         actor_dir,
@@ -1127,6 +1137,8 @@ def _record_session_activity(
     plugin: str,
     surface: str,
     action: str,
+    actor: str = "",
+    target_actor: str = "",
     target: Path | None = None,
     locator: str = "",
     preferred_name: str = "",
@@ -1158,19 +1170,22 @@ def _record_session_activity(
         resolved_locator = locator.strip() or f"{plugin}:{surface}"
         resolved_name = preferred_name.strip() or resolved_locator
         resolved_follow = follow_command.strip()
-    append_activity_event(
-        work_dir,
-        {
-            "plugin": plugin,
-            "surface": surface,
-            "action": action,
-            "locator": resolved_locator,
-            "preferred_name": preferred_name.strip() or resolved_name,
-            "follow_command": follow_command.strip() or resolved_follow,
-            "detail": detail,
-            "time_field": "session_recorded_at",
-        },
-    )
+    activity_actor = actor.strip() or current_actor(default_actor=session_identity(work_dir))
+    payload = {
+        "plugin": plugin,
+        "surface": surface,
+        "action": action,
+        "actor": activity_actor,
+        "locator": resolved_locator,
+        "preferred_name": preferred_name.strip() or resolved_name,
+        "follow_command": follow_command.strip() or resolved_follow,
+        "detail": detail,
+        "time_field": "session_recorded_at",
+    }
+    normalized_target = _normalize_actor_name(target_actor) if target_actor.strip() else ""
+    if normalized_target and normalized_target != activity_actor:
+        payload["target_actor"] = normalized_target
+    append_activity_event(work_dir, payload)
 
 
 def _append_actor_event(
@@ -1181,9 +1196,12 @@ def _append_actor_event(
     detail: str = "",
     extra: dict[str, object] | None = None,
 ) -> None:
+    normalized_actor = _normalize_actor_name(actor_name)
+    author = current_actor(default_actor=normalized_actor)
     payload: dict[str, object] = {
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "actor": _normalize_actor_name(actor_name),
+        "actor": normalized_actor,
+        "author": author,
         "event": event,
         "detail": detail,
     }
@@ -1196,6 +1214,8 @@ def _append_actor_event(
             plugin="actor",
             surface="actor.lifecycle",
             action=event,
+            actor=author,
+            target_actor=normalized_actor,
             locator=f"actor:{payload['actor']}",
             preferred_name=str(payload["actor"]),
             follow_command=f"gotta actor status {payload['actor']}",
@@ -1204,7 +1224,13 @@ def _append_actor_event(
 
 
 def _actor_log_line(session_root: Path, actor_name: str, message: str) -> None:
-    append_log_record(session_root, message=f"[{actor_name}] {message}", actor=actor_name)
+    normalized_actor = _normalize_actor_name(actor_name)
+    author = current_actor(default_actor=normalized_actor)
+    if author == normalized_actor:
+        rendered = f"[{normalized_actor}] {message}"
+    else:
+        rendered = f"[{author} -> {normalized_actor}] {message}"
+    append_log_record(session_root, message=rendered, actor=author)
 
 
 def _record_actor_projection_activity(
@@ -1217,11 +1243,14 @@ def _record_actor_projection_activity(
     projection_path: Path,
     detail: str,
 ) -> None:
+    normalized_actor = _normalize_actor_name(actor_name)
     _record_session_activity(
         session_root,
         plugin="actor",
         surface=surface,
         action=action,
+        actor=current_actor(default_actor=normalized_actor),
+        target_actor=normalized_actor,
         locator=_session_relative_locator(session_root, log_path),
         preferred_name=projection_path.name,
         follow_command=f"gotta read {_session_relative_locator(session_root, projection_path)!r}",
@@ -1337,14 +1366,23 @@ def _actor_evidence_note(evidence: dict[str, object]) -> str:
     )
 
 
-def _actor_activity_summary(event: str, detail: str) -> str:
+def _actor_activity_summary(
+    event: str,
+    detail: str,
+    *,
+    author: str = "",
+    target_actor: str = "",
+) -> str:
     cleaned_detail = detail.strip()
+    author_prefix = ""
+    if author and target_actor and author != target_actor:
+        author_prefix = f"{author}: "
     if event == "note":
-        return cleaned_detail or "note"
+        return (author_prefix + cleaned_detail) if cleaned_detail else (author_prefix + "note").strip()
     label = event.replace("_", " ")
     if cleaned_detail:
-        return f"{label}: {cleaned_detail}"
-    return label
+        return f"{label}: {author_prefix}{cleaned_detail}".strip()
+    return f"{label}: {author_prefix}".strip(": ")
 
 
 def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
@@ -1370,12 +1408,19 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
             continue
         timestamp = str(payload.get("timestamp") or "").strip()
         detail = str(payload.get("detail") or "").strip()
+        author = str(payload.get("author") or "").strip()
         events.append(
             {
                 "timestamp": timestamp,
                 "event": event,
+                "author": author,
                 "detail": detail,
-                "summary": _actor_activity_summary(event, detail),
+                "summary": _actor_activity_summary(
+                    event,
+                    detail,
+                    author=author,
+                    target_actor=_normalize_actor_name(actor_name),
+                ),
                 "_order": index,
             }
         )
@@ -1391,6 +1436,7 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
         {
             "timestamp": str(item.get("timestamp") or ""),
             "event": str(item.get("event") or ""),
+            "author": str(item.get("author") or ""),
             "detail": str(item.get("detail") or ""),
             "summary": str(item.get("summary") or ""),
         }
@@ -1523,6 +1569,13 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "actor is still active and has already started landing durable notes. "
             "Use NOTES.md for live actor visibility; recheck `gotta actor status "
             f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
+            + request_note
+            + runtime_note
+        )
+    elif derived_status in {"starting", "active"}:
+        next_step = (
+            "actor is live, but NOTES.md is still empty. Append an initial durable heartbeat note now, "
+            "even before the first evidence wave, so the session has live narration from the actor."
             + request_note
             + runtime_note
         )
@@ -1692,6 +1745,7 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
     repo_raw = str(state.get(SESSION_REPO_ENV) or "").strip()
     actor_dir = actor_session_root(work_dir, actor_name)
     bin_path = work_dir / "bin" / actor_name
+    shared_content_dir = shared_session_root(session_shared_id(work_dir)) / "content"
     if actor_dir != work_dir:
         if actor_dir.exists() and not _actor_is_selected(work_dir, actor_name):
             _reset_orphaned_actor_surface(actor_dir)
@@ -1704,8 +1758,7 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
         _copy_if_present(work_dir / "VOICE.md", actor_dir / "VOICE.md")
         _ensure_actor_session_exports(
             actor_dir,
-            content_dir=work_dir / "content",
-            session_dir=work_dir / "session" if (work_dir / "session").exists() else work_dir,
+            content_dir=shared_content_dir,
         )
         _ensure_actor_parent_links(work_dir, actor_name, actor_dir)
     else:

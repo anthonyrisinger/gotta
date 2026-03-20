@@ -112,8 +112,10 @@ def ensure_actor_session(
             SESSION_ACTOR_ENV: actor,
         },
     )
-    _ensure_link(dirs.session_dir / "session", shared_session_dir)
     _ensure_link(dirs.session_dir / "content", content_dir)
+    session_link = dirs.session_dir / "session"
+    if session_link.is_symlink() or session_link.is_file():
+        session_link.unlink(missing_ok=True)
     _update_session_metadata(
         shared_session_dir,
         session_id=current_session_id,

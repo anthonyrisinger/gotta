@@ -56,6 +56,9 @@ def test_main_creates_and_reuses_context_bound_session(
     assert session_root.name == cli._session_token("thread-123")
     assert (session_root / "state" / "env").exists()
     assert (session_root / "content").is_dir()
+    assert (session_root / "content").is_symlink()
+    assert os.readlink(session_root / "content") == "../../content"
+    assert not (session_root / "session").exists()
     assert (session_root / "WANT.md").is_file()
     assert (session_root / "GOAL.md").is_file()
     assert (session_root / "TODO.md").is_file()
@@ -221,6 +224,41 @@ def test_main_session_show_and_doctor_create_and_reuse_bound_session(
     doctor_output = json.loads(capsys.readouterr().out)
     assert doctor_output["GOTTA_SESSION_DIR"] == str(session_root.resolve())
     assert doctor_output["session_initialized"] == "yes"
+
+
+def test_main_cross_actor_note_append_preserves_acting_actor(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Claude"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["notes", "append", "cross-actor note", "--actor", "claude"]) == 0
+    capsys.readouterr()
+
+    fingerprint = cli._session_token("thread-123")
+    claude_root = registry / "demo" / "actors" / "claude"
+    notes_records = [
+        json.loads(line)
+        for line in (claude_root / "state" / "notes.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert notes_records[-1]["actor"] == "claude"
+    assert notes_records[-1]["author"] == fingerprint
+
+    activity_records = [
+        json.loads(line)
+        for line in (claude_root / "state" / "activity.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert activity_records[-1]["action"] == "append"
+    assert activity_records[-1]["actor"] == fingerprint
+    assert activity_records[-1]["target_actor"] == "claude"
 
 
 def test_main_failed_session_init_seed_does_not_leave_half_session(

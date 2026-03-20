@@ -114,7 +114,8 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - treat actor-local WANT/GOAL/TODO/LOGS/OOPS plus the shared evidence web as the live truth surfaces
         - disclose any non-native move as a native-coverage gap instead of hiding it
         - materialized evidence becomes usable immediately through manifest, timeline, leads, and graph even before notes catch up
-        - append a first durable note immediately after the first strong anchor or branch; do not wait for a full evidence wave
+        - append an initial durable heartbeat note as soon as the actor runtime is alive, even before the first strong anchor
+        - append a first substantive durable note immediately after the first strong anchor or branch; do not wait for a full evidence wave
         - append another durable note after each material evidence wave or when the plan changes
         - if you materially expanded the evidence web since your last note, append a new durable note before requesting completion or sign-off
         - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final durable note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly

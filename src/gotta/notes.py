@@ -6,14 +6,13 @@ import os
 from pathlib import Path
 
 from gotta.compat import UTC, datetime
-from gotta.actors import resolve_actor_context
 from gotta.actor import (
     actor_session_root,
     requested_disposition_label,
     supervisor_stop_message,
     supervisor_stop_pending,
 )
-from gotta.content import SESSION_ACTOR_ENV, current_context_binding, session_token
+from gotta.content import SESSION_ACTOR_ENV, current_actor
 from gotta.projection import append_jsonl, read_jsonl_records, write_projection_if_changed
 
 
@@ -37,11 +36,8 @@ def actor_notes_ready(work_dir: Path, actor_name: str) -> bool:
 
 
 def _author_name() -> str:
-    default_speaker = os.environ.get(SESSION_ACTOR_ENV, "").strip() or session_token(
-        current_context_binding()[0]
-    )
-    speaker = resolve_actor_context(default_speaker=default_speaker).speaker
-    return str(speaker or default_speaker).strip() or default_speaker
+    default_speaker = os.environ.get(SESSION_ACTOR_ENV, "").strip()
+    return current_actor(default_actor=default_speaker)
 
 
 def append_actor_note(

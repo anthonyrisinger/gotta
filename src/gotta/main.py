@@ -13,7 +13,7 @@ import time
 import json
 
 from gotta.compat import UTC, datetime
-from gotta.actors import seed_actor_context
+from gotta.actors import resolve_actor_context, seed_actor_context
 from gotta.dispatch import available_plugins, print_usage, run_plugin
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 from gotta.actor import session_actor, supervisor_stop_message, supervisor_stop_pending
@@ -276,18 +276,15 @@ def _create_session_root(
             SESSION_ACTOR_ENV: actor,
         },
     )
-    session_link = dirs.session_dir / "session"
-    if session_link.is_symlink() or session_link.is_file():
-        session_link.unlink(missing_ok=True)
-    elif session_link.exists():
-        os.rmdir(session_link)
-    session_link.symlink_to(os.path.relpath(session_dir, start=session_link.parent))
     content_link = dirs.session_dir / "content"
     if content_link.is_symlink() or content_link.is_file():
         content_link.unlink(missing_ok=True)
     elif content_link.exists():
         os.rmdir(content_link)
     content_link.symlink_to(os.path.relpath(content_dir, start=content_link.parent))
+    session_link = dirs.session_dir / "session"
+    if session_link.is_symlink() or session_link.is_file():
+        session_link.unlink(missing_ok=True)
     metadata_path = session_dir / "session.json"
     if not metadata_path.exists():
         metadata_path.write_text(
@@ -581,10 +578,11 @@ def main(argv: list[str] | None = None) -> int:
         created = created or scaffold_created
         original_env = os.environ.copy()
         try:
+            acting_actor = resolve_actor_context(
+                default_speaker=_active_identity(context_id)
+            ).speaker or _active_identity(context_id)
             _hydrate_environment(root, context_id=context_id, context_source=context_source)
-            seed_actor_context(
-                os.environ.get(SESSION_ACTOR_ENV, "").strip() or _session_token(context_id)
-            )
+            seed_actor_context(acting_actor)
             if explicit_actor:
                 os.environ[SESSION_ACTOR_ENV] = topology.normalize_identity(explicit_actor)
             if created:

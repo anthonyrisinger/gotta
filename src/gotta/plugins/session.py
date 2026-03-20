@@ -582,6 +582,7 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "fetched_at": timestamp,
                 "plugin": str(raw.get("plugin") or "session").strip() or "session",
                 "actor": _rendered_actor(raw.get("actor"), session_root=dirs.session_dir),
+                "target_actor": str(raw.get("target_actor") or "").strip(),
                 "locator": locator,
                 "preferred_name": str(raw.get("preferred_name") or locator).strip() or locator,
                 "checksum": "",
@@ -619,6 +620,7 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "fetched_at": timestamp,
                 "plugin": plugin,
                 "actor": actor,
+                "target_actor": "",
                 "locator": locator,
                 "preferred_name": path.name,
                 "checksum": "",
@@ -661,6 +663,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
                         snapshot.metadata.get("actor"),
                         session_root=dirs.session_dir,
                     ),
+                    "target_actor": str(snapshot.metadata.get("target_actor") or "").strip(),
                     "locator": locator,
                     "preferred_name": snapshot_display_name(snapshot),
                     "checksum": snapshot.digest,
@@ -702,6 +705,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
             "fetched_at": str(entry.get("fetched_at", "")).strip(),
             "plugin": str(entry.get("plugin", "")).strip() or "unknown-plugin",
             "actor": _rendered_actor(entry.get("actor"), session_root=dirs.session_dir),
+            "target_actor": str(entry.get("target_actor", "")).strip(),
             "locator": str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown",
             "preferred_name": str(entry.get("preferred_name", "")).strip() or "data",
             "checksum": str(entry.get("checksum", "")).strip(),
@@ -1838,11 +1842,14 @@ def cmd_timeline(args: argparse.Namespace) -> int:
     print(f"coverage_gaps: {payload.get('coverageGapCount', 0)}")
     print(f"events: {payload['eventCount']}")
     for event in payload["events"]:
+        actor_label = event["actor"]
+        if event.get("target_actor") and event["target_actor"] != actor_label:
+            actor_label = f"{actor_label}->{event['target_actor']}"
         checksum = event["checksum"][:12] if event["checksum"] else "unknown"
         if payload["mode"] != "acquired":
             print(
                 f"- {event.get('source_time') or 'unknown-time'} "
-                f"[{event['plugin']}/{event['actor']}] "
+                f"[{event['plugin']}/{actor_label}] "
                 f"{event['locator']} -> {event['preferred_name']} ({checksum}) "
                 f"(from {event.get('source_time_field') or 'unknown-field'})"
             )
@@ -1862,7 +1869,7 @@ def cmd_timeline(args: argparse.Namespace) -> int:
         else:
             print(
                 f"- {event['fetched_at'] or 'unknown-time'} "
-                f"[{event['plugin']}/{event['actor']}] "
+                f"[{event['plugin']}/{actor_label}] "
                 f"{event['locator']} -> {event['preferred_name']} ({checksum})"
                 f"{' (local)' if event.get('event_kind') == 'local' else ''}"
             )

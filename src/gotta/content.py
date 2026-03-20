@@ -16,6 +16,7 @@ import tempfile
 from typing import Any
 
 from gotta.compat import UTC, datetime
+from gotta.actors import resolve_actor_context
 from gotta import topology
 
 SESSION_ENV = "GOTTA_SESSION_DIR"
@@ -216,20 +217,31 @@ def context_bound_session_root() -> Path | None:
     return None
 
 
-def _current_actor() -> str:
-    explicit = (
+def current_actor(*, default_actor: str = "") -> str:
+    fallback = (
         os.environ.get("GOTTA_ACTOR_LABEL", "").strip()
+        or default_actor.strip()
         or os.environ.get(SESSION_ACTOR_ENV, "").strip()
+        or session_token(current_context_binding()[0])
     )
-    if explicit and not topology.is_placeholder_identity(explicit):
-        return topology.normalize_identity(explicit)
+    speaker = resolve_actor_context(default_speaker=fallback).speaker
+    normalized = topology.normalize_identity(str(speaker or fallback).strip())
+    if normalized and not topology.is_placeholder_identity(normalized):
+        return normalized
+    fallback_normalized = topology.normalize_identity(fallback)
+    if fallback_normalized and not topology.is_placeholder_identity(fallback_normalized):
+        return fallback_normalized
     return session_token(current_context_binding()[0])
+
+
+def _current_actor() -> str:
+    return current_actor()
 
 
 def append_activity_event(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     event = dict(payload)
     event.setdefault("timestamp", iso_utc())
-    event.setdefault("actor", session_identity(root) or _current_actor())
+    event.setdefault("actor", current_actor(default_actor=session_identity(root)))
     _append_jsonl_line(activity_log_path(root), event)
     return event
 
