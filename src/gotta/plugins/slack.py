@@ -943,6 +943,21 @@ def canonical_thread_url(workspace: str, channel_id: str, thread_ts: str | None 
     return f"https://{workspace}.slack.com/archives/{channel_id}/p{pnum}"
 
 
+def canonical_message_url(
+    workspace: str,
+    channel_id: str,
+    ts: str,
+    *,
+    thread_ts: str | None = None,
+) -> str:
+    permalink = canonical_thread_url(workspace, channel_id, ts)
+    root_ts = str(thread_ts or "").strip()
+    if not root_ts or root_ts == ts:
+        return permalink
+    query = urllib.parse.urlencode({"thread_ts": root_ts})
+    return f"{permalink}?{query}"
+
+
 def normalize_pnum(pnum: str) -> str:
     if len(pnum) != 16:
         raise ToolError(
@@ -1337,6 +1352,10 @@ def _channel_ref(ref: SlackRef) -> SlackRef:
     )
 
 
+def _permalink_token(thread_ts: str) -> str:
+    return f"p{thread_ts.replace('.', '')}"
+
+
 def _window_is_covered(
     result: ArchiveResult,
     *,
@@ -1345,6 +1364,76 @@ def _window_is_covered(
     until: dt.datetime,
 ) -> bool:
     oldest_ts, newest_ts = archive_coverage_for_channel(result, channel_id)
+    if oldest_ts is None or newest_ts is None:
+        return False
+    return oldest_ts <= since.timestamp() and newest_ts >= until.timestamp()
+
+
+def session_matches_thread(args: str, ref: SlackRef) -> bool:
+    if ref.kind != "thread" or not ref.thread_ts:
+        return False
+    normalized_args = str(args or "")
+    thread_url = ref.url or canonical_thread_url(
+        ref.workspace,
+        ref.channel_id,
+        ref.thread_ts,
+    )
+    thread_path = f"/archives/{ref.channel_id}/{_permalink_token(ref.thread_ts)}"
+    return any(
+        marker in normalized_args
+        for marker in (
+            thread_url,
+            thread_path,
+            f"thread_ts={ref.thread_ts}",
+        )
+    )
+
+
+def archive_coverage_for_thread(
+    result: ArchiveResult,
+    ref: SlackRef,
+) -> tuple[float | None, float | None]:
+    if ref.kind != "thread" or not ref.thread_ts:
+        return (None, None)
+    conn = open_db(result.db_path)
+    try:
+        session_rows = conn.execute(
+            """
+            SELECT from_ts, to_ts, args
+            FROM session
+            WHERE from_ts IS NOT NULL
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    session_starts = [
+        parsed.timestamp()
+        for row in session_rows
+        if session_matches_thread(str(row["args"] or ""), ref)
+        and (parsed := parse_slackdump_timestamp(str(row["from_ts"] or ""))) is not None
+    ]
+    session_ends = [
+        parsed.timestamp()
+        for row in session_rows
+        if session_matches_thread(str(row["args"] or ""), ref)
+        and (parsed := parse_slackdump_timestamp(str(row["to_ts"] or ""))) is not None
+    ]
+    if not session_starts:
+        return (None, None)
+    return (
+        min(session_starts),
+        max(session_ends) if session_ends else None,
+    )
+
+
+def thread_window_is_covered(
+    result: ArchiveResult,
+    ref: SlackRef,
+    *,
+    since: dt.datetime,
+    until: dt.datetime,
+) -> bool:
+    oldest_ts, newest_ts = archive_coverage_for_thread(result, ref)
     if oldest_ts is None or newest_ts is None:
         return False
     return oldest_ts <= since.timestamp() and newest_ts >= until.timestamp()
@@ -1429,11 +1518,19 @@ def ensure_thread_window_archive(
     timeout_seconds: int | None = None,
 ) -> ArchiveResult:
     since, until = thread_hydration_window(ref)
-    return _run_bounded_archive_window(
+    _cap_sync_window(since=since, until=until)
+    result = workspace_archive_result(ref.workspace)
+    if (
+        result.db_path.exists()
+        and not refresh
+        and thread_window_is_covered(result, ref, since=since, until=until)
+    ):
+        return result
+    return run_archive_into_workspace(
         ref,
-        since=since,
-        until=until,
-        refresh=refresh,
+        result=result,
+        time_from=to_slackdump_time(since),
+        time_to=to_slackdump_time(until),
         timeout_seconds=timeout_seconds,
     )
 
@@ -1994,7 +2091,9 @@ def merge_channels(
     secondary: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     merged = dict(secondary)
-    merged.update(primary)
+    for channel_id, channel in primary.items():
+        if str(channel.get("id") or "").strip() or channel_id not in merged:
+            merged[channel_id] = channel
     return merged
 
 
@@ -2087,8 +2186,11 @@ def normalize_messages(
                 "channelId": str(row["channel_id"]),
                 "ts": str(row["ts"]),
                 "threadTs": str(row["thread_ts"] or ""),
-                "permalink": canonical_thread_url(
-                    workspace, str(row["channel_id"]), str(row["ts"])
+                "permalink": canonical_message_url(
+                    workspace,
+                    str(row["channel_id"]),
+                    str(row["ts"]),
+                    thread_ts=str(row["thread_ts"] or ""),
                 ),
                 "text": text,
                 "textResolved": resolved,
@@ -2216,7 +2318,10 @@ def build_envelope(
     directory_users = ensure_user_directory_entries(ref.workspace, user_ids)
     users = merge_users(archive_users, directory_users)
     archive_channel = normalize_channel(latest_channel_row(conn, ref.channel_id))
-    directory_channels = ensure_channel_directory_entries(ref.workspace, channel_mentions)
+    directory_channels = ensure_channel_directory_entries(
+        ref.workspace,
+        channel_mentions | {ref.channel_id},
+    )
     channel = merge_channels(
         {ref.channel_id: archive_channel},
         directory_channels,
@@ -2467,9 +2572,15 @@ def load_workspace_info(conn: sqlite3.Connection) -> dict[str, Any]:
 def load_sync_summary(
     conn: sqlite3.Connection,
     *,
+    workspace: str,
     channel_id: str,
 ) -> dict[str, Any]:
-    channel = normalize_channel(latest_channel_row(conn, channel_id))
+    archive_channel = normalize_channel(latest_channel_row(conn, channel_id))
+    directory_channels = ensure_channel_directory_entries(workspace, {channel_id})
+    channel = merge_channels(
+        {channel_id: archive_channel},
+        directory_channels,
+    ).get(channel_id, archive_channel)
     row = conn.execute(
         """
         SELECT
@@ -2504,16 +2615,23 @@ def load_sync_summary(
     }
 
 
-def sync_result(result: ArchiveResult, ref: SlackRef, lookback: str) -> dict[str, Any]:
+def sync_result(
+    result: ArchiveResult,
+    ref: SlackRef,
+    lookback: str | None = None,
+) -> dict[str, Any]:
     conn = open_db(result.db_path)
     try:
         workspace = load_workspace_info(conn)
         summary = load_sync_summary(
             conn,
+            workspace=ref.workspace,
             channel_id=ref.channel_id,
         )
         user_count = conn.execute("SELECT COUNT(DISTINCT id) FROM s_user").fetchone()[0]
-        lookback_token, _ = parse_lookback(lookback)
+        lookback_token = None
+        if lookback:
+            lookback_token, _ = parse_lookback(lookback)
     finally:
         conn.close()
     return {
@@ -2679,7 +2797,12 @@ def query_search(
         result_channel_id = str(row["channel_id"])
         result_channel = channels.get(result_channel_id, {})
         thread_ts = str(row["thread_ts"] or row["ts"])
-        permalink = canonical_thread_url(workspace, result_channel_id, str(row["ts"]))
+        permalink = canonical_message_url(
+            workspace,
+            result_channel_id,
+            str(row["ts"]),
+            thread_ts=thread_ts,
+        )
         results.append(
             {
                 "channelId": result_channel_id,
@@ -2863,19 +2986,32 @@ def _normalize_live_search_match(
     )
     channel_id = str(channel.get("id") or "").strip()
     ts = str(raw.get("ts") or "").strip()
+    thread_ts = str(raw.get("thread_ts") or "").strip()
     permalink = str(raw.get("permalink") or "").strip()
+    if not thread_ts and permalink:
+        thread_ts = thread_ts_from_query(permalink)
+    if not thread_ts:
+        thread_ts = ts
     if not permalink and channel_id and ts:
-        permalink = canonical_thread_url(workspace, channel_id, ts)
+        permalink = canonical_message_url(
+            workspace,
+            channel_id,
+            ts,
+            thread_ts=thread_ts,
+        )
+    thread_permalink = permalink
+    if channel_id and thread_ts:
+        thread_permalink = canonical_thread_url(workspace, channel_id, thread_ts)
     text = str(raw.get("text") or "").strip()
     username = str(raw.get("username") or raw.get("user") or "").strip() or "unknown"
     return {
         "channelId": channel_id,
         "channelName": channel.get("name"),
         "ts": ts,
-        "threadTs": ts,
-        "threadPermalink": permalink,
+        "threadTs": thread_ts,
+        "threadPermalink": thread_permalink,
         "permalink": permalink,
-        "followCommand": search_follow_command(permalink),
+        "followCommand": search_follow_command(thread_permalink or permalink),
         "text": text,
         "textResolved": text,
         "userId": str(raw.get("user") or "").strip(),
@@ -3188,7 +3324,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         )
         print_json(
             {
-                **sync_result(result, ref, ""),
+                **sync_result(result, ref, None),
                 "window": {
                     "since": format_utc_iso(since),
                     "until": format_utc_iso(until),
@@ -3227,16 +3363,37 @@ def cmd_get(args: argparse.Namespace) -> int:
             f"(since={format_utc_iso(since)} until={format_utc_iso(until)}, "
             f"timeout={DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS}s)"
         )
-        try:
-            result = _with_progress_heartbeat(
-                f"retrieval state: hydrating slack thread {ref.channel_id}:{ref.thread_ts}",
+
+        def read_thread_attempt(
+            *,
+            refresh: bool,
+        ) -> tuple[ArchiveResult, dict[str, Any]]:
+            archive_result = _with_progress_heartbeat(
+                (
+                    f"retrieval state: hydrating slack thread {ref.channel_id}:{ref.thread_ts}"
+                    + (" (refresh retry)" if refresh else "")
+                ),
                 lambda: ensure_thread_window_archive(
                     ref,
-                    refresh=args.refresh,
+                    refresh=refresh,
                     timeout_seconds=DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS,
                 ),
                 budget_seconds=DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS,
             )
+            emit_progress(
+                "retrieval state: materialized bounded thread refresh; reading hydrated archive"
+                if refresh
+                else "retrieval state: materialized Slack thread archive; rendering cached archive"
+            )
+            return archive_result, load_envelope_from_archive(
+                archive_result,
+                ref,
+                window=None,
+                coverage=None,
+            )
+
+        try:
+            result, envelope = read_thread_attempt(refresh=args.refresh)
         except ToolError as first_exc:
             exc: ToolError = first_exc
             if not args.refresh:
@@ -3245,24 +3402,9 @@ def cmd_get(args: argparse.Namespace) -> int:
                     f"(final attempt; up to {DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS}s)"
                 )
                 try:
-                    result = _with_progress_heartbeat(
-                        f"retrieval state: hydrating slack thread {ref.channel_id}:{ref.thread_ts} (refresh retry)",
-                        lambda: ensure_thread_window_archive(
-                            ref,
-                            refresh=True,
-                            timeout_seconds=DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS,
-                        ),
-                        budget_seconds=DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS,
-                    )
+                    result, envelope = read_thread_attempt(refresh=True)
                 except ToolError as retry_exc:
                     exc = retry_exc
-                else:
-                    emit_progress(
-                        "retrieval state: materialized bounded thread refresh; reading hydrated archive"
-                    )
-                    envelope = load_envelope_from_archive(
-                        result, ref, window=None, coverage=None
-                    )
             if envelope is None:
                 permalink = ref.url or canonical_thread_url(
                     ref.workspace, ref.channel_id, ref.thread_ts or ""
@@ -3298,9 +3440,6 @@ def cmd_get(args: argparse.Namespace) -> int:
                         explicit_refresh=False,
                     )
                 ) from exc
-        if envelope is None:
-            emit_progress("retrieval state: materialized Slack thread archive; rendering cached archive")
-            envelope = load_envelope_from_archive(result, ref, window=None, coverage=None)
     elif args.pull_recent:
         result = run_sync_archive(ref, lookback=args.pull_recent, refresh=args.refresh)
         coverage = (

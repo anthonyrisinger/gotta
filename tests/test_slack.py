@@ -245,7 +245,7 @@ def test_thread_window_archive_centers_sync_on_permalink(monkeypatch, tmp_path: 
     thread_center = slack.slack_ts_to_datetime(thread_ref.thread_ts)
     monkeypatch.setattr(slack, "utc_now", lambda: thread_center + dt.timedelta(weeks=4))
     monkeypatch.setattr(slack, "workspace_archive_result", lambda workspace: result)
-    monkeypatch.setattr(slack, "archive_coverage_for_channel", lambda result, channel_id: (None, None))
+    monkeypatch.setattr(slack, "thread_window_is_covered", lambda *args, **kwargs: False)
 
     def fake_run_archive_into_workspace(ref, *, result, time_from, time_to, timeout_seconds=None):
         calls.append((ref.kind, time_from, time_to))
@@ -258,11 +258,43 @@ def test_thread_window_archive_centers_sync_on_permalink(monkeypatch, tmp_path: 
     assert out == result
     assert calls == [
         (
-            "channel",
+            "thread",
             slack.to_slackdump_time(thread_center - dt.timedelta(weeks=3)),
             slack.to_slackdump_time(thread_center + dt.timedelta(weeks=3)),
         )
     ]
+
+
+def test_thread_window_archive_reuses_thread_targeted_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    thread_ref = slack.SlackRef(
+        raw="https://example.slack.com/archives/C12345678/p1773085070240949",
+        workspace="demo",
+        kind="thread",
+        channel_id="C12345678",
+        thread_ts="1773085070.240949",
+        url="https://example.slack.com/archives/C12345678/p1773085070240949",
+    )
+    result = slack.ArchiveResult(
+        root_dir=tmp_path / "archive",
+        db_path=tmp_path / "archive" / "slackdump.sqlite",
+        log_path=tmp_path / "archive" / "slackdump.log",
+    )
+    result.root_dir.mkdir(parents=True, exist_ok=True)
+    result.db_path.touch()
+
+    monkeypatch.setattr(slack, "workspace_archive_result", lambda workspace: result)
+    monkeypatch.setattr(slack, "thread_window_is_covered", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        slack,
+        "run_archive_into_workspace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not rerun thread-targeted archive")
+        ),
+    )
+
+    assert slack.ensure_thread_window_archive(thread_ref, refresh=False) == result
 
 
 def test_sync_supports_explicit_bounded_window(monkeypatch, capsys, tmp_path: Path) -> None:
@@ -279,6 +311,7 @@ def test_sync_supports_explicit_bounded_window(monkeypatch, capsys, tmp_path: Pa
         log_path=tmp_path / "archive" / "slackdump.log",
     )
     calls: list[tuple[str, str]] = []
+    seen_lookbacks: list[str | None] = []
 
     monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
     monkeypatch.setattr(slack, "resolve_slack_ref", lambda raw, workspace: ref)
@@ -293,7 +326,8 @@ def test_sync_supports_explicit_bounded_window(monkeypatch, capsys, tmp_path: Pa
     monkeypatch.setattr(
         slack,
         "sync_result",
-        lambda result, ref, lookback: {"workspace": ref.workspace, "channel": ref.channel_id},
+        lambda result, ref, lookback: seen_lookbacks.append(lookback)
+        or {"workspace": ref.workspace, "channel": ref.channel_id},
     )
 
     code = slack.main(
@@ -317,6 +351,74 @@ def test_sync_supports_explicit_bounded_window(monkeypatch, capsys, tmp_path: Pa
         "until": "2026-01-10T00:00:00Z",
     }
     assert calls == [("2026-01-01T00:00:00Z", "2026-01-10T00:00:00Z")]
+    assert seen_lookbacks == [None]
+
+
+def test_load_sync_summary_uses_directory_channel_when_archive_stub_is_empty(
+    monkeypatch,
+) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE message (
+                channel_id TEXT,
+                ts TEXT,
+                thread_ts TEXT,
+                txt TEXT,
+                data TEXT,
+                chunk_id INTEGER,
+                idx INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO message(channel_id, ts, thread_ts, txt, data, chunk_id, idx)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "C12345678",
+                "1773085070.240949",
+                "1773085070.240949",
+                "hello",
+                json.dumps({"user": "U1", "text": "hello"}),
+                1,
+                1,
+            ),
+        )
+        monkeypatch.setattr(slack, "latest_channel_row", lambda conn, channel_id: None)
+        monkeypatch.setattr(
+            slack,
+            "ensure_channel_directory_entries",
+            lambda workspace, channel_ids: {
+                "C12345678": {
+                    "id": "C12345678",
+                    "name": "ops",
+                    "type": "public_channel",
+                    "isPrivate": False,
+                    "isArchived": False,
+                    "isShared": False,
+                    "isExtShared": False,
+                    "is_private": False,
+                    "is_archived": False,
+                    "is_shared": False,
+                    "is_ext_shared": False,
+                }
+            },
+        )
+
+        summary = slack.load_sync_summary(
+            conn,
+            workspace="demo",
+            channel_id="C12345678",
+        )
+    finally:
+        conn.close()
+
+    assert summary["channel"]["id"] == "C12345678"
+    assert summary["channel"]["name"] == "ops"
 
 
 def test_query_search_all_and_any_modes() -> None:
@@ -397,6 +499,61 @@ def test_search_follow_command_prefers_root_thread_permalink() -> None:
     )
 
     assert command == "gotta read https://demo.slack.com/archives/C12345678/p1773075428384009"
+
+
+def test_normalize_live_search_match_prefers_root_thread_permalink() -> None:
+    item = slack._normalize_live_search_match(
+        "demo",
+        {
+            "channel": {"id": "C12345678", "name": "ops"},
+            "ts": "1773081279.142849",
+            "permalink": (
+                "https://demo.slack.com/archives/C12345678/"
+                "p1773081279142849?thread_ts=1773075428.384009"
+            ),
+            "text": "reply match",
+            "user": "U1",
+            "username": "Alice",
+        },
+    )
+
+    assert item["threadTs"] == "1773075428.384009"
+    assert item["threadPermalink"] == (
+        "https://demo.slack.com/archives/C12345678/p1773075428384009"
+    )
+    assert item["permalink"] == (
+        "https://demo.slack.com/archives/C12345678/"
+        "p1773081279142849?thread_ts=1773075428.384009"
+    )
+    assert item["followCommand"] == (
+        "gotta read https://demo.slack.com/archives/C12345678/p1773075428384009"
+    )
+
+
+def test_normalize_live_search_match_synthesizes_reply_permalink_with_thread_context() -> None:
+    item = slack._normalize_live_search_match(
+        "demo",
+        {
+            "channel": {"id": "C12345678", "name": "ops"},
+            "ts": "1773086070.240949",
+            "thread_ts": "1773085070.240949",
+            "text": "reply match",
+            "user": "U1",
+            "username": "Alice",
+        },
+    )
+
+    assert item["threadTs"] == "1773085070.240949"
+    assert item["permalink"] == (
+        "https://demo.slack.com/archives/C12345678/"
+        "p1773086070240949?thread_ts=1773085070.240949"
+    )
+    assert item["threadPermalink"] == (
+        "https://demo.slack.com/archives/C12345678/p1773085070240949"
+    )
+    assert item["followCommand"] == (
+        "gotta read https://demo.slack.com/archives/C12345678/p1773085070240949"
+    )
 
 
 def test_archive_search_applies_before_date_modifier() -> None:
@@ -761,6 +918,181 @@ def test_build_threads_falls_back_to_message_channel_id_for_permalink() -> None:
     assert threads[0]["permalink"] == "https://demo.slack.com/archives/C12345678/p1773085070240949"
 
 
+def test_normalize_messages_preserves_thread_context_in_reply_permalink() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE message (
+                channel_id TEXT,
+                ts TEXT,
+                thread_ts TEXT,
+                txt TEXT,
+                data TEXT,
+                chunk_id INTEGER,
+                idx INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO message(channel_id, ts, thread_ts, txt, data, chunk_id, idx)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "C12345678",
+                "1773086070.240949",
+                "1773085070.240949",
+                "reply",
+                json.dumps({"user": "U1", "text": "reply"}),
+                1,
+                1,
+            ),
+        )
+        rows = conn.execute("SELECT channel_id, ts, thread_ts, txt, data FROM message").fetchall()
+    finally:
+        conn.close()
+
+    messages = slack.normalize_messages(
+        rows,
+        workspace="demo",
+        users={},
+        channels={},
+    )
+
+    assert messages[0]["permalink"] == (
+        "https://demo.slack.com/archives/C12345678/"
+        "p1773086070240949?thread_ts=1773085070.240949"
+    )
+
+
+def test_build_envelope_thread_uses_directory_channel_for_root_channel(
+    monkeypatch,
+) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE message (
+                channel_id TEXT,
+                ts TEXT,
+                thread_ts TEXT,
+                txt TEXT,
+                data TEXT,
+                chunk_id INTEGER,
+                idx INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO message(channel_id, ts, thread_ts, txt, data, chunk_id, idx)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "C12345678",
+                "1773085070.240949",
+                "1773085070.240949",
+                "hello",
+                json.dumps({"user": "U1", "text": "hello"}),
+                1,
+                1,
+            ),
+        )
+        monkeypatch.setattr(slack, "latest_user_rows", lambda conn, user_ids: {})
+        monkeypatch.setattr(slack, "ensure_user_directory_entries", lambda workspace, user_ids: {})
+        monkeypatch.setattr(slack, "latest_channel_row", lambda conn, channel_id: None)
+        monkeypatch.setattr(
+            slack,
+            "ensure_channel_directory_entries",
+            lambda workspace, channel_ids: {
+                "C12345678": {
+                    "id": "C12345678",
+                    "name": "ops",
+                    "type": "public_channel",
+                    "isPrivate": False,
+                    "isArchived": False,
+                    "isShared": False,
+                    "isExtShared": False,
+                    "is_private": False,
+                    "is_archived": False,
+                    "is_shared": False,
+                    "is_ext_shared": False,
+                }
+            },
+        )
+
+        envelope = slack.build_envelope(
+            conn,
+            slack.SlackRef(
+                raw="https://demo.slack.com/archives/C12345678/p1773085070240949",
+                workspace="demo",
+                kind="thread",
+                channel_id="C12345678",
+                thread_ts="1773085070.240949",
+                url="https://demo.slack.com/archives/C12345678/p1773085070240949",
+            ),
+        )
+    finally:
+        conn.close()
+
+    assert envelope["channel"]["id"] == "C12345678"
+    assert envelope["channel"]["name"] == "ops"
+
+
+def test_query_search_reply_results_follow_root_thread_permalink() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE message (
+                channel_id TEXT,
+                ts TEXT,
+                thread_ts TEXT,
+                txt TEXT,
+                data TEXT,
+                chunk_id INTEGER,
+                idx INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO message(channel_id, ts, thread_ts, txt, data, chunk_id, idx)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "C12345678",
+                "1773086070.240949",
+                "1773085070.240949",
+                "reply text",
+                json.dumps({"user": "U1", "text": "reply text"}),
+                1,
+                1,
+            ),
+        )
+        result = slack.query_search(
+            conn,
+            query="reply",
+            limit=10,
+            workspace="demo",
+            match_mode="all",
+        )
+    finally:
+        conn.close()
+
+    assert result["results"][0]["permalink"] == (
+        "https://demo.slack.com/archives/C12345678/"
+        "p1773086070240949?thread_ts=1773085070.240949"
+    )
+    assert result["results"][0]["followCommand"] == (
+        "gotta read https://demo.slack.com/archives/C12345678/p1773085070240949"
+    )
+
+
 def test_render_markdown_marks_thread_reads_full_fidelity() -> None:
     rendered = slack.render_markdown(
         {
@@ -901,6 +1233,72 @@ def test_cmd_get_thread_hydration_failure_reports_automatic_refresh_attempt(
     assert "attempted the centered six-week hydration window" in err
     assert "retried with an explicit bounded refresh automatically" in err
     assert "gotta slack sync C12345678 --since" not in err
+
+
+def test_cmd_get_thread_cached_archive_read_failure_retries_refresh(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    ref = slack.SlackRef(
+        raw="https://demo.slack.com/archives/C12345678/p1773085070240949",
+        workspace="demo",
+        kind="thread",
+        channel_id="C12345678",
+        thread_ts="1773085070.240949",
+        url="https://demo.slack.com/archives/C12345678/p1773085070240949",
+    )
+    monkeypatch.setattr(
+        slack,
+        "resolve_slack_ref",
+        lambda raw, workspace: ref,
+    )
+    attempts: list[tuple[bool, int | None]] = []
+    result = slack.ArchiveResult(
+        root_dir=Path("/tmp/archive"),
+        db_path=Path("/tmp/archive/slackdump.sqlite"),
+        log_path=Path("/tmp/archive/slackdump.log"),
+    )
+    monkeypatch.setattr(
+        slack,
+        "ensure_thread_window_archive",
+        lambda ref, refresh, timeout_seconds=None: attempts.append((refresh, timeout_seconds))
+        or result,
+    )
+    loads = {"count": 0}
+
+    def fake_load(result, ref, window=None, coverage=None):
+        loads["count"] += 1
+        if loads["count"] == 1:
+            raise slack.ToolError(
+                "exact Slack thread target is absent from the hydrated bounded archive window"
+            )
+        return {
+            "kind": "thread",
+            "messages": [{"ts": ref.thread_ts, "text": "ok"}],
+        }
+
+    monkeypatch.setattr(slack, "load_envelope_from_archive", fake_load)
+    monkeypatch.setattr(slack, "render_markdown", lambda envelope: "ok\n")
+
+    code = slack.main(
+        [
+            "get",
+            "https://demo.slack.com/archives/C12345678/p1773085070240949",
+            "--workspace",
+            "demo",
+        ]
+    )
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert attempts == [
+        (False, slack.DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS),
+        (True, slack.DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS),
+    ]
+    assert loads["count"] == 2
+    assert "ok" in captured.out
+    assert "retrieval state: hydrating slack thread retry with an explicit archive refresh" in captured.err
+    assert "retrieval state: materialized bounded thread refresh; reading hydrated archive" in captured.err
 
 
 def test_cmd_get_reply_permalink_with_thread_ts_query_uses_root_thread_ts(
