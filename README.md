@@ -273,7 +273,7 @@ gotta github https://github.com/org/repo/commits/HEAD
 gotta grafana status
 gotta grafana datasources
 gotta grafana search --type dash-db
-gotta grafana search --type dash-db baseload
+gotta grafana search --type dash-db production-overview
 gotta grafana search "production overview"
 gotta grafana get demo-dashboard-uid
 gotta grafana query --dashboard demo-dashboard-uid 'sum(app_up)'
