@@ -393,6 +393,8 @@ def test_read_fetch_url_uses_timeout_and_caps_remote_body(monkeypatch) -> None:
             return self
 
         def __exit__(self, exc_type, exc, tb):
+            if exc_type or exc or tb:
+                return False
             return False
 
         def read(self, _size: int = -1) -> bytes:
