@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -43,6 +44,10 @@ Routing:
   graph. Use session manifest, session leads <artifact>, or session analyze to
   continue from the content store rather than re-fetching blindly.
 """
+
+REMOTE_FETCH_TIMEOUT_SECONDS = 15
+REMOTE_FETCH_MAX_BYTES = 2 * 1024 * 1024
+REMOTE_FETCH_CHUNK_BYTES = 64 * 1024
 
 
 def die(message: str, code: int = 2) -> int:
@@ -128,17 +133,57 @@ def render_bytes(data: bytes, language: str = "txt") -> None:
         tmp_path.unlink(missing_ok=True)
 
 
-def fetch_url(target: str) -> tuple[bytes, str]:
+def _read_response_body(response, *, max_bytes: int = REMOTE_FETCH_MAX_BYTES) -> tuple[bytes, bool]:
+    chunks: list[bytes] = []
+    total = 0
+    truncated = False
+    while True:
+        read_size = REMOTE_FETCH_CHUNK_BYTES if total < max_bytes else 1
+        chunk = response.read(read_size)
+        if not chunk:
+            break
+        remaining = max_bytes - total
+        if remaining <= 0:
+            truncated = True
+            break
+        if len(chunk) > remaining:
+            chunks.append(chunk[:remaining])
+            total += remaining
+            truncated = True
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks), truncated
+
+
+def _remote_timeout_message() -> str:
+    return f"download timed out after {REMOTE_FETCH_TIMEOUT_SECONDS}s"
+
+
+def fetch_url(target: str) -> tuple[bytes, str, bool]:
     request = urllib.request.Request(target, headers={"User-Actor": "gotta-read"})
     try:
-        with urllib.request.urlopen(request) as response:
-            return response.read(), response.headers.get("Content-Type", "")
+        with urllib.request.urlopen(request, timeout=REMOTE_FETCH_TIMEOUT_SECONDS) as response:
+            data, truncated = _read_response_body(response)
+            return data, response.headers.get("Content-Type", ""), truncated
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        data, _truncated = _read_response_body(exc)
+        body = data.decode("utf-8", errors="replace")
         detail = _summarize_http_error(exc.code, body, exc.headers.get("Content-Type", ""))
         raise RuntimeError(detail) from exc
+    except (socket.timeout, TimeoutError) as exc:
+        raise RuntimeError(_remote_timeout_message()) from exc
     except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+            raise RuntimeError(_remote_timeout_message()) from exc
         raise RuntimeError(f"download failed: {exc.reason}") from exc
+
+
+def _emit_truncation_note() -> None:
+    print(
+        f"note: truncated remote body at {REMOTE_FETCH_MAX_BYTES} bytes",
+        file=sys.stderr,
+    )
 
 
 def _summarize_http_error(status: int, body: str, content_type: str) -> str:
@@ -376,9 +421,11 @@ def main(argv: list[str]) -> int:
         )
     if resolved.kind == "remote_url":
         try:
-            data, content_type = fetch_url(target)
+            data, content_type, truncated = fetch_url(target)
         except RuntimeError as exc:
             return die(str(exc), code=1)
+        if truncated:
+            _emit_truncation_note()
         if content_type.split(";", 1)[0].strip().lower() == "text/html":
             try:
                 markdown = html_as_markdown_bytes(data)

@@ -18,6 +18,7 @@ from gotta.content import (
     sh_quote,
     write_text_atomic,
 )
+from gotta.providers import atlassian as atl
 
 URL_RE = re.compile(r"https?://[^\s<>\"]+")
 JIRA_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
@@ -35,9 +36,9 @@ CANONICAL_LOCATOR_RE = re.compile(
     r"|content:[a-f0-9]{64}"
     r")\b"
 )
-_TRAILING_PUNCTUATION = ".,;:!?)>]}`"
+_TRAILING_PUNCTUATION = ".,;:!?)>]}`'\"`"
 LEADS_CACHE_NAME = "leads.json"
-LEADS_CACHE_VERSION = 4
+LEADS_CACHE_VERSION = 5
 SLACK_PERMALINK_RE = re.compile(
     r"https://[^/.]+\.slack\.com/archives/(?P<channel>[A-Z0-9]+)(?:/p(?P<pnum>[0-9]{16}))?"
 )
@@ -56,6 +57,34 @@ LOW_SIGNAL_WEB_HOSTS = {
     "img.shields.io",
 }
 LOW_SIGNAL_WEB_EXTENSIONS = (".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+LOW_SIGNAL_MEETING_HOSTS = {
+    "meet.google.com",
+}
+LOW_SIGNAL_HOST_LABELS = {
+    "admin",
+    "argocd",
+    "auth",
+    "grafana",
+    "jenkins",
+    "login",
+    "oauth",
+    "oidc",
+    "sso",
+}
+LOW_SIGNAL_PATH_MARKERS = (
+    "/.well-known/",
+    "/auth",
+    "/explore",
+    "/jwks",
+    "/login",
+    "/logout",
+    "/oauth",
+    "/oidc",
+    "/openid",
+    "/saml",
+    "/signin",
+    "/sso",
+)
 FIRST_PARTY_LEAD_PROVIDERS = {
     "jira",
     "confluence",
@@ -138,6 +167,10 @@ def _trim_candidate(raw: str) -> str:
     ellipsized_url = cleaned.startswith(("http://", "https://")) and cleaned.rstrip().endswith("...")
     if ")](" in cleaned:
         left, right = cleaned.split(")](", 1)
+        cleaned = right if right.startswith(("http://", "https://")) else left
+    if "](" in cleaned:
+        left, right = cleaned.split("](", 1)
+        right = right.rstrip(")")
         cleaned = right if right.startswith(("http://", "https://")) else left
     if cleaned.startswith(("http://", "https://")) and "|" in cleaned:
         cleaned = cleaned.split("|", 1)[0].rstrip()
@@ -270,12 +303,9 @@ def _canonicalize_url(target: str) -> str | None:
             return f"jira:{issue_match.group('issue')}"
         if "/browse/" in path:
             return None
-        page_match = CONFLUENCE_SPACE_PAGE_PATH_RE.search(path) or CONFLUENCE_PAGE_PATH_RE.search(path)
-        if page_match:
-            return f"confluence:{page_match.group('page_id')}"
-        page_query_match = CONFLUENCE_PAGE_ID_QUERY_RE.search(query)
-        if page_query_match:
-            return f"confluence:{page_query_match.group('page_id')}"
+        page_id = atl.extract_confluence_page_id(target)
+        if page_id:
+            return f"confluence:{page_id}"
     if "docs.google.com" in host:
         doc_match = GDOC_URL_RE.search(path)
         if doc_match:
@@ -459,6 +489,41 @@ def _search_seed_signal_sort_key(query: str) -> tuple[object, ...]:
     )
 
 
+def _low_signal_url_penalty(locator: str) -> int:
+    try:
+        parsed = urllib.parse.urlparse(locator)
+    except ValueError:
+        return 0
+    host = parsed.netloc.strip().lower()
+    if not host:
+        return 0
+    host_only = host.split(":", 1)[0]
+    path = parsed.path.strip().lower()
+    labels = {part for part in re.split(r"[.-]", host_only) if part}
+    if host_only in LOW_SIGNAL_MEETING_HOSTS or host_only.endswith(".zoom.us"):
+        return 3
+    if any(marker in path for marker in LOW_SIGNAL_PATH_MARKERS):
+        return 3
+    if labels & LOW_SIGNAL_HOST_LABELS and path in {"", "/"}:
+        return 2
+    if path in {"", "/"}:
+        return 1
+    return 0
+
+
+def _lead_signal_penalty(item: dict[str, object]) -> int:
+    if bool(item.get("materialized")):
+        return 0
+    locator = str(item.get("locator") or item.get("targetLocator") or "").strip()
+    if not locator.startswith(("http://", "https://")):
+        return 0
+    provider = str(item.get("provider") or "")
+    kind = str(item.get("kind") or "")
+    if provider in FIRST_PARTY_LEAD_PROVIDERS and kind != "url":
+        return 0
+    return _low_signal_url_penalty(locator)
+
+
 def edge_best_first_sort_key(item: dict[str, object]) -> tuple[object, ...]:
     raw_examples = [str(value) for value in item.get("rawExamples") or [] if str(value)]
     query = raw_examples[0] if raw_examples else str(item.get("targetLocator") or "")
@@ -466,6 +531,7 @@ def edge_best_first_sort_key(item: dict[str, object]) -> tuple[object, ...]:
     return (
         not bool(item.get("firstParty")),
         not bool(item.get("materialized")),
+        _lead_signal_penalty(item),
         bool(item.get("searchSeed")),
         bool(item.get("sourceSearchLike")),
         -_relation_priority(str(item.get("relation") or "")),
@@ -484,6 +550,7 @@ def lead_source_best_first_sort_key(item: dict[str, object]) -> tuple[object, ..
     return (
         not bool(item.get("firstParty")),
         not bool(item.get("materialized")),
+        _lead_signal_penalty(item),
         bool(item.get("searchSeed")),
         bool(artifact_count and search_like_source_count >= artifact_count),
         bool(search_like_source_count),

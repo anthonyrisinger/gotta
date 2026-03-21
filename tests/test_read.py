@@ -1,6 +1,7 @@
 from __future__ import annotations
 import io
 from pathlib import Path
+import socket
 import urllib.error
 
 import pytest
@@ -358,7 +359,7 @@ def test_read_supports_bounded_provider_views(monkeypatch, capsys) -> None:
 
 
 def test_read_fetch_url_summarizes_html_error_pages(monkeypatch) -> None:
-    def fake_urlopen(_request):
+    def fake_urlopen(_request, timeout=None):
         raise urllib.error.HTTPError(
             url="https://github.com/acme/widgets/blob/main/missing.md",
             code=404,
@@ -375,6 +376,86 @@ def test_read_fetch_url_summarizes_html_error_pages(monkeypatch) -> None:
         read.fetch_url("https://github.com/acme/widgets/blob/main/missing.md")
 
     assert str(excinfo.value) == "download failed with 404: Page not found · GitHub · GitHub"
+
+
+def test_read_fetch_url_uses_timeout_and_caps_remote_body(monkeypatch) -> None:
+    seen_timeouts: list[float] = []
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.headers = {"Content-Type": "text/plain"}
+            self._chunks = [
+                b"a" * (read.REMOTE_FETCH_MAX_BYTES - 8),
+                b"b" * 64,
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _size: int = -1) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+    def fake_urlopen(_request, timeout=None):
+        seen_timeouts.append(timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr(read.urllib.request, "urlopen", fake_urlopen)
+
+    data, content_type, truncated = read.fetch_url("https://example.com/large")
+
+    assert seen_timeouts == [read.REMOTE_FETCH_TIMEOUT_SECONDS]
+    assert content_type == "text/plain"
+    assert len(data) == read.REMOTE_FETCH_MAX_BYTES
+    assert truncated is True
+
+
+def test_read_fetch_url_reports_timeouts_cleanly(monkeypatch) -> None:
+    def fake_urlopen(_request, timeout=None):
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(read.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        read.fetch_url("https://example.com/slow")
+
+    assert str(excinfo.value) == "download timed out after 15s"
+
+
+def test_read_response_body_does_not_mark_exact_cap_as_truncated() -> None:
+    data, truncated = read._read_response_body(io.BytesIO(b"a" * read.REMOTE_FETCH_MAX_BYTES))
+
+    assert len(data) == read.REMOTE_FETCH_MAX_BYTES
+    assert truncated is False
+
+
+def test_read_remote_url_reports_truncation_and_still_applies_head(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        read,
+        "resolve_read_target",
+        lambda argv: target.ReadTarget(
+            request=target.parse_args(argv),
+            kind="remote_url",
+            path=None,
+            routed_plugin=None,
+            routed_argv=[],
+            canonical_locator="https://example.com/large",
+            preferred_name="large.txt",
+            should_materialize=True,
+        ),
+    )
+    monkeypatch.setattr(
+        read,
+        "fetch_url",
+        lambda _target: (b"line 1\nline 2\n", "text/plain", True),
+    )
+
+    assert read.main(["https://example.com/large", "--head", "1"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "line 1\n"
+    assert "truncated remote body" in captured.err
 
 
 def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> None:

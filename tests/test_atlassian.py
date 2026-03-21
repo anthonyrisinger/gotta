@@ -166,6 +166,140 @@ def test_confluence_page_ref_accepts_bare_and_prefixed_page_ids(monkeypatch) -> 
     assert short_url.page_id == "40404"
 
 
+def test_confluence_page_ref_rejects_blogpost_urls(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+
+    with pytest.raises(confluence.ToolError) as excinfo:
+        confluence.parse_page_ref(
+            "https://example.atlassian.net/wiki/spaces/ENG/blog/2026/03/21/50505/Launch"
+        )
+
+    assert "blog post refs are not supported" in str(excinfo.value)
+
+
+def test_confluence_content_ref_accepts_blogpost_urls(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+
+    blog_url = confluence.parse_content_ref(
+        "https://example.atlassian.net/wiki/spaces/ENG/blog/2026/03/21/50505/Launch"
+    )
+
+    assert blog_url.requested_id == "50505"
+    assert blog_url.page_id == "50505"
+
+
+def test_confluence_page_ref_accepts_trimmed_shortlinks(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+
+    short_url = confluence.parse_page_ref("https://example.atlassian.net/wiki/x/AoA12")
+
+    assert short_url.page_id == "3627384834"
+
+
+def test_confluence_get_trimmed_shortlink_resolves_to_page(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    seen_urls: list[str] = []
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        seen_urls.append(url)
+        if "/pages/3627384834?" in url:
+            return {
+                "id": "3627384834",
+                "title": "The Ultimate Guide to the Pipeline (WIP)",
+                "status": "current",
+                "spaceId": "239828996",
+                "version": {"number": 16, "createdAt": "2026-01-22T20:07:38.855Z"},
+            }
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+    url = "https://example.atlassian.net/wiki/x/AoA12"
+
+    assert confluence.canonical_locator(["get", url]) == "confluence:3627384834"
+    assert confluence.main(["get", url, "--output", "meta"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["id"] == "3627384834"
+    assert payload["type"] == "page"
+    assert payload["title"] == "The Ultimate Guide to the Pipeline (WIP)"
+    assert any("/pages/3627384834?" in url for url in seen_urls)
+
+
+def test_confluence_get_shortlink_falls_back_to_blogpost_lookup(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    seen_urls: list[str] = []
+
+    def fake_api_json(method: str, url: str, token: str, payload=None):
+        seen_urls.append(url)
+        if "/pages/40404?" in url:
+            raise confluence.ToolError(f"{method} {url} failed with 404: no page")
+        if "/blogposts/40404?" in url:
+            return {
+                "id": "40404",
+                "title": "Launch Notes",
+                "status": "current",
+                "spaceId": "10101",
+                "body": {"storage": {"value": "<p>Blog body</p>"}},
+                "version": {"number": 2, "createdAt": "2026-03-20T20:36:03Z"},
+            }
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            ["get", "https://example.atlassian.net/wiki/x/1J0AAA", "--output", "meta"]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["id"] == "40404"
+    assert payload["type"] == "blogpost"
+    assert payload["title"] == "Launch Notes"
+    assert any("/pages/40404?" in url for url in seen_urls)
+    assert any("/blogposts/40404?" in url for url in seen_urls)
+
+
+def test_confluence_update_body_rejects_blogpost_urls_before_api_calls(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+
+    with pytest.raises(confluence.ToolError) as excinfo:
+        confluence.main(
+            [
+                "update-body",
+                "https://example.atlassian.net/wiki/spaces/ENG/blog/2026/03/21/50505/Launch",
+                "<p>after</p>",
+            ]
+        )
+
+    assert "blog post refs are not supported" in str(excinfo.value)
+
+
 def test_confluence_get_comment_locator_falls_back_from_page_lookup(
     monkeypatch, capsys
 ) -> None:

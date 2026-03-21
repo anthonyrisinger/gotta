@@ -1984,6 +1984,14 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             + evidence_note
             + " Keep or reject that evidence intentionally instead of assuming it vanished."
         )
+    elif evidence_live and not notes_ready:
+        next_step = (
+            "actor-attributed evidence is already live in the shared session web, but NOTES.md is "
+            "still empty. "
+            + (evidence_note + " " if evidence_note else "")
+            + "Land one durable note now so review, handoff, and session-wide inspection surfaces "
+            "have actor narration instead of evidence-only state."
+        )
     else:
         next_step = ""
     return {

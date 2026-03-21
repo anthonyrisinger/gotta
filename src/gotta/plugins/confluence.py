@@ -33,6 +33,10 @@ PAGE_ARG_HELP = (
     "Confluence page URL, space landing/overview URL, or numeric page ID "
     f"against {CONFLUENCE_BASE_URL_ENV} when a Confluence base URL is persisted"
 )
+CONTENT_ARG_HELP = (
+    "Confluence page, blog post, or comment URL, or numeric content ID "
+    f"against {CONFLUENCE_BASE_URL_ENV} when a Confluence base URL is persisted"
+)
 DISALLOWED_MCP_PASSTHROUGH_FLAGS = atl.DISALLOWED_MCP_PASSTHROUGH_FLAGS
 ToolError = atl.AtlassianError
 
@@ -51,6 +55,7 @@ class ContentRef:
     comment_id: str | None = None
     base_url: str = ""
     space_key: str = ""
+    allow_comment_fallback: bool = False
 
 
 @dataclass
@@ -195,9 +200,22 @@ def run_oauth_bootstrap(*, base_url: str = "") -> dict[str, Any]:
     )
 
 
-def parse_page_ref(raw: str) -> PageRef:
+def _is_blogpost_ref(raw: str) -> bool:
+    candidate = raw.strip().removeprefix("confluence:")
+    parsed = urllib.parse.urlparse(candidate)
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    return bool(re.search(r"/wiki/(?:spaces/[^/]+/)?blog(?:/[^/]+)*/\d+(?:/|$)", parsed.path))
+
+
+def parse_page_ref(raw: str, *, allow_blogpost: bool = False) -> PageRef:
     if raw.startswith("confluence:"):
         raw = raw.removeprefix("confluence:")
+    if not allow_blogpost and _is_blogpost_ref(raw):
+        raise ToolError(
+            "blog post refs are not supported by this command; use gotta confluence get "
+            "for blog content"
+        )
     page_id: str | None = atl.extract_confluence_page_id(raw)
     space_key = ""
     base_url = default_base_url()
@@ -239,13 +257,14 @@ def parse_content_ref(raw: str) -> ContentRef:
             comment_id=focused_comment_id,
             base_url=base_url,
         )
-    page_ref = parse_page_ref(candidate)
+    page_ref = parse_page_ref(candidate, allow_blogpost=True)
     requested_id = page_ref.page_id
     return ContentRef(
         requested_id=requested_id,
         page_id=page_ref.page_id,
         base_url=page_ref.base_url,
         space_key=page_ref.space_key,
+        allow_comment_fallback=candidate.isdigit(),
     )
 
 
@@ -295,6 +314,14 @@ def page_api_url(session: Session, page_id: str, *, body_format: str = "storage"
     return (
         f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
         f"pages/{page_id}?{params}"
+    )
+
+
+def blogpost_api_url(session: Session, page_id: str, *, body_format: str = "storage") -> str:
+    params = urllib.parse.urlencode({"body-format": body_format})
+    return (
+        f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
+        f"blogposts/{page_id}?{params}"
     )
 
 
@@ -600,6 +627,22 @@ def _fetch_page_payload(session: Session, page_id: str) -> dict[str, Any]:
     return page
 
 
+def _fetch_blogpost_payload(session: Session, page_id: str) -> dict[str, Any]:
+    page = api_json("GET", blogpost_api_url(session, page_id), session.token)
+    if not isinstance(page, dict):
+        raise ToolError("unexpected blogpost response")
+    return page
+
+
+def _fetch_page_like_payload(session: Session, page_id: str) -> tuple[str, dict[str, Any]]:
+    try:
+        return "page", _fetch_page_payload(session, page_id)
+    except ToolError as exc:
+        if not _is_not_found_error(exc):
+            raise
+    return "blogpost", _fetch_blogpost_payload(session, page_id)
+
+
 def page_web_url(session: Session, page_id: str) -> str:
     if not session.base_url or not page_id:
         return ""
@@ -810,13 +853,23 @@ def fetch_read_target(
         )
         try:
             page_id = resolve_page_id(session, page_ref)
-            page = _fetch_page_payload(session, page_id)
-            return session, "page", page
-        except ToolError as exc:
-            if not content_ref.requested_id or not _is_not_found_error(exc):
-                raise
-            comment = _fetch_comment_payload(session, content_ref.requested_id)
-            return session, "comment", comment
+            try:
+                page = _fetch_page_payload(session, page_id)
+                return session, "page", page
+            except ToolError as exc:
+                if not _is_not_found_error(exc):
+                    raise
+            if content_ref.allow_comment_fallback and content_ref.requested_id:
+                try:
+                    comment = _fetch_comment_payload(session, content_ref.requested_id)
+                    return session, "comment", comment
+                except ToolError as exc:
+                    if not _is_not_found_error(exc):
+                        raise
+            blogpost = _fetch_blogpost_payload(session, page_id)
+            return session, "blogpost", blogpost
+        except ToolError:
+            raise
     except ToolError:
         if (
             allow_reauth
@@ -1496,6 +1549,7 @@ def cmd_get(args: argparse.Namespace) -> int:
         else:
             content = {
                 "id": content["id"],
+                "type": content_kind,
                 "title": content["title"],
                 "version": content["version"],
                 "status": content.get("status"),
@@ -1841,8 +1895,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", choices=["json", "summary"], default="summary")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("get", help="fetch page body HTML and metadata")
-    p.add_argument("page", help=PAGE_ARG_HELP)
+    p = sub.add_parser("get", help="fetch Confluence page, blog post, or comment content")
+    p.add_argument("page", help=CONTENT_ARG_HELP)
     p.add_argument(
         "--output",
         choices=["json", "body", "meta", "markdown"],

@@ -1055,6 +1055,37 @@ def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
     assert "heartbeat note now" in payload["next_step"]
 
 
+def test_actor_status_requires_durable_note_when_pending_actor_already_has_evidence(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    actor_name = _actor_id(root, "claude")
+    sessionlib._write_actor_state(root, actor_name, {"status": "pending"})
+    content.materialize_bytes(
+        b"# Evidence\n\nSomething landed.\n",
+        dirs=dirs,
+        preferred_name="evidence.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "read",
+            "locator": "https://example.com/evidence",
+            "canonical_locator": "https://example.com/evidence",
+            "actor": actor_name,
+        },
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = sessionlib._actor_status_payload(root, actor_name)
+    assert payload["status"] == "pending"
+    assert payload["artifact_count"] == 1
+    assert payload["notes_status"] == "empty"
+    assert "Land one durable note now" in payload["next_step"]
+
+
 def test_actor_recent_activity_carries_cross_actor_author(
     tmp_path: Path, capsys
 ) -> None:
@@ -1661,6 +1692,41 @@ def test_session_leads_shows_low_signal_only_case_without_hiding_it(
     assert payload["nextStep"] == ""
 
 
+def test_session_leads_demote_low_signal_service_urls_but_keep_them_visible(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        (
+            "Service root: https://admin.demo.internal\n"
+            "Auth: https://login.demo.internal/.well-known/jwks.json\n"
+            "Docs: https://kubernetes.io/docs/reference/networking/virtual-ips/\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="search.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "slack",
+            "locator": "search service routing",
+            "canonical_locator": "slack:search service routing",
+            "subcommand": "search",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    monkeypatch.chdir(local_root)
+
+    assert session.main(["leads", "--session", str(local_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert [lead["locator"] for lead in payload["leadSources"]] == [
+        "https://kubernetes.io/docs/reference/networking/virtual-ips/",
+        "https://admin.demo.internal",
+        "https://login.demo.internal/.well-known/jwks.json",
+    ]
+
+
 def test_session_leads_preserve_search_result_order_within_search_artifacts(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -1790,6 +1856,27 @@ def test_extract_explicit_leads_strips_wrapped_url_noise() -> None:
     assert "https://github.com/acme/widgets/pull/7" in locators
     assert "https://github.com/acme/widgets/issues/9" in locators
     assert all("|" not in locator for locator in locators)
+
+
+def test_extract_explicit_leads_collapses_duplicated_markdown_urls() -> None:
+    mentions = leads.extract_explicit_leads(
+        "Granola: https://notes.granola.ai/t/demo](https://notes.granola.ai/t/demo)\n"
+    )
+
+    assert [mention.canonical_locator for mention in mentions] == [
+        "https://notes.granola.ai/t/demo"
+    ]
+
+
+def test_extract_explicit_leads_trims_trailing_quote_and_normalizes_shortlinks() -> None:
+    mentions = leads.extract_explicit_leads(
+        "Auth: https://login.demo.internal'\n"
+        "Page: https://example.atlassian.net/wiki/x/1J0AAA\n"
+    )
+
+    locators = {mention.canonical_locator for mention in mentions}
+    assert "https://login.demo.internal" in locators
+    assert "confluence:40404" in locators
 
 
 def test_extract_explicit_leads_drops_partial_atlassian_browse_urls() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import http.server
 import json
 import os
@@ -70,15 +71,16 @@ def decode_confluence_tiny_page_id(token: str) -> str | None:
     normalized = token.strip()
     if not normalized:
         return None
+    if len(normalized) > 6:
+        return None
+    # Confluence tiny links drop trailing "A" bytes from the 6-character payload
+    # and use "-" / "_" substitutions in their URL form.
+    normalized = normalized.replace("-", "/").replace("_", "+").ljust(6, "A")
     try:
-        raw = base64.urlsafe_b64decode(normalized + "=" * (-len(normalized) % 4))
-    except ValueError:
+        raw = base64.b64decode(normalized + "==", validate=True)
+    except (ValueError, binascii.Error):
         return None
-    if not raw:
-        return None
-    if len(raw) < 4:
-        raw = raw.ljust(4, b"\x00")
-    if len(raw) > 4:
+    if len(raw) != 4:
         return None
     return str(int.from_bytes(raw, "little", signed=False))
 
@@ -98,6 +100,9 @@ def extract_confluence_page_id(raw: str) -> str | None:
         match = re.search(r"/pages/(\d+)(?:/|$)", parsed.path)
         if match:
             return match.group(1)
+        blog_match = re.search(r"/blog(?:/[^/]+)*/(\d+)(?:/|$)", parsed.path)
+        if blog_match:
+            return blog_match.group(1)
         short_match = re.search(r"/wiki/x/([A-Za-z0-9_-]+)(?:/|$)", parsed.path)
         if short_match:
             return decode_confluence_tiny_page_id(short_match.group(1))
