@@ -7,14 +7,22 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 from textwrap import dedent
+from typing import TextIO
 
 from gotta.compat import UTC, datetime
 from gotta.actors import ACTOR_SPEAKER_ENV, resolve_actor_context
 from gotta.content import SESSION_REPO_ENV, load_state_env_at_root, session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
-from gotta.notes import actor_notes_log_path
+from gotta.friction import append_oops_record
+from gotta.logs import append_log_record, logs_surface_path
+from gotta.notes import (
+    actor_notes_log_path,
+    actor_notes_surface_path,
+    append_actor_note,
+)
 from gotta.actor import (
     ACTOR_ID_ENV,
     ACTOR_LABEL_ENV,
@@ -36,6 +44,8 @@ from gotta.session import (
 ACTOR_HEARTBEAT_SECONDS = 30
 LIVE_STATUSES = {"starting", "active", "producing_evidence", "stalled"}
 TERMINAL_STATUSES = {"completed", "failed", "incomplete", "rejected", "signed_off"}
+FEEDBACK_DIRECTIVE_PREFIX = "@@gotta "
+FEEDBACK_SURFACES = {"notes", "logs", "oops"}
 
 
 def _normalize_args(argv: list[str]) -> list[str]:
@@ -115,6 +125,17 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
 
         - `{actor_goal}`
         {goal_text or "_empty_"}
+
+        Fast durable updates:
+
+        - the shortest path to visible progress is one consumed launcher directive line:
+          `@@gotta {{"actor":"{actor_name}","surface":"notes","message":"first durable heartbeat note"}}`
+        - use the same shape for other short durable pulses:
+          `@@gotta {{"actor":"{actor_name}","surface":"logs","message":"hydrated the thread root and 4 replies"}}`
+          `@@gotta {{"actor":"{actor_name}","surface":"oops","message":"reply permalink lost thread context"}}`
+        - valid directive surfaces are `notes`, `logs`, and `oops`
+        - directive lines are private launcher protocol: they are consumed immediately, update the matching durable surface, and never appear in the visible transcript
+        - use native `gotta` mutation for multiline, structured, or more deliberate edits
 
         Evidence-first actor contract:
 
@@ -209,8 +230,143 @@ def _spawn_actor_process(
     *,
     cwd: Path,
     env: dict[str, str],
-) -> subprocess.Popen[bytes]:
-    return subprocess.Popen(argv, cwd=cwd, env=env)
+) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+
+def _feedback_warning(reason: str) -> str:
+    return f"gotta actor feedback ignored: {reason}\n"
+
+
+def _parse_feedback_directive(
+    raw_line: str,
+    *,
+    actor_name: str,
+) -> tuple[dict[str, str] | None, str | None]:
+    if not raw_line.startswith(FEEDBACK_DIRECTIVE_PREFIX):
+        return None, None
+    payload_text = raw_line[len(FEEDBACK_DIRECTIVE_PREFIX) :].rstrip("\r\n")
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError:
+        return None, "invalid json payload"
+    if not isinstance(payload, dict):
+        return None, "directive payload must be a JSON object"
+    directive_actor = str(payload.get("actor") or "").strip()
+    if directive_actor != actor_name:
+        return None, f"actor mismatch for {actor_name}"
+    surface = str(payload.get("surface") or "").strip()
+    if surface not in FEEDBACK_SURFACES:
+        return None, f"unsupported surface `{surface or 'missing'}`"
+    message = payload.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return None, "missing message"
+    return {
+        "actor": actor_name,
+        "surface": surface,
+        "message": message,
+    }, None
+
+
+def _apply_feedback_directive(
+    work_root: Path,
+    actor_name: str,
+    *,
+    surface: str,
+    message: str,
+) -> None:
+    actor_root = session_plugin._actor_session_dir(work_root, actor_name)
+    first_line = message.splitlines()[0] if message.splitlines() else message
+    if surface == "notes":
+        append_actor_note(actor_root, actor_name, message=message, author=actor_name)
+        session_plugin._append_actor_event(
+            actor_root,
+            actor_name,
+            event="note",
+            detail=first_line,
+            author=actor_name,
+        )
+        session_plugin._actor_log_line(
+            actor_root,
+            actor_name,
+            f"noted: {first_line}",
+            author=actor_name,
+        )
+        session_plugin._sync_actor_projection_surfaces(actor_root, actor_name)
+        session_plugin._record_actor_projection_activity(
+            actor_root,
+            actor_name=actor_name,
+            surface="notes",
+            action="append",
+            log_path=actor_notes_log_path(actor_root, actor_name),
+            projection_path=actor_notes_surface_path(actor_root, actor_name),
+            detail="appended actor note",
+            actor=actor_name,
+        )
+        return
+    if surface == "logs":
+        append_log_record(actor_root, message=message, actor=actor_name)
+        session_plugin._record_session_activity(
+            actor_root,
+            plugin="logs",
+            surface="logs",
+            action="append",
+            actor=actor_name,
+            target=logs_surface_path(actor_root),
+            detail="appended 1 logs entry",
+        )
+        return
+    append_oops_record(actor_root, message=message, actor=actor_name)
+
+
+def _forward_actor_stream(
+    stream: TextIO | None,
+    *,
+    target: TextIO,
+    work_root: Path,
+    actor_name: str,
+    lock: threading.Lock,
+) -> None:
+    if stream is None:
+        return
+    for raw_line in iter(stream.readline, ""):
+        directive, error = _parse_feedback_directive(raw_line, actor_name=actor_name)
+        if error is not None:
+            with lock:
+                sys.stderr.write(_feedback_warning(error))
+                sys.stderr.flush()
+            continue
+        if directive is not None:
+            try:
+                _apply_feedback_directive(
+                    work_root,
+                    actor_name,
+                    surface=directive["surface"],
+                    message=directive["message"],
+                )
+            except Exception as exc:
+                with lock:
+                    sys.stderr.write(_feedback_warning(str(exc)))
+                    sys.stderr.flush()
+            continue
+        with lock:
+            target.write(raw_line)
+            target.flush()
+    try:
+        stream.close()
+    except OSError:
+        return
 
 
 def _finalize_actor_runtime_exit(
@@ -831,11 +987,38 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
     session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
     stop_event = threading.Event()
     heartbeat = _with_heartbeat(work_root, actor_name, stop_event)
+    output_lock = threading.Lock()
+    stdout_thread = threading.Thread(
+        target=_forward_actor_stream,
+        kwargs={
+            "stream": getattr(proc, "stdout", None),
+            "target": sys.stdout,
+            "work_root": work_root,
+            "actor_name": actor_name,
+            "lock": output_lock,
+        },
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_forward_actor_stream,
+        kwargs={
+            "stream": getattr(proc, "stderr", None),
+            "target": sys.stderr,
+            "work_root": work_root,
+            "actor_name": actor_name,
+            "lock": output_lock,
+        },
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
     try:
         returncode = proc.wait()
     finally:
         stop_event.set()
         heartbeat.join(timeout=1)
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
     finished_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return _finalize_actor_runtime_exit(
         work_root,

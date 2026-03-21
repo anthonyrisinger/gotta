@@ -1547,13 +1547,14 @@ def _append_actor_event(
     event: str,
     detail: str = "",
     extra: dict[str, object] | None = None,
+    author: str = "",
 ) -> None:
     normalized_actor = _normalize_actor_name(actor_name)
-    author = current_actor(default_actor=normalized_actor)
+    event_author = author.strip() or current_actor(default_actor=normalized_actor)
     payload: dict[str, object] = {
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "actor": normalized_actor,
-        "author": author,
+        "author": event_author,
         "event": event,
         "detail": detail,
     }
@@ -1566,7 +1567,7 @@ def _append_actor_event(
             plugin="actor",
             surface="actor.lifecycle",
             action=event,
-            actor=author,
+            actor=event_author,
             target_actor=normalized_actor,
             locator=f"actor:{payload['actor']}",
             preferred_name=str(payload["actor"]),
@@ -1575,14 +1576,14 @@ def _append_actor_event(
         )
 
 
-def _actor_log_line(session_root: Path, actor_name: str, message: str) -> None:
+def _actor_log_line(session_root: Path, actor_name: str, message: str, *, author: str = "") -> None:
     normalized_actor = _normalize_actor_name(actor_name)
-    author = current_actor(default_actor=normalized_actor)
-    if author == normalized_actor:
+    log_author = author.strip() or current_actor(default_actor=normalized_actor)
+    if log_author == normalized_actor:
         rendered = f"[{normalized_actor}] {message}"
     else:
-        rendered = f"[{author} -> {normalized_actor}] {message}"
-    append_log_record(session_root, message=rendered, actor=author)
+        rendered = f"[{log_author} -> {normalized_actor}] {message}"
+    append_log_record(session_root, message=rendered, actor=log_author)
 
 
 def _record_actor_projection_activity(
@@ -1594,6 +1595,7 @@ def _record_actor_projection_activity(
     log_path: Path,
     projection_path: Path,
     detail: str,
+    actor: str = "",
 ) -> None:
     normalized_actor = _normalize_actor_name(actor_name)
     _record_session_activity(
@@ -1601,7 +1603,7 @@ def _record_actor_projection_activity(
         plugin="actor",
         surface=surface,
         action=action,
-        actor=current_actor(default_actor=normalized_actor),
+        actor=actor.strip() or current_actor(default_actor=normalized_actor),
         target_actor=normalized_actor,
         locator=_session_relative_locator(session_root, log_path),
         preferred_name=projection_path.name,

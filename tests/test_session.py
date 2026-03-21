@@ -9,9 +9,12 @@ import pytest
 
 from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
 from gotta import content, dispatch
+from gotta.friction import oops_records
 from gotta import leads
+from gotta.logs import log_records
 from gotta import main as cli
 from gotta.actor import SESSION_ACTOR_ENV
+from gotta.notes import actor_notes_records
 from gotta import session as sessionlib
 from gotta import todo as session_todo
 from gotta.notes import actor_notes_surface_path
@@ -334,6 +337,147 @@ def test_actor_launch_uses_isolated_copilot_config_dir(
     assert config_dir == actor_root / "state" / "copilot"
     assert config_dir.is_dir()
     assert captured["cwd"] == actor_root
+
+
+def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    actor_root = _actor_root(root, "claude")
+
+    class FakeProc:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.stdout = io.StringIO(
+                "ordinary stdout\n"
+                + (
+                    '@@gotta {"actor":"%s","surface":"notes","message":"first durable heartbeat note"}\n'
+                    % claude
+                )
+                + (
+                    '@@gotta {"actor":"%s","surface":"logs","message":"hydrated slack thread root"}\n'
+                    % claude
+                )
+            )
+            self.stderr = io.StringIO(
+                "ordinary stderr\n"
+                + (
+                    '@@gotta {"actor":"%s","surface":"oops","message":"reply permalink lost thread context"}'
+                    % claude
+                )
+            )
+
+        def wait(self) -> int:
+            return 0
+
+    class FakeThread:
+        def join(self, timeout: float | None = None) -> None:
+            if timeout is None:
+                return None
+            return None
+
+    monkeypatch.setattr(
+        actor.session_plugin,
+        "_actor_launch_blockers",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(actor, "_actor_prompt", lambda **_kwargs: "prompt")
+    monkeypatch.setattr(
+        actor,
+        "_spawn_actor_process",
+        lambda *_args, **_kwargs: FakeProc(),
+    )
+    monkeypatch.setattr(actor, "_with_heartbeat", lambda *_args, **_kwargs: FakeThread())
+
+    assert actor.main(["launch", claude, "--session", str(root)]) == 0
+    captured = capsys.readouterr()
+    status = sessionlib._actor_status_payload(actor_root, claude)
+    activity = content.activity_events(actor_root)
+
+    assert "ordinary stdout" in captured.out
+    assert "ordinary stderr" in captured.err
+    assert "@@gotta" not in captured.out
+    assert "@@gotta" not in captured.err
+    assert actor_notes_surface_path(actor_root, claude).read_text(encoding="utf-8")
+    assert actor_notes_records(actor_root, claude)[-1]["message"] == "first durable heartbeat note"
+    assert actor_notes_records(actor_root, claude)[-1]["author"] == claude
+    assert any(
+        record["message"] == "hydrated slack thread root" and record["actor"] == claude
+        for record in log_records(actor_root)
+    )
+    assert any(
+        record["message"] == "reply permalink lost thread context" and record["actor"] == claude
+        for record in oops_records(actor_root)
+    )
+    assert status["notes_status"] == "present"
+    assert "heartbeat note now" not in str(status.get("next_step") or "")
+    assert any(
+        str(event.get("actor") or "") == claude and str(event.get("plugin") or "") == "logs"
+        for event in activity
+    )
+    assert any(
+        str(event.get("actor") or "") == claude and str(event.get("plugin") or "") == "oops"
+        for event in activity
+    )
+
+
+def test_actor_launch_consumes_invalid_feedback_directives_and_warns(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    actor_root = _actor_root(root, "claude")
+
+    class FakeProc:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.stdout = io.StringIO(
+                "ordinary stdout\n"
+                '@@gotta {"actor":"wrong","surface":"notes","message":"bad"}\n'
+                '@@gotta {"actor":"%s","surface":"todo","message":"bad"}\n' % claude
+            )
+            self.stderr = io.StringIO("")
+
+        def wait(self) -> int:
+            return 0
+
+    class FakeThread:
+        def join(self, timeout: float | None = None) -> None:
+            if timeout is None:
+                return None
+            return None
+
+    monkeypatch.setattr(
+        actor.session_plugin,
+        "_actor_launch_blockers",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(actor, "_actor_prompt", lambda **_kwargs: "prompt")
+    monkeypatch.setattr(
+        actor,
+        "_spawn_actor_process",
+        lambda *_args, **_kwargs: FakeProc(),
+    )
+    monkeypatch.setattr(actor, "_with_heartbeat", lambda *_args, **_kwargs: FakeThread())
+
+    assert actor.main(["launch", claude, "--session", str(root)]) == 0
+    captured = capsys.readouterr()
+
+    assert "ordinary stdout" in captured.out
+    assert "@@gotta" not in captured.out
+    assert "@@gotta" not in captured.err
+    assert captured.err.count("gotta actor feedback ignored:") == 2
+    assert actor_notes_records(actor_root, claude) == []
+    assert oops_records(actor_root) == []
 
 
 def test_actor_status_empty_guidance_points_to_actor_bind(

@@ -147,6 +147,7 @@ def append_channel_record(
     channel: FrictionChannel,
     *,
     message: str,
+    actor: str = "",
     surface: str = "",
     command: str = "",
     kind: str = "",
@@ -156,9 +157,10 @@ def append_channel_record(
     reproducibility: str = "unknown",
     resolution_state: str = "open",
 ) -> dict[str, object]:
+    record_actor = actor.strip() or current_actor(default_actor=session_identity(session_dir))
     payload: dict[str, object] = {
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "actor": current_actor(default_actor=session_identity(session_dir)),
+        "actor": record_actor,
         "message": message,
         "surface": surface,
         "command": command,
@@ -180,6 +182,7 @@ def append_channel_record(
             "plugin": channel.stem,
             "surface": channel.stem,
             "action": "append",
+            "actor": record_actor,
             "locator": str(log_path.relative_to(session_dir)),
             "preferred_name": surface_path.name,
             "follow_command": f"gotta read {surface_path.name!r}",
@@ -277,6 +280,7 @@ def append_oops_record(
     session_dir: Path,
     *,
     message: str,
+    actor: str = "",
     surface: str = "",
     command: str = "",
     kind: str = "",
@@ -290,6 +294,7 @@ def append_oops_record(
         session_dir,
         OOPS_CHANNEL,
         message=message,
+        actor=actor,
         surface=surface,
         command=command,
         kind=kind,
