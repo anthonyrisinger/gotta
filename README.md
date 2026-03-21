@@ -20,6 +20,27 @@ session for the current context, hydrates the runtime environment, and
 dispatches the requested plugin with that session active. You do not need to
 `cd` into the session root first.
 
+## Why `gotta`
+
+The name is a modal verb of necessity. Every subcommand reads as a natural
+English sentence expressing what needs to happen:
+
+- `gotta read` — I have to read this
+- `gotta oops` — I have to record this friction
+- `gotta session analyze` — I have to analyze the session
+- `gotta want` — I have to express what I want
+- `gotta todo append` — I have to track this work
+
+That composability is not accidental. Alternative names work for acquisition
+commands but break down everywhere else. `glean read` makes sense; `glean oops`
+does not. `trace jira search` reads well; `trace want` does not. Only a modal
+verb of necessity composes across the entire surface: evidence acquisition,
+friction capture, intent declaration, actor coordination, and session synthesis.
+
+The semantics are also exact. The tool's thesis is that evidence must be
+externalized, context must survive compression, and friction must be recorded.
+"Gotta" is that necessity made literal.
+
 ## Continuity Over Context Windows
 
 Actors work in waves. They pull a few strong anchors, expand into adjacent
@@ -41,7 +62,7 @@ That is why `gotta` is session-rooted rather than request-rooted. A request is
 ephemeral. A session can be reopened, inspected, extended, handed off, or
 compacted and rehydrated without losing the shape of the work.
 
-The medium-term bet is equally deliberate: native CLI working surfaces remain
+The choice of medium is equally deliberate: native CLI working surfaces are
 one of the strongest places for serious actor work. They provide room to
 inspect, correlate, transform, act on, and resume real evidence. `gotta`
 leans into that by treating retrieval, memory, and action as part of the same
@@ -67,10 +88,9 @@ The normal working loop expands and compresses repeatedly:
 4. record friction and continuity gaps in `oops`
 5. refine the next retrieval wave from durable state instead of memory
 
-`OOPS.md` is not incidental note-taking. `state/oops.jsonl` is the canonical
-friction log, projected into `OOPS.md`, and is meant to capture operator-visible
-seams: misleading contracts, interrupted continuations, coverage gaps, and workflow
-friction worth fixing.
+`state/oops.jsonl` is the canonical friction log, projected into `OOPS.md`. It
+captures operator-visible seams: misleading contracts, interrupted
+continuations, coverage gaps, and workflow friction worth fixing.
 
 ## Installation
 
@@ -91,7 +111,7 @@ If you want to try the CLI without installing it permanently:
 uvx --from gotta gotta --help
 ```
 
-`gotta` currently supports Python `>=3.10`.
+`gotta` supports Python `>=3.10`.
 
 If you are developing on the repo, sync a local uv-managed environment:
 
@@ -243,7 +263,7 @@ of prior interactions.
 
 ## Retrieval And Materialization
 
-Provider-first usage without session scaffolding is first-class:
+Provider-first usage without session scaffolding is a core workflow:
 
 ```bash
 gotta jira status
@@ -270,9 +290,8 @@ gotta slack search "handoff failure"
 gotta read https://github.com/org/repo/blob/main/README.md
 ```
 
-These commands no longer synthesize a private session just to inspect provider
-state. Direct provider `status`, `search`, and `get` surfaces are sessionless
-unless they intentionally materialize durable evidence.
+Direct provider `status`, `search`, and `get` surfaces operate without session
+scaffolding unless they intentionally materialize durable evidence.
 
 `gotta read` is the canonical retrieval entrypoint. It supports:
 
@@ -292,10 +311,9 @@ local desktop session and Granola's APIs, so meeting notes and transcripts
 participate in the same durable evidence graph as repository, ticket, and chat
 artifacts.
 
-Once that context is grounded, the same native surfaces can also support
-follow-on action. The goal is not only to recover information, but also to
-preserve enough working state that research, planning, and provider-native
-actions can
+Once that context is grounded, the same native surfaces support follow-on
+action. The goal is not only to recover information, but also to preserve
+enough working state that research, planning, and provider-native actions can
 happen against the same session context.
 
 ## Session Synthesis Surfaces
@@ -327,8 +345,8 @@ These surfaces intentionally compress the evidence web without severing it:
 - `leads` extracts explicit next reads from existing artifacts
 - `analyze` rebuilds cached session synthesis outputs from durable state
 
-Before the first strong anchor, empty `manifest`, `graph`, `leads`, and
-`analyze` output is normal.
+Empty `manifest`, `graph`, `leads`, and `analyze` output means the session has
+not materialized enough evidence yet.
 
 After compaction pressure, these are the surfaces that make rehydration cheap.
 They preserve the shape of the work so the next pass starts from durable
@@ -381,8 +399,7 @@ Inside this topology:
 Read-only session-rooted surfaces such as `gotta oops`, `gotta logs`,
 `gotta todo`, `gotta want`, `gotta goal`, `gotta actor status`, and
 `gotta session show` require either an existing bound session or an explicit
-`--session <session-id>`. They do not silently synthesize a new private session
-just to inspect state.
+`--session <session-id>`.
 
 This split is deliberate:
 
@@ -408,13 +425,13 @@ gotta logs append <<'EOF'
 Captured the first GitHub, Jira, and Confluence anchor set.
 EOF
 gotta oops append <<'EOF'
-Search results were followable, but one direct fetch still had a continuity gap.
+Direct fetch coverage should preserve the same continuity guarantees as search.
 EOF
 ```
 
 ## Shared Sessions
 
-Each shared session now owns its evidence web directly and carries nested
+Each shared session owns its evidence web directly and carries nested
 actor-local session areas beneath it.
 
 - shared session roots live at `sessions/<session-id>/`
@@ -441,7 +458,7 @@ EOF
 gotta actor launch "$ACTOR"
 gotta notes show --actor "$ACTOR"
 gotta todo extend --actor "$ACTOR" <<'EOF'
-- Compare retry behavior across the earliest design docs.
+- Compare retry behavior across the relevant design docs.
 EOF
 ```
 
@@ -466,7 +483,7 @@ a single chat transcript.
 
 ## `oops` As Canonical Alignment
 
-`gotta oops` is a first-class operator surface, not an afterthought.
+`gotta oops` is a first-class operator surface.
 
 Use it to record:
 
@@ -479,6 +496,62 @@ The point is not merely bug tracking. The point is preserving operator-visible
 misalignment in canonical shared state so the tool can be refined from observed
 behavior rather than taste or memory.
 
+## Key Concepts
+
+These terms appear throughout `gotta` and its documentation:
+
+- **session** — a durable working root that survives context loss. Sessions own
+  a content store, actor roots, and synthesis surfaces. They can be reopened,
+  extended, handed off, or compacted and rehydrated.
+
+- **actor** — a named participant in a session. Each actor has its own charter
+  surfaces (`WANT.md`, `GOAL.md`), state logs (`TODO.md`, `LOGS.md`, `OOPS.md`,
+  `NOTES.md`), and lifecycle. Actors can be human operators, AI agents, or
+  automated workflows.
+
+- **fingerprint** — the context identity that binds the current terminal,
+  thread, or environment to a session and actor root. Fingerprints are derived
+  from terminal session IDs, Codex thread IDs, or explicit bindings.
+
+- **materialization** — the act of capturing command output as a durable,
+  content-addressed artifact in the session's content store. Materialized
+  evidence has a SHA-256 digest and can be reopened by locator.
+
+- **canonical locator** — a provider-normalized reference for a materialized
+  artifact. Examples: `github:org/repo/blob/main/README.md`,
+  `jira:PROJ-123`, `slack:C01234/p1234567890`. Locators are emitted when
+  evidence lands and can be followed with `gotta read`.
+
+- **artifact locator** — a session-relative reference to stored content.
+  Format: `artifact:<preferred-name>@<digest12>`. Resolves through
+  `gotta read` without requiring manifest spelunking.
+
+- **content locator** — a digest-based reference to stored bytes. Format:
+  `content:<sha256>`. Two identical fetches share the same content object.
+
+- **evidence web** — the accumulated set of materialized artifacts, their
+  metadata, and the relationships between them. The web grows through retrieval
+  waves and can be navigated through synthesis surfaces.
+
+- **synthesis surface** — a compressed, navigable view over the evidence web.
+  `manifest` summarizes what has been materialized. `timeline` reconstructs
+  chronology. `graph` renders lineage. `leads` extracts followable references.
+  `analyze` rebuilds cached session synthesis.
+
+- **friction** — operator-visible misalignment captured in `oops`. Not bug
+  tracking. Friction records seams: misleading contracts, continuity gaps,
+  workflow detours. The canonical log is `state/oops.jsonl`; `OOPS.md` is the
+  readable projection.
+
+- **projection** — a readable Markdown file derived from canonical JSONL state.
+  `TODO.md`, `LOGS.md`, `OOPS.md`, and `NOTES.md` are projections.
+  Append-only JSONL is truth; Markdown is the human surface.
+
+- **rehydration** — recovering prior working state from durable session
+  artifacts after context has been compressed. The synthesis surfaces make
+  rehydration cheap: they preserve the shape of the work so the next pass
+  starts from structure rather than a thin summary.
+
 ## Plugin Architecture
 
 `gotta` uses two entry-point groups:
@@ -489,7 +562,7 @@ behavior rather than taste or memory.
 Core is a PEP 420 namespace package. Plugins can live in separate distributions
 and still contribute modules under the shared `gotta` namespace.
 
-Core currently ships these top-level plugins:
+Core ships these top-level plugins:
 
 - `ask`
 - `confluence`
@@ -517,7 +590,8 @@ installed provider plugins by asking those plugins whether they own the target.
 ## Ask Extensions
 
 `gotta ask` is a generic host for separately installed ask-family extensions.
-Core does not ship any built-in ask surfaces.
+Ask surfaces are provided by extensions that register the `gotta.ask`
+entry-point group.
 
 An ask extension registers the `gotta.ask` entry-point group and then becomes
 available as:

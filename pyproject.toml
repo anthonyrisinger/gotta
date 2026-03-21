@@ -21,6 +21,11 @@ keywords = [
     "continuity",
     "session",
     "workflow",
+    "ai",
+    "agent",
+    "context",
+    "investigation",
+    "retrieval",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
