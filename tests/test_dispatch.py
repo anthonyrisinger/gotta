@@ -17,6 +17,8 @@ from gotta.actor import ACTOR_ID_ENV
 def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert not dispatch.should_materialize("read", ["--help"])
     assert not dispatch.should_materialize("read", ["artifact:demo.md@abc123", "--head", "20"])
+    assert not dispatch.should_materialize("read", ["https://github.com/acme/widgets", "--head", "3"])
+    assert not dispatch.should_materialize("read", ["https://example.com/manual.txt", "--tail", "5"])
     assert not dispatch.should_materialize("session", [])
     assert not dispatch.should_materialize("session", ["show"])
     assert not dispatch.should_materialize("session", ["analyze"])

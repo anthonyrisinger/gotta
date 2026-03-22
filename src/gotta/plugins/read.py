@@ -38,11 +38,12 @@ Routing:
   local directories   -> native listing, with optional recursive traversal
 
   Materialization:
-  routed provider fetches and direct remote reads materialize durable evidence.
-  local files, local directories, and session-owned artifact rereads stay as
-  non-materializing views so reopening evidence does not fork the evidence
-  graph. Use session manifest, session leads <artifact>, or session analyze to
-  continue from the content store rather than re-fetching blindly.
+  plain routed provider fetches and direct remote reads materialize durable
+  evidence. shaped reads (`--head`, `--tail`, `--section`), local files, local
+  directories, and session-owned artifact rereads stay as non-materializing
+  views so reopening evidence does not fork the evidence graph. Use session
+  manifest, session leads <artifact>, or session analyze to continue from the
+  content store rather than re-fetching blindly.
 """
 
 REMOTE_FETCH_TIMEOUT_SECONDS = 15

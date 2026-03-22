@@ -1984,6 +1984,20 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             + evidence_note
             + " Keep or reject that evidence intentionally instead of assuming it vanished."
         )
+    elif derived_status in {"pending", "bound"} and notes_ready and evidence_live:
+        next_step = (
+            "actor already has durable narration and shared evidence without an active runtime. "
+            + (evidence_note + " " if evidence_note else "")
+            + "Keep landing notes as the session evolves; when this actor's contribution is "
+            "materially complete, record the authoritative close-out intentionally with "
+            f"`gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
+        )
+    elif derived_status in {"pending", "bound"} and notes_ready:
+        next_step = (
+            "actor already has durable narration but no shared evidence artifacts yet. "
+            "Continue retrieval if more evidence should land, or close out intentionally once "
+            f"the narrative is complete with `gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
+        )
     elif evidence_live and not notes_ready:
         next_step = (
             "actor-attributed evidence is already live in the shared session web, but NOTES.md is "

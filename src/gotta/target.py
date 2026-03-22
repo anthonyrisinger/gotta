@@ -51,8 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gotta read",
         description=(
             "Render one local or remote target through the native retrieval surface. "
-            "Remote/provider reads materialize durable evidence; local and session-owned "
-            "rereads stay as non-materializing views."
+            "Plain remote/provider reads materialize durable evidence; shaped reads "
+            "and local/session-owned rereads stay as non-materializing views."
         ),
     )
     parser.add_argument("target", nargs="?")
@@ -149,7 +149,7 @@ def parse_args(argv: list[str]) -> ReadRequest:
         max_depth=int(values["max_depth"]),
         head=int(values["head"]),
         tail=int(values["tail"]),
-        section=str(values["section"] or ""),
+        section=str(values["section"] or "").strip(),
         routed_plugin=routed_plugin,
         routed_argv=routed_argv,
     )
@@ -314,6 +314,10 @@ def _url_name(target: str) -> str:
     return name
 
 
+def _has_view_transform(request: ReadRequest) -> bool:
+    return request.head > 0 or request.tail > 0 or bool(request.section.strip())
+
+
 def resolve_read_target(
     argv: list[str],
     options: CommonOptions | Any | None = None,
@@ -365,7 +369,7 @@ def resolve_read_target(
             routed_argv=plugin_argv,
             canonical_locator=canonical,
             preferred_name=preferred,
-            should_materialize=True,
+            should_materialize=not _has_view_transform(request),
         )
     routed = _discover_plugin_route(target)
     if routed is not None:
@@ -388,7 +392,7 @@ def resolve_read_target(
             routed_argv=plugin_argv,
             canonical_locator=canonical,
             preferred_name=preferred,
-            should_materialize=True,
+            should_materialize=not _has_view_transform(request),
         )
     if target.startswith(("http://", "https://")):
         return ReadTarget(
@@ -399,7 +403,7 @@ def resolve_read_target(
             routed_argv=[],
             canonical_locator=target,
             preferred_name=save_as or _url_name(target),
-            should_materialize=True,
+            should_materialize=not _has_view_transform(request),
         )
     artifact_path = _resolve_artifact_locator(target)
     if artifact_path is not None:

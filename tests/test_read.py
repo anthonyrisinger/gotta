@@ -460,6 +460,35 @@ def test_read_remote_url_reports_truncation_and_still_applies_head(monkeypatch, 
     assert "truncated remote body" in captured.err
 
 
+def test_read_view_shaping_makes_routed_targets_non_materializing() -> None:
+    resolved = target.resolve_read_target(["https://github.com/acme/widgets", "--head", "3"])
+
+    assert resolved.kind == "routed"
+    assert resolved.should_materialize is False
+
+
+def test_read_view_shaping_makes_remote_urls_non_materializing() -> None:
+    resolved = target.resolve_read_target(["https://example.com/manual.txt", "--tail", "5"])
+
+    assert resolved.kind == "remote_url"
+    assert resolved.should_materialize is False
+
+
+def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
+    resolved = target.resolve_read_target(["https://example.com/manual.txt", "--section", "   "])
+
+    assert resolved.kind == "remote_url"
+    assert resolved.request.section == ""
+    assert resolved.should_materialize is True
+
+
+def test_read_help_text_describes_plain_vs_shaped_materialization() -> None:
+    description = target.build_parser().description or ""
+
+    assert "Plain remote/provider reads materialize durable evidence" in description
+    assert "shaped reads (`--head`, `--tail`, `--section`)" in read.USAGE
+
+
 def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> None:
     resolved = target.resolve_read_target(
         ["--limit", "10", "https://github.com/acme/widgets/commits/main"]

@@ -1086,6 +1086,45 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
     assert "Land one durable note now" in payload["next_step"]
 
 
+def test_actor_status_guides_pending_actor_with_notes_and_evidence(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    actor_name = _actor_id(root, "claude")
+    sessionlib._write_actor_state(root, actor_name, {"status": "pending"})
+    notes.append_actor_note(
+        root,
+        actor_name,
+        message="Captured the first durable summary.",
+        author=actor_name,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+    content.materialize_bytes(
+        b"# Evidence\n\nSomething landed.\n",
+        dirs=dirs,
+        preferred_name="evidence.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "read",
+            "locator": "https://example.com/evidence",
+            "canonical_locator": "https://example.com/evidence",
+            "actor": actor_name,
+        },
+        timestamp="2026-03-21T00:00:01Z",
+    )
+
+    payload = sessionlib._actor_status_payload(root, actor_name)
+    assert payload["status"] == "pending"
+    assert payload["notes_status"] == "present"
+    assert payload["artifact_count"] == 1
+    assert "durable narration and shared evidence" in payload["next_step"]
+    assert "gotta actor signoff" in payload["next_step"]
+
+
 def test_actor_recent_activity_carries_cross_actor_author(
     tmp_path: Path, capsys
 ) -> None:
