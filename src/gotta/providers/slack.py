@@ -21,6 +21,7 @@ from gotta.config import (
     set_provider_env_values,
     user_state_dir,
 )
+from gotta.vault import load_secret_json_object, write_secret_json_atomic
 
 DEFAULT_WORKSPACE = ""
 SLACK_WORKSPACE_ENV = "GOTTA_SLACK_WORKSPACE"
@@ -130,18 +131,14 @@ def slack_auth_path(workspace: str) -> Path:
 
 
 def _write_secret_json(path: Path, payload: dict[str, Any]) -> Path:
-    _ensure_slack_auth_dir()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-    finally:
-        try:
-            os.chmod(path, 0o600)
-        except FileNotFoundError:
-            pass
-    return path
+    return write_secret_json_atomic(
+        path,
+        payload,
+        ensure_dir=_ensure_slack_auth_dir,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
 
 
 def load_slack_auth_state(workspace: str) -> dict[str, Any] | None:
@@ -149,11 +146,9 @@ def load_slack_auth_state(workspace: str) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload, _recovered = load_secret_json_object(path)
+    except ValueError as exc:
         raise SlackError(f"invalid Slack auth state {path}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise SlackError(f"invalid Slack auth state {path}: expected JSON object")
     token = str(payload.get("token") or "").strip()
     cookies = payload.get("cookies")
     if not token or not isinstance(cookies, list):

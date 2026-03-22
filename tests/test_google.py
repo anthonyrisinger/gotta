@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from gotta.plugins import gdocs, gdrive, gsheets
@@ -113,6 +115,36 @@ def test_google_missing_credentials_message_points_to_gotta_config(monkeypatch) 
 
     with pytest.raises(google.GoogleError, match=r"\[providers\.google\.env\].*gotta\.toml"):
         google.load_oauth_runtime_config()
+
+
+def test_load_cached_oauth_state_recovers_single_object_with_extra_closing_brace(
+    tmp_path, monkeypatch
+) -> None:
+    token_file = tmp_path / "oauth.json"
+    monkeypatch.setattr(google, "TOKEN_FILE", token_file)
+    monkeypatch.setattr(google, "OAUTH_DIR", tmp_path)
+    payload = {
+        "access_token": "token",
+        "refresh_token": "refresh",
+        "expires_at": 123.0,
+    }
+    token_file.write_text(json.dumps(payload) + "}\n", encoding="utf-8")
+
+    recovered = google.load_cached_oauth_state()
+
+    assert recovered == payload
+    assert json.loads(token_file.read_text(encoding="utf-8")) == payload
+
+
+def test_load_cached_oauth_state_rejects_ambiguous_malformed_json(
+    tmp_path, monkeypatch
+) -> None:
+    token_file = tmp_path / "oauth.json"
+    monkeypatch.setattr(google, "TOKEN_FILE", token_file)
+    token_file.write_text('{"access_token":"one"}{"access_token":"two"}', encoding="utf-8")
+
+    with pytest.raises(google.GoogleError, match="invalid Google OAuth state file"):
+        google.load_cached_oauth_state()
 
 
 def test_google_doc_and_drive_get_default_to_markdown() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import os
 
@@ -71,6 +72,14 @@ def shared_session_root_for(session_id: str) -> Path:
 def binding_path_for(binding_id: str) -> Path:
     token = sanitize_token(binding_id, fallback="binding")
     return bindings_root() / token
+
+
+def binding_record_path_for(binding_id: str) -> Path:
+    return binding_path_for(binding_id) / "binding.json"
+
+
+def binding_root_path_for(binding_id: str) -> Path:
+    return binding_path_for(binding_id) / "root"
 
 
 def default_actor_session_id(session_id: str, identity: str) -> str:
@@ -171,21 +180,92 @@ def session_metadata_path_for(session_id: str) -> Path:
 
 def resolve_binding(binding_id: str) -> Path | None:
     path = binding_path_for(binding_id)
+    if path.is_dir():
+        root_link = binding_root_path_for(binding_id)
+        if not root_link.exists() and not root_link.is_symlink():
+            return None
+        return root_link.resolve()
     if not path.exists() and not path.is_symlink():
         return None
     return path.resolve()
 
 
-def write_binding(binding_id: str, session_root: Path) -> Path:
+def load_binding_record(binding_id: str) -> dict[str, object] | None:
     path = binding_path_for(binding_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    desired = os.path.relpath(session_root.expanduser().resolve(), start=path.parent)
-    if path.is_symlink():
-        current = os.readlink(path)
-        if current == desired:
-            return path
-        path.unlink()
-    elif path.exists():
-        path.unlink()
-    path.symlink_to(desired)
+    if not path.is_dir():
+        return None
+    record_path = binding_record_path_for(binding_id)
+    if not record_path.exists():
+        return None
+    try:
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def binding_records_for_session_root(session_root: Path) -> list[dict[str, object]]:
+    target = session_root.expanduser().resolve()
+    root = bindings_root()
+    if not root.exists():
+        return []
+    records: list[dict[str, object]] = []
+    for candidate in sorted(root.iterdir()):
+        binding_id = candidate.name
+        resolved = resolve_binding(binding_id)
+        if resolved is None or resolved != target:
+            continue
+        record = load_binding_record(binding_id) or {}
+        if not record:
+            continue
+        records.append(record)
+    return records
+
+
+def write_binding(
+    binding_id: str,
+    session_root: Path,
+    *,
+    context_id: str,
+    context_source: str,
+    session_id: str,
+    actor: str,
+    created_at: str,
+    updated_at: str,
+) -> Path:
+    from gotta.content import write_text_atomic
+
+    path = binding_path_for(binding_id)
+    resolved_root = session_root.expanduser().resolve()
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    path.mkdir(parents=True, exist_ok=True)
+    root_link = binding_root_path_for(binding_id)
+    desired = os.path.relpath(resolved_root, start=root_link.parent)
+    if root_link.is_symlink():
+        current = os.readlink(root_link)
+        if current != desired:
+            root_link.unlink()
+            root_link.symlink_to(desired)
+    elif root_link.exists():
+        root_link.unlink()
+        root_link.symlink_to(desired)
+    else:
+        root_link.symlink_to(desired)
+    record = {
+        "bindingId": binding_id,
+        "contextId": context_id,
+        "contextSource": context_source,
+        "sessionId": normalize_session_id(session_id),
+        "actor": normalize_identity(actor),
+        "sessionRoot": str(resolved_root),
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+    }
+    write_text_atomic(
+        binding_record_path_for(binding_id),
+        json.dumps(record, indent=2, sort_keys=True) + "\n",
+    )
     return path

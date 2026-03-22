@@ -6,7 +6,6 @@ import argparse
 from collections import Counter
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shlex
@@ -16,9 +15,8 @@ import uuid
 from gotta.compat import UTC, datetime
 from gotta import binding as binding_helpers
 from gotta import session as sessionlib
+from gotta import topology
 from gotta.content import (
-    CONTEXT_ID_ENV,
-    CONTEXT_SOURCE_ENV,
     ContentError,
     ContentSnapshot,
     CommonOptions,
@@ -26,6 +24,7 @@ from gotta.content import (
     activity_log_path,
     artifact_locator,
     content_locator,
+    current_context_binding,
     env_mapping,
     resolve_dirs,
     scan_content_store,
@@ -39,7 +38,6 @@ from gotta.content import (
     load_state_env_at_root,
     write_text_atomic,
     write_session_state,
-    session_surface_initialized,
 )
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.leads import (
@@ -118,7 +116,14 @@ def _state_file(root: Path) -> Path:
 def session_access_mode(argv: list[str]) -> str:
     positionals = sessionlib.argv_positionals(
         argv,
-        valued_flags=("--session", "--actor", "--content-dir", "--output", "--limit"),
+        valued_flags=(
+            "--session",
+            "--actor",
+            "--content-dir",
+            "--output",
+            "--limit",
+            "--offset",
+        ),
     )
     subcommand = positionals[0] if positionals else "show"
     return "write" if subcommand in {"init", "bind"} else "read"
@@ -182,15 +187,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         "--print",
         dest="print_format",
-        choices=["env", "json", "path", "sh"],
+        choices=["summary", "json"],
         default="json",
     )
     manifest.add_argument("--plugin")
     manifest.add_argument("--locator")
     manifest.add_argument("--limit", type=int, default=100)
+    manifest.add_argument("--offset", type=int, default=0)
+    manifest.add_argument("--all", action="store_true")
     manifest.add_argument("--output", choices=["json", "text"], default="text")
     manifest.add_argument("--stdout", action="store_true", help=argparse.SUPPRESS)
     timeline.add_argument("--limit", type=int, default=100)
+    timeline.add_argument("--offset", type=int, default=0)
+    timeline.add_argument("--all", action="store_true")
     timeline.add_argument("--output", choices=["json", "text"], default="text")
     timeline.add_argument("--stdout", action="store_true", help=argparse.SUPPRESS)
     timeline.add_argument(
@@ -220,6 +229,8 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--stdout", action="store_true")
     leads.add_argument("target", nargs="?")
     leads.add_argument("--limit", type=int, default=100)
+    leads.add_argument("--offset", type=int, default=0)
+    leads.add_argument("--all", action="store_true")
     leads.add_argument("--output", choices=["json", "text"], default="text")
     return parser
 
@@ -260,6 +271,172 @@ def _print_dirs(args: argparse.Namespace, payload: dict[str, str]) -> int:
     return 0
 
 
+def _paginate_items(
+    items: list[dict[str, object]] | list[dict[str, str]],
+    *,
+    limit: int,
+    offset: int,
+    include_all: bool,
+    default_tail_window: bool = False,
+) -> tuple[list[dict[str, object]] | list[dict[str, str]], dict[str, object]]:
+    total_count = len(items)
+    normalized_limit = max(limit, 0)
+    explicit_offset = max(offset, 0)
+    applied_offset = explicit_offset
+    if default_tail_window and not include_all and explicit_offset == 0 and normalized_limit > 0:
+        applied_offset = max(total_count - normalized_limit, 0)
+    if include_all:
+        paged = items[applied_offset:]
+        applied_limit: int | None = None
+    else:
+        paged = items[applied_offset : applied_offset + normalized_limit]
+        applied_limit = normalized_limit
+    shown_count = len(paged)
+    next_offset = applied_offset + shown_count
+    truncated = next_offset < total_count
+    return paged, {
+        "offset": applied_offset,
+        "limit": applied_limit,
+        "totalCount": total_count,
+        "shownCount": shown_count,
+        "nextOffset": next_offset if truncated else None,
+        "truncated": truncated,
+    }
+
+
+def _paging_summary_line(
+    *,
+    label: str,
+    total_count: int,
+    shown_count: int,
+    offset: int,
+    next_offset: int | None,
+) -> str:
+    parts = [f"{label}: {total_count} total", f"showing {shown_count}", f"offset {offset}"]
+    if next_offset is not None:
+        parts.append(f"next {next_offset}")
+    return "; ".join(parts)
+
+
+def _binding_detail(record: dict[str, object]) -> str:
+    context_id = str(record.get("contextId") or "").strip() or "unknown"
+    context_source = str(record.get("contextSource") or "").strip() or "unknown"
+    session_root = str(record.get("sessionRoot") or "").strip() or "unknown"
+    return (
+        f"{record.get('bindingId') or 'unknown'} -> {session_root} "
+        f"({context_source}, {context_id})"
+    )
+
+
+def _doctor_payload(dirs) -> dict[str, object]:
+    session_env = env_mapping(dirs)
+    state = load_state_env_at_root(dirs.session_dir)
+    runtime = current_context_binding()
+    runtime_root = topology.resolve_binding(runtime.binding_id)
+    bindings = topology.binding_records_for_session_root(dirs.session_dir)
+    session_payload = {
+        "sessionId": str(session_env.get("GOTTA_SESSION_ID") or ""),
+        "actor": session_identity(dirs.session_dir),
+        "sessionRoot": str(dirs.session_dir),
+        "contentRoot": str(dirs.content_dir),
+        "initialized": bool(session_is_initialized(dirs.session_dir)),
+        "repo": state.get(SESSION_REPO_ENV, ""),
+        "createdAt": state.get(SESSION_CREATED_ENV, ""),
+    }
+    runtime_payload = {
+        "present": bool(runtime.context_id),
+        "contextId": runtime.context_id,
+        "contextSource": runtime.context_source,
+        "bindingId": runtime.binding_id,
+    }
+    matching_runtime_binding = runtime_root is not None and runtime_root.resolve() == dirs.session_dir.resolve()
+    topology_consistent = (
+        dirs.session_dir.exists()
+        and dirs.content_dir.exists()
+        and session_is_initialized(dirs.session_dir)
+        and bool(bindings)
+        and all(
+            str(record.get("sessionId") or "") == session_payload["sessionId"]
+            and str(record.get("actor") or "") == session_payload["actor"]
+            and str(record.get("sessionRoot") or "") == session_payload["sessionRoot"]
+            for record in bindings
+        )
+    )
+    checks = {
+        "runtimeContextPresent": {
+            "status": "ok" if runtime_payload["present"] else "missing",
+            "detail": (
+                f"{runtime.context_source}: {runtime.context_id}"
+                if runtime_payload["present"]
+                else "no active runtime context"
+            ),
+        },
+        "durableBindingsPresent": {
+            "status": "ok" if bindings else "missing",
+            "detail": (
+                ", ".join(_binding_detail(record) for record in bindings)
+                if bindings
+                else "no durable bindings target this session"
+            ),
+        },
+        "runtimeBindingMatchesTarget": {
+            "status": (
+                "ok"
+                if matching_runtime_binding
+                else "mismatch"
+                if runtime_payload["present"]
+                else "unknown"
+            ),
+            "detail": (
+                f"{runtime.binding_id} targets {runtime_root}"
+                if runtime_root is not None
+                else "the active runtime binding has no durable target"
+            )
+            if runtime_payload["present"]
+            else "no active runtime context",
+        },
+        "sessionTopologyConsistent": {
+            "status": "ok" if topology_consistent else "broken",
+            "detail": (
+                "session root, content root, and binding records agree"
+                if topology_consistent
+                else "session root, content root, and durable binding records do not fully agree"
+            ),
+        },
+    }
+    return {
+        "runtime": runtime_payload,
+        "session": session_payload,
+        "bindings": bindings,
+        "checks": checks,
+    }
+
+
+def _print_doctor_summary(payload: dict[str, object]) -> int:
+    runtime = payload["runtime"]
+    session_payload = payload["session"]
+    print(f"session: {session_payload['sessionRoot']}")
+    print(f"session_id: {session_payload['sessionId']}")
+    print(f"actor: {session_payload['actor']}")
+    print(f"content: {session_payload['contentRoot']}")
+    print(
+        "runtime: "
+        f"{runtime['contextSource'] or 'unknown'} "
+        f"{runtime['contextId'] or 'unknown'} "
+        f"({runtime['bindingId'] or 'unknown'})"
+    )
+    print(f"bindings: {len(payload['bindings'])}")
+    for name in (
+        "runtimeContextPresent",
+        "durableBindingsPresent",
+        "runtimeBindingMatchesTarget",
+        "sessionTopologyConsistent",
+    ):
+        check = payload["checks"][name]
+        print(f"- {name}: {check['status']} - {check['detail']}")
+    return 0
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     dirs = resolve_dirs(_options_from_args(args), create=False)
     _require_started_session(dirs)
@@ -294,23 +471,11 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_doctor(args: argparse.Namespace) -> int:
     dirs = resolve_dirs(_options_from_args(args), create=False)
     _require_started_session(dirs)
-    state = load_state_env_at_root(dirs.session_dir)
-    payload = env_mapping(dirs)
-    payload["context_active"] = "ok"
-    payload["state_env"] = "ok"
-    payload["state_dir"] = "ok" if _state_file(dirs.session_dir).parent.exists() else "missing"
-    payload["session_dir"] = "ok" if dirs.session_dir.exists() else "missing"
-    payload["content_dir"] = "ok" if dirs.content_dir.exists() else "missing"
-    payload["bin_dir"] = "ok" if dirs.session_dir.joinpath("bin").exists() else "missing"
-    payload["context_id"] = state.get(CONTEXT_ID_ENV, "")
-    payload["context_source"] = state.get(CONTEXT_SOURCE_ENV, "")
-    payload["activation_mode"] = os.environ.get(SESSION_ACTIVATION_ENV, "") or state.get(
-        SESSION_ACTIVATION_ENV, ""
-    )
-    payload["session_created"] = state.get(SESSION_CREATED_ENV, "")
-    payload["session_repo"] = state.get(SESSION_REPO_ENV, "")
-    payload["session_initialized"] = "yes" if session_surface_initialized(dirs.session_dir) else "no"
-    return _print_dirs(args, payload)
+    payload = _doctor_payload(dirs)
+    if getattr(args, "print_format", "json") == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    return _print_doctor_summary(payload)
 
 
 def _manifest_entries(dirs) -> list[dict[str, object]]:
@@ -426,6 +591,8 @@ def _manifest_payload(
     actor: str = "",
     locator: str = "",
     limit: int = 20,
+    offset: int = 0,
+    include_all: bool = False,
 ) -> dict[str, object]:
     entries = _filter_manifest_entries(
         _manifest_entries(dirs),
@@ -435,7 +602,12 @@ def _manifest_payload(
     )
     ordered = sorted(entries, key=_manifest_entry_sort_key, reverse=True)
     discovery_count, evidence_count = _artifact_kind_counts(ordered)
-    limited = ordered[: max(limit, 0)]
+    paged, paging = _paginate_items(
+        ordered,
+        limit=limit,
+        offset=offset,
+        include_all=include_all,
+    )
     rendered_entries = [
         {
             **entry,
@@ -463,14 +635,14 @@ def _manifest_payload(
                 else ""
             ),
         }
-        for entry in limited
+        for entry in paged
     ]
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
         "entryCount": len(entries),
-        "shownCount": len(rendered_entries),
+        **paging,
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
         "pluginFilter": plugin,
@@ -713,7 +885,14 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
     return events
 
 
-def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict[str, object]:
+def _timeline_payload(
+    dirs,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    include_all: bool = False,
+    mode: str = "acquired",
+) -> dict[str, object]:
     normalized_mode = _normalize_timeline_mode(mode)
     local_events = _local_activity_timeline_events(dirs)
     if normalized_mode != "acquired":
@@ -768,8 +947,14 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
                 str(item.get("checksum") or ""),
             ),
         )
-        limited = ordered[-max(limit, 0) :] if limit > 0 else ordered
-        discovery_count, evidence_count = _artifact_kind_counts(limited)
+        paged, paging = _paginate_items(
+            ordered,
+            limit=limit,
+            offset=offset,
+            include_all=include_all,
+            default_tail_window=True,
+        )
+        discovery_count, evidence_count = _artifact_kind_counts(paged)
         return {
             "sessionDir": str(dirs.session_dir),
             "contentDir": str(dirs.content_dir),
@@ -778,10 +963,11 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
             "mode": normalized_mode,
             "modeDescription": TIMELINE_MODE_DESCRIPTIONS[normalized_mode],
             "coverageGapCount": coverage_gap_count,
-            "eventCount": len(limited),
+            "eventCount": paging["totalCount"],
+            **paging,
             "discoveryArtifactCount": discovery_count,
             "evidenceArtifactCount": evidence_count,
-            "events": limited,
+            "events": paged,
         }
     manifest_events = [
         {
@@ -819,8 +1005,14 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
             str(item.get("checksum") or ""),
         ),
     )
-    limited = events[-max(limit, 0) :] if limit > 0 else events
-    discovery_count, evidence_count = _artifact_kind_counts(limited)
+    paged, paging = _paginate_items(
+        events,
+        limit=limit,
+        offset=offset,
+        include_all=include_all,
+        default_tail_window=True,
+    )
+    discovery_count, evidence_count = _artifact_kind_counts(paged)
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -829,10 +1021,11 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
         "mode": normalized_mode,
         "modeDescription": TIMELINE_MODE_DESCRIPTIONS[normalized_mode],
         "coverageGapCount": 0,
-        "eventCount": len(limited),
+        "eventCount": paging["totalCount"],
+        **paging,
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
-        "events": limited,
+        "events": paged,
     }
 
 
@@ -1448,6 +1641,8 @@ def _leads_payload(
     *,
     target: str = "",
     limit: int = 100,
+    offset: int = 0,
+    include_all: bool = False,
 ) -> dict[str, object]:
     snapshots = scan_content_store(dirs.content_dir)
     manifest_entries = _manifest_entries(dirs)
@@ -1464,7 +1659,12 @@ def _leads_payload(
         if str(edge.get("sourceChecksum", "")) in selected_digests
     ]
     lead_sources = aggregate_lead_sources(edge_records)
-    limited_sources = lead_sources[: max(limit, 0)]
+    paged_sources, paging = _paginate_items(
+        lead_sources,
+        limit=limit,
+        offset=offset,
+        include_all=include_all,
+    )
     selected_edges_by_checksum: dict[str, list[dict[str, object]]] = {}
     for edge in edge_records:
         selected_edges_by_checksum.setdefault(str(edge["sourceChecksum"]), []).append(edge)
@@ -1508,10 +1708,10 @@ def _leads_payload(
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
         "leadCount": len(lead_sources),
-        "shownCount": len(limited_sources),
+        **paging,
         "materializedLeadCount": materialized_count,
         "unmaterializedLeadCount": len(lead_sources) - materialized_count,
-        "leadSources": limited_sources,
+        "leadSources": paged_sources,
         "artifacts": artifacts,
         "empty": empty,
         "nextStep": next_step,
@@ -1898,6 +2098,8 @@ def cmd_leads(args: argparse.Namespace) -> int:
         dirs,
         target=args.target or "",
         limit=max(args.limit, 0),
+        offset=max(args.offset, 0),
+        include_all=bool(args.all),
     )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -1916,6 +2118,21 @@ def cmd_leads(args: argparse.Namespace) -> int:
         f"materialized {payload['materializedLeadCount']}, "
         f"unmaterialized {payload['unmaterializedLeadCount']})"
     )
+    print(
+        _paging_summary_line(
+            label="page",
+            total_count=int(payload["totalCount"]),
+            shown_count=int(payload["shownCount"]),
+            offset=int(payload["offset"]),
+            next_offset=(
+                int(payload["nextOffset"])
+                if payload.get("nextOffset") is not None
+                else None
+            ),
+        )
+    )
+    if int(payload["shownCount"]) == 0 and int(payload["totalCount"]) > 0:
+        print("page: no results in this page window")
     if payload["nextStep"]:
         print(f"next: {payload['nextStep']}")
     if payload["leadSources"]:
@@ -1998,6 +2215,8 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         actor=args.actor or "",
         locator=args.locator or "",
         limit=args.limit,
+        offset=max(args.offset, 0),
+        include_all=bool(args.all),
     )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -2009,6 +2228,21 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         f"discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
     )
+    print(
+        _paging_summary_line(
+            label="page",
+            total_count=int(payload["totalCount"]),
+            shown_count=int(payload["shownCount"]),
+            offset=int(payload["offset"]),
+            next_offset=(
+                int(payload["nextOffset"])
+                if payload.get("nextOffset") is not None
+                else None
+            ),
+        )
+    )
+    if int(payload["shownCount"]) == 0 and int(payload["totalCount"]) > 0:
+        print("page: no results in this page window")
     print("follow: pass any emitted locator directly to `gotta read <locator>`")
     for entry in payload["entries"]:
         fetched_at = str(entry.get("fetched_at", "")).strip() or "unknown-time"
@@ -2046,7 +2280,13 @@ def cmd_manifest(args: argparse.Namespace) -> int:
 def cmd_timeline(args: argparse.Namespace) -> int:
     dirs = resolve_dirs(_options_from_args(args), create=False)
     _require_started_session(dirs)
-    payload = _timeline_payload(dirs, limit=max(args.limit, 0), mode=args.mode)
+    payload = _timeline_payload(
+        dirs,
+        limit=max(args.limit, 0),
+        offset=max(args.offset, 0),
+        include_all=bool(args.all),
+        mode=args.mode,
+    )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -2056,10 +2296,25 @@ def cmd_timeline(args: argparse.Namespace) -> int:
     print(f"coverage_gaps: {payload.get('coverageGapCount', 0)}")
     print(
         "events: "
-        f"{payload['eventCount']} "
+        f"{payload['eventCount']} total "
         f"(discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
     )
+    print(
+        _paging_summary_line(
+            label="page",
+            total_count=int(payload["totalCount"]),
+            shown_count=int(payload["shownCount"]),
+            offset=int(payload["offset"]),
+            next_offset=(
+                int(payload["nextOffset"])
+                if payload.get("nextOffset") is not None
+                else None
+            ),
+        )
+    )
+    if int(payload["shownCount"]) == 0 and int(payload["totalCount"]) > 0:
+        print("page: no results in this page window")
     for event in payload["events"]:
         actor_label = event["actor"]
         if event.get("target_actor") and event["target_actor"] != actor_label:

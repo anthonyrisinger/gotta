@@ -164,7 +164,9 @@ def bind_current_context(
     session_ref: str | None,
     output: str,
 ) -> int:
-    context_id, context_source = current_context_binding()
+    context = current_context_binding()
+    context_id = context.context_id
+    context_source = context.context_source
     binding_id = topology.normalize_identity(session_id_from_context(context_id))
     current_session_id = topology.normalize_session_id(session_ref or binding_id)
     identity = binding_id
@@ -174,7 +176,18 @@ def bind_current_context(
         context_id=context_id,
         context_source=context_source,
     )
-    topology.write_binding(binding_id, root)
+    now = iso_utc()
+    existing = topology.load_binding_record(binding_id) or {}
+    topology.write_binding(
+        binding_id,
+        root,
+        context_id=context_id,
+        context_source=context_source,
+        session_id=current_session_id,
+        actor=identity,
+        created_at=str(existing.get("createdAt") or now),
+        updated_at=now,
+    )
     return print_payload(_resolved_payload(root), output=output)
 
 

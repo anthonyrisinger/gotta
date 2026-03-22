@@ -237,15 +237,6 @@ def _iter_session_roots(base_dir: Path) -> list[Path]:
     return sorted(roots)
 
 
-def _matching_session_roots(base_dir: Path, context_id: str) -> list[Path]:
-    matches: list[Path] = []
-    for root in _iter_session_roots(base_dir):
-        state = load_state_env_at_root(root)
-        if state.get(CONTEXT_ID_ENV, "").strip() == context_id:
-            matches.append(root)
-    return matches
-
-
 def _create_session_root(
     root: Path,
     *,
@@ -353,7 +344,18 @@ def _bind_session_root(context_id: str, context_source: str) -> tuple[Path, bool
                 SESSION_ACTOR_ENV: fingerprint,
             },
         )
-        topology.write_binding(fingerprint, root)
+        now = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        existing = topology.load_binding_record(fingerprint) or {}
+        topology.write_binding(
+            fingerprint,
+            root,
+            context_id=context_id,
+            context_source=context_source,
+            session_id=session_id,
+            actor=fingerprint,
+            created_at=str(existing.get("createdAt") or now),
+            updated_at=now,
+        )
     return root, created
 
 
@@ -467,7 +469,7 @@ def _prefer_bound_session_root() -> Path | None:
         root = resolve_session_reference(explicit, allow_missing=False)
         if root is not None and session_is_initialized(root):
             return root
-    root = topology.resolve_binding(_session_token(current_context_binding()[0]))
+    root = topology.resolve_binding(current_context_binding().binding_id)
     if root is not None and session_is_initialized(root):
         return root
     return None
@@ -561,7 +563,9 @@ def main(argv: list[str] | None = None) -> int:
         if _is_nonbinding_help(normalized):
             return _gotta_main(normalized)
         plugin_name = normalized[0] if normalized else ""
-        context_id, context_source = current_context_binding()
+        context = current_context_binding()
+        context_id = context.context_id
+        context_source = context.context_source
         explicit_session = _explicit_session_arg(normalized)
         explicit_actor = _explicit_actor_arg(normalized)
         explicit_target = bool(explicit_session or explicit_actor)

@@ -30,6 +30,11 @@ from gotta.config import (
     provider_env_reference,
     user_state_dir,
 )
+from gotta.vault import (
+    load_secret_json_object,
+    write_secret_json_atomic,
+    write_secret_text_atomic,
+)
 
 OAUTH_DIR = user_state_dir() / "auth" / "atlassian"
 TOKEN_FILE = OAUTH_DIR / "oauth.json"
@@ -115,13 +120,9 @@ def read_text(path: Path) -> str:
 
 def parse_json_file(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(read_text(path))
-    except UnicodeDecodeError as exc:
+        data, _recovered = load_secret_json_object(path)
+    except ValueError as exc:
         raise AtlassianError(f"invalid OAuth state file {path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise AtlassianError(f"invalid OAuth state file {path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise AtlassianError(f"invalid OAuth state file {path}: expected JSON object")
     return data
 
 
@@ -184,16 +185,7 @@ def ensure_oauth_dir() -> None:
 
 
 def write_secret_text(path: Path, value: str) -> None:
-    ensure_oauth_dir()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(value)
-    finally:
-        try:
-            os.chmod(path, 0o600)
-        except FileNotFoundError:
-            pass
+    write_secret_text_atomic(path, value, ensure_dir=ensure_oauth_dir)
 
 
 def sync_aux_oauth_files(cloud_id: str) -> None:
@@ -204,7 +196,7 @@ def sync_aux_oauth_files(cloud_id: str) -> None:
 
 def persist_oauth_state(client_id: str, oauth_state: dict[str, Any]) -> dict[str, Any]:
     ensure_oauth_dir()
-    write_secret_text(TOKEN_FILE, json.dumps(oauth_state))
+    write_secret_json_atomic(TOKEN_FILE, oauth_state, ensure_dir=ensure_oauth_dir)
     cloud_id = str(oauth_state.get("cloud_id") or "").strip()
     sync_aux_oauth_files(cloud_id)
     return oauth_state

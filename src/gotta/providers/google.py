@@ -26,6 +26,7 @@ from gotta.config import (
     provider_env_reference,
     user_state_dir,
 )
+from gotta.vault import load_secret_json_object, write_secret_json_atomic
 
 OAUTH_DIR = user_state_dir() / "auth" / "google"
 TOKEN_FILE = OAUTH_DIR / "oauth.json"
@@ -132,21 +133,8 @@ def ensure_oauth_dir() -> None:
     os.chmod(OAUTH_DIR, 0o700)
 
 
-def write_secret_text(path: Path, value: str) -> None:
-    ensure_oauth_dir()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(value)
-    finally:
-        try:
-            os.chmod(path, 0o600)
-        except FileNotFoundError:
-            pass
-
-
 def persist_oauth_state(oauth_state: dict[str, Any]) -> dict[str, Any]:
-    write_secret_text(TOKEN_FILE, json.dumps(oauth_state))
+    write_secret_json_atomic(TOKEN_FILE, oauth_state, ensure_dir=ensure_oauth_dir)
     return oauth_state
 
 
@@ -341,13 +329,14 @@ def load_cached_oauth_state() -> dict[str, Any] | None:
     if not TOKEN_FILE.exists():
         return None
     try:
-        data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise GoogleError(f"invalid Google OAuth state file {TOKEN_FILE}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise GoogleError(
-            f"invalid Google OAuth state file {TOKEN_FILE}: expected JSON object"
+        data, recovered = load_secret_json_object(
+            TOKEN_FILE,
+            allow_trailing_unmatched_closing_braces=True,
         )
+    except ValueError as exc:
+        raise GoogleError(f"invalid Google OAuth state file {TOKEN_FILE}: {exc}") from exc
+    if recovered:
+        persist_oauth_state(data)
     return data
 
 

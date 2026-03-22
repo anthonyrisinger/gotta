@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from gotta import content
+from gotta import topology
 
 
 def make_dirs(root: Path) -> content.ResolvedDirs:
@@ -171,12 +172,15 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
     dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
-    content.write_session_state(
-        dirs,
-        {
-            content.CONTEXT_ID_ENV: "thread-123",
-            content.CONTEXT_SOURCE_ENV: "codex_thread",
-        },
+    topology.write_binding(
+        fingerprint,
+        bound_root,
+        context_id="thread-123",
+        context_source="codex_thread",
+        session_id=fingerprint,
+        actor=fingerprint,
+        created_at="2026-03-22T00:00:00Z",
+        updated_at="2026-03-22T00:00:00Z",
     )
 
     resolved = content.resolve_dirs(content.CommonOptions(), create=False)
@@ -202,15 +206,15 @@ def test_current_context_binding_uses_term_session_as_first_class_identity(
     second.mkdir()
 
     monkeypatch.chdir(first)
-    left, source = content.current_context_binding()
+    left = content.current_context_binding()
     monkeypatch.chdir(second)
-    right, repeat_source = content.current_context_binding()
+    right = content.current_context_binding()
 
-    assert source == "term_session"
-    assert repeat_source == "term_session"
-    assert left == "term-session-1"
-    assert right == "term-session-1"
-    assert left == right
+    assert left.context_source == "terminal_session"
+    assert right.context_source == "terminal_session"
+    assert left.context_id == "term-session-1"
+    assert right.context_id == "term-session-1"
+    assert left.binding_id == right.binding_id
 
 
 def test_current_context_binding_prefers_codex_thread_over_term_session(
@@ -220,10 +224,10 @@ def test_current_context_binding_prefers_codex_thread_over_term_session(
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
     monkeypatch.setenv("TERM_SESSION_ID", "term-session-1")
 
-    binding, source = content.current_context_binding()
+    binding = content.current_context_binding()
 
-    assert source == "codex_thread"
-    assert binding == "thread-123"
+    assert binding.context_source == "codex_thread"
+    assert binding.context_id == "thread-123"
 
 
 def test_current_context_binding_uses_cwd_only_as_last_resort_fallback(
@@ -244,13 +248,13 @@ def test_current_context_binding_uses_cwd_only_as_last_resort_fallback(
     second.mkdir()
 
     monkeypatch.chdir(first)
-    left, source = content.current_context_binding()
+    left = content.current_context_binding()
     monkeypatch.chdir(second)
-    right, repeat_source = content.current_context_binding()
+    right = content.current_context_binding()
 
-    assert source == "terminal_fingerprint"
-    assert repeat_source == "terminal_fingerprint"
-    assert left != right
+    assert left.context_source == "terminal_fingerprint"
+    assert right.context_source == "terminal_fingerprint"
+    assert left.context_id != right.context_id
 
 
 def test_session_is_initialized_depends_on_state_env_only(tmp_path: Path) -> None:

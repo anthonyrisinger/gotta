@@ -13,6 +13,7 @@ from gotta.friction import oops_records
 from gotta import leads
 from gotta.logs import log_records
 from gotta import main as cli
+from gotta import topology
 from gotta.actor import SESSION_ACTOR_ENV
 from gotta.notes import actor_notes_records
 from gotta import session as sessionlib
@@ -1265,6 +1266,84 @@ def test_session_show_reports_local_state_over_default(
     assert capsys.readouterr().out.strip() == str(local_root.resolve())
 
 
+def test_session_doctor_reports_live_codex_runtime_and_matching_binding(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    binding_id = content.session_token("thread-123")
+    topology.write_binding(
+        binding_id,
+        local_root,
+        context_id="thread-123",
+        context_source="codex_thread",
+        session_id=content.session_id(local_root),
+        actor=content.session_identity(local_root),
+        created_at="2026-03-22T00:00:00Z",
+        updated_at="2026-03-22T00:00:00Z",
+    )
+
+    assert session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runtime"]["contextId"] == "thread-123"
+    assert payload["runtime"]["contextSource"] == "codex_thread"
+    assert payload["runtime"]["bindingId"] == binding_id
+    assert payload["bindings"][0]["contextId"] == "thread-123"
+    assert payload["checks"]["durableBindingsPresent"]["status"] == "ok"
+    assert payload["checks"]["runtimeBindingMatchesTarget"]["status"] == "ok"
+    assert payload["checks"]["sessionTopologyConsistent"]["status"] == "ok"
+
+
+def test_session_doctor_reports_historical_binding_when_runtime_points_elsewhere(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+    monkeypatch.setenv("CODEX_THREAD_ID", "other-thread")
+    topology.write_binding(
+        content.session_token("historic-thread"),
+        local_root,
+        context_id="historic-thread",
+        context_source="codex_thread",
+        session_id=content.session_id(local_root),
+        actor=content.session_identity(local_root),
+        created_at="2026-03-22T00:00:00Z",
+        updated_at="2026-03-22T00:00:00Z",
+    )
+
+    assert session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runtime"]["contextId"] == "other-thread"
+    assert payload["bindings"][0]["contextId"] == "historic-thread"
+    assert payload["checks"]["durableBindingsPresent"]["status"] == "ok"
+    assert payload["checks"]["runtimeBindingMatchesTarget"]["status"] == "mismatch"
+
+
+def test_session_doctor_ignores_invalid_binding_record_instead_of_crashing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    binding_id = content.session_token("thread-123")
+    binding_dir = topology.binding_path_for(binding_id)
+    binding_dir.mkdir(parents=True, exist_ok=True)
+    topology.binding_root_path_for(binding_id).symlink_to(
+        os.path.relpath(local_root.resolve(), start=binding_dir.resolve()),
+    )
+    topology.binding_record_path_for(binding_id).write_text("{bad", encoding="utf-8")
+
+    assert session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runtime"]["contextId"] == "thread-123"
+    assert payload["checks"]["durableBindingsPresent"]["status"] == "missing"
+    assert payload["bindings"] == []
+
+
 def test_session_analyze_writes_summary_and_graph(tmp_path: Path, monkeypatch, capsys) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
@@ -1818,6 +1897,78 @@ def test_session_leads_demote_low_signal_service_urls_but_keep_them_visible(
     ]
 
 
+def test_session_leads_support_offset_and_all_paging(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        (
+            "https://docs.demo.internal/runbook\n"
+            "https://admin.demo.internal\n"
+            "https://grafana.demo.internal/d/abc123/service-overview\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="search.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "slack",
+            "locator": "search service routing",
+            "canonical_locator": "slack:search service routing",
+            "subcommand": "search",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    assert (
+        session.main(
+            [
+                "leads",
+                "--session",
+                str(local_root),
+                "--limit",
+                "1",
+                "--offset",
+                "1",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["leadCount"] == 3
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] == 2
+    assert payload["truncated"] is True
+    assert len(payload["leadSources"]) == 1
+
+    assert (
+        session.main(
+            [
+                "leads",
+                "--session",
+                str(local_root),
+                "--offset",
+                "1",
+                "--all",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 2
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] is None
+    assert payload["truncated"] is False
+    assert len(payload["leadSources"]) == 2
+
+
 def test_session_leads_preserve_search_result_order_within_search_artifacts(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -2260,6 +2411,39 @@ def test_session_timeline_accepts_stdout_flag_for_uniformity(
     assert payload["eventCount"] == 1
 
 
+def test_session_timeline_default_limit_keeps_latest_window(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    for index in range(3):
+        content.materialize_bytes(
+            f"artifact-{index}".encode("utf-8"),
+            dirs=dirs,
+            preferred_name=f"artifact-{index}.md",
+            metadata={
+                "tool": "gotta",
+                "plugin": "jira",
+                "locator": f"PROJ-{index}",
+                "canonical_locator": f"jira:PROJ-{index}",
+            },
+            timestamp=f"2026-03-11T00:00:0{index}.000001Z",
+        )
+
+    assert (
+        session.main(
+            ["timeline", "--session", str(local_root), "--limit", "1", "--output", "json"]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["eventCount"] == 3
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 2
+    assert payload["events"][0]["locator"] == "jira:PROJ-2"
+
+
 def test_session_timeline_acquired_includes_native_local_activity(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -2588,6 +2772,80 @@ def test_session_timeline_best_effort_ignores_aggregate_search_artifact_dates(
     assert created_payload["eventCount"] == 0
 
 
+def test_session_timeline_supports_offset_and_reports_exhausted_pages(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"first",
+        dirs=dirs,
+        preferred_name="first.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "PROJ-1",
+            "canonical_locator": "jira:PROJ-1",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"second",
+        dirs=dirs,
+        preferred_name="second.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "locator": "3904339970",
+            "canonical_locator": "confluence:3904339970",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    assert (
+        session.main(
+            [
+                "timeline",
+                "--session",
+                str(local_root),
+                "--limit",
+                "1",
+                "--offset",
+                "5",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["eventCount"] == 2
+    assert payload["totalCount"] == 2
+    assert payload["shownCount"] == 0
+    assert payload["offset"] == 5
+    assert payload["nextOffset"] is None
+    assert payload["truncated"] is False
+    assert payload["events"] == []
+
+    assert (
+        session.main(
+            [
+                "timeline",
+                "--session",
+                str(local_root),
+                "--limit",
+                "1",
+                "--offset",
+                "5",
+            ]
+        )
+        == 0
+    )
+    text = capsys.readouterr().out
+    assert "page: 2 total; showing 0; offset 5" in text
+    assert "page: no results in this page window" in text
+
+
 def test_session_manifest_plugin_filter_sees_provider_attributed_read_artifacts(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -2603,6 +2861,73 @@ def test_session_manifest_plugin_filter_sees_provider_attributed_read_artifacts(
     assert session.main(["manifest", "--session", str(local_root), "--plugin", "jira", "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entryCount"] == 1
+
+
+def test_session_manifest_supports_offset_and_all_paging(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    for index in range(3):
+        content.materialize_bytes(
+            f"artifact-{index}".encode("utf-8"),
+            dirs=dirs,
+            preferred_name=f"artifact-{index}.md",
+            metadata={
+                "tool": "gotta",
+                "plugin": "jira",
+                "locator": f"PROJ-{index}",
+                "canonical_locator": f"jira:PROJ-{index}",
+            },
+            timestamp=f"2026-03-11T00:00:0{index}.000001Z",
+        )
+
+    assert (
+        session.main(
+            [
+                "manifest",
+                "--session",
+                str(local_root),
+                "--limit",
+                "1",
+                "--offset",
+                "1",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entryCount"] == 3
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] == 2
+    assert payload["truncated"] is True
+    assert payload["entries"][0]["preferred_name"] == "artifact-1.md"
+
+    assert (
+        session.main(
+            [
+                "manifest",
+                "--session",
+                str(local_root),
+                "--offset",
+                "1",
+                "--all",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 2
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] is None
+    assert payload["truncated"] is False
     assert payload["entries"][0]["plugin"] == "jira"
     assert payload["entries"][0]["canonical_locator"] == "jira:PROJ-1"
 

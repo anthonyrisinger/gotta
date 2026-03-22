@@ -61,6 +61,13 @@ class ResolvedDirs:
 
 
 @dataclass(frozen=True)
+class ContextBinding:
+    context_id: str
+    context_source: str
+    binding_id: str
+
+
+@dataclass(frozen=True)
 class Materialization:
     content_dir: Path
     data_path: Path
@@ -169,16 +176,29 @@ def activity_log_path(root: Path) -> Path:
     return state_dir_path(root) / ACTIVITY_LOG_NAME
 
 
-def current_context_binding() -> tuple[str, str]:
+def current_context_binding() -> ContextBinding:
     explicit = os.environ.get(CONTEXT_ID_ENV, "").strip()
     if explicit:
-        return explicit, "env"
+        source = os.environ.get(CONTEXT_SOURCE_ENV, "").strip() or "explicit"
+        return ContextBinding(
+            context_id=explicit,
+            context_source=source,
+            binding_id=session_token(explicit),
+        )
     codex_thread = os.environ.get("CODEX_THREAD_ID", "").strip()
     if codex_thread:
-        return codex_thread, "codex_thread"
+        return ContextBinding(
+            context_id=codex_thread,
+            context_source="codex_thread",
+            binding_id=session_token(codex_thread),
+        )
     term_session = os.environ.get("TERM_SESSION_ID", "").strip()
     if term_session:
-        return term_session, "term_session"
+        return ContextBinding(
+            context_id=term_session,
+            context_source="terminal_session",
+            binding_id=session_token(term_session),
+        )
     values = [
         os.environ.get("TTY", "").strip(),
         os.environ.get("SHELL", "").strip(),
@@ -190,7 +210,12 @@ def current_context_binding() -> tuple[str, str]:
     if not values[0]:
         values.append(os.getcwd())
     payload = "\n".join(values)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest(), "terminal_fingerprint"
+    context_id = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return ContextBinding(
+        context_id=context_id,
+        context_source="terminal_fingerprint",
+        binding_id=session_token(context_id),
+    )
 
 
 def session_token(context_id: str) -> str:
@@ -202,15 +227,14 @@ def default_session_id(context_id: str) -> str:
 
 
 def context_bound_session_root() -> Path | None:
-    context_id, _context_source = current_context_binding()
-    fingerprint = session_token(context_id)
-    root = topology.resolve_binding(fingerprint)
+    binding = current_context_binding()
+    root = topology.resolve_binding(binding.binding_id)
     if root is None:
         legacy = (
             DEFAULT_SESSION_ROOT.expanduser().resolve()
-            / fingerprint
+            / binding.binding_id
             / "actors"
-            / fingerprint
+            / binding.binding_id
         )
         if session_is_initialized(legacy):
             return legacy
@@ -225,7 +249,7 @@ def current_actor(*, default_actor: str = "") -> str:
         os.environ.get(ACTOR_ID_ENV, "").strip()
         or default_actor.strip()
         or os.environ.get(SESSION_ACTOR_ENV, "").strip()
-        or session_token(current_context_binding()[0])
+        or current_context_binding().binding_id
     )
     speaker = resolve_actor_context(default_speaker=fallback).speaker
     normalized = topology.normalize_identity(str(speaker or fallback).strip())
@@ -234,7 +258,7 @@ def current_actor(*, default_actor: str = "") -> str:
     fallback_normalized = topology.normalize_identity(fallback)
     if fallback_normalized and not topology.is_placeholder_identity(fallback_normalized):
         return fallback_normalized
-    return session_token(current_context_binding()[0])
+    return current_context_binding().binding_id
 
 
 def _current_actor() -> str:
@@ -487,7 +511,7 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
         or discovered.get(SESSION_ACTOR_ENV, "").strip()
     )
     if not identity_raw or topology.is_placeholder_identity(identity_raw):
-        identity_raw = session_token(current_context_binding()[0])
+        identity_raw = current_context_binding().binding_id
 
     session: Path | None = (
         resolve_session_reference(
@@ -586,7 +610,7 @@ def session_identity(root: Path) -> str:
         return _current_actor()
     fallback = topology.normalize_identity(resolved.name)
     if topology.is_placeholder_identity(fallback):
-        return session_token(current_context_binding()[0])
+        return current_context_binding().binding_id
     return fallback
 
 

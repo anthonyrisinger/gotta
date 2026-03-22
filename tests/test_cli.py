@@ -438,8 +438,13 @@ def test_main_session_show_and_doctor_require_an_existing_session(
 
     assert cli.main(["session", "doctor"]) == 0
     doctor_output = json.loads(capsys.readouterr().out)
-    assert doctor_output["GOTTA_SESSION_DIR"] == str(session_root.resolve())
-    assert doctor_output["session_initialized"] == "yes"
+    assert doctor_output["session"]["sessionRoot"] == str(session_root.resolve())
+    assert doctor_output["session"]["initialized"] is True
+    assert doctor_output["runtime"]["contextId"] == "thread-123"
+    assert doctor_output["runtime"]["contextSource"] == "codex_thread"
+    assert doctor_output["checks"]["durableBindingsPresent"]["status"] == "ok"
+    assert doctor_output["checks"]["runtimeBindingMatchesTarget"]["status"] == "ok"
+    assert doctor_output["bindings"][0]["contextId"] == "thread-123"
 
 
 def test_main_cross_actor_note_append_preserves_acting_actor(
@@ -691,7 +696,7 @@ def test_main_uses_term_session_id_for_deterministic_binding_on_write_surfaces(
     assert session_root.name == cli._session_token("term-session-1")
     assert seen[-1][0] == ["todo", "append", "real task"]
     assert seen[-1][2] == "term-session-1"
-    assert seen[-1][3] == "term_session"
+    assert seen[-1][3] == "terminal_session"
     assert "created a new gotta session" in capsys.readouterr().err
 
 
