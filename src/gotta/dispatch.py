@@ -42,7 +42,9 @@ from gotta.invocation import (
     should_materialize as resolve_should_materialize,
 )
 from gotta.source import (
+    classify_visibility_metadata,
     derive_source_metadata_from_payload,
+    extract_visibility_metadata_from_markdown,
     normalize_source_timestamp,
     slack_timestamp_to_iso,
 )
@@ -271,7 +273,7 @@ def _json_nested(payload: dict[str, Any], *path: str) -> str:
     return str(current or "").strip()
 
 
-def _extract_source_metadata_from_json(payload: Any) -> dict[str, str]:
+def _extract_source_metadata_from_json(payload: Any) -> dict[str, Any]:
     metadata = derive_source_metadata_from_payload(payload)
     if not isinstance(payload, dict):
         return metadata
@@ -314,8 +316,14 @@ def _extract_source_metadata_from_markdown(data: bytes) -> dict[str, str]:
     return metadata
 
 
-def _derived_source_metadata(plugin: str, argv: list[str], data: bytes) -> dict[str, str]:
-    metadata: dict[str, str] = {}
+def _derived_source_metadata(
+    plugin: str,
+    argv: list[str],
+    data: bytes,
+    *,
+    provider: str = "",
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
     canonical = canonical_locator(plugin, argv)
     defaults: dict[str, str] = {}
     if canonical.startswith("slack:thread:"):
@@ -328,6 +336,15 @@ def _derived_source_metadata(plugin: str, argv: list[str], data: bytes) -> dict[
         payload = _json_value(data)
         if payload is not None:
             metadata.update(_extract_source_metadata_from_json(payload))
+            metadata.update(
+                classify_visibility_metadata(
+                    payload,
+                    provider=provider,
+                    plugin=plugin,
+                    subcommand=argv[0] if argv else "",
+                    locator=canonical,
+                )
+            )
         metadata.update(
             {
                 key: value
@@ -335,6 +352,23 @@ def _derived_source_metadata(plugin: str, argv: list[str], data: bytes) -> dict[
                 if key not in metadata
             }
         )
+        metadata.update(
+            {
+                key: value
+                for key, value in extract_visibility_metadata_from_markdown(data).items()
+                if key not in metadata
+            }
+        )
+        if "visibility_level" not in metadata:
+            metadata.update(
+                classify_visibility_metadata(
+                    {},
+                    provider=provider,
+                    plugin=plugin,
+                    subcommand=argv[0] if argv else "",
+                    locator=canonical,
+                )
+            )
         for key, value in defaults.items():
             metadata.setdefault(key, value)
         return metadata
@@ -346,6 +380,15 @@ def _derived_source_metadata(plugin: str, argv: list[str], data: bytes) -> dict[
             metadata["source_created_at"] = first_ts
         if last_ts:
             metadata["source_updated_at"] = last_ts
+        metadata.update(
+            classify_visibility_metadata(
+                payload,
+                provider=provider,
+                plugin=plugin,
+                subcommand=argv[0] if argv else "",
+                locator=canonical,
+            )
+        )
     metadata.update(
         {
             key: value
@@ -353,6 +396,23 @@ def _derived_source_metadata(plugin: str, argv: list[str], data: bytes) -> dict[
             if key not in metadata
         }
     )
+    metadata.update(
+        {
+            key: value
+            for key, value in extract_visibility_metadata_from_markdown(data).items()
+            if key not in metadata
+        }
+    )
+    if "visibility_level" not in metadata:
+        metadata.update(
+            classify_visibility_metadata(
+                {},
+                provider=provider,
+                plugin=plugin,
+                subcommand=argv[0] if argv else "",
+                locator=canonical,
+            )
+        )
     for key, value in defaults.items():
         metadata.setdefault(key, value)
     return metadata
@@ -382,6 +442,7 @@ def _materialize_invocation(
     metadata = {
         "tool": "gotta",
         "plugin": materialize_plugin,
+        "provider": resolved.provider,
         "subcommand": materialize_argv[0] if materialize_argv else "",
         "argv": materialize_argv,
         "locator": invocation_locator(materialize_plugin, materialize_argv),
@@ -403,7 +464,14 @@ def _materialize_invocation(
     invocation_id = os.environ.get("GOTTA_INVOCATION_ID", "").strip()
     if invocation_id:
         metadata["invocation_id"] = invocation_id
-    metadata.update(_derived_source_metadata(materialize_plugin, materialize_argv, payload))
+    metadata.update(
+        _derived_source_metadata(
+            materialize_plugin,
+            materialize_argv,
+            payload,
+            provider=resolved.provider,
+        )
+    )
     return materialize_bytes(
         payload,
         dirs=dirs,

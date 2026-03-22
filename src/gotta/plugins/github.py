@@ -19,7 +19,12 @@ import urllib.parse
 
 from gotta.helptext import is_long_help_request
 from gotta.routing import query_route, split_locator_tail, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+    render_visibility_metadata_lines,
+    with_visibility_metadata,
+)
 
 
 BLOB_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$")
@@ -115,6 +120,10 @@ class ParsedArgs:
     match: str = ""
     limit: int | None = None
     global_search: bool = False
+
+
+def _render_visibility_payload(payload: dict[str, object]) -> dict[str, object]:
+    return with_visibility_metadata(dict(payload), provider="github")
 
 
 def _slug(value: str) -> str:
@@ -421,6 +430,7 @@ def default_branch_name(gh: str, *, owner: str, repo: str) -> str:
 
 
 def markdown_repo(payload: dict[str, object]) -> str:
+    payload = _render_visibility_payload(payload)
     name = str(payload.get("name") or "")
     url = str(payload.get("url") or "")
     visibility = str(payload.get("visibility") or "")
@@ -434,6 +444,7 @@ def markdown_repo(payload: dict[str, object]) -> str:
     lines = [f"# {name}", ""]
     if url:
         lines.append(f"- **URL:** {url}")
+    lines.extend(render_visibility_metadata_lines(payload))
     if visibility:
         lines.append(f"- **Visibility:** {visibility}")
     if created:
@@ -450,6 +461,7 @@ def markdown_repo(payload: dict[str, object]) -> str:
 def markdown_issue_or_pr(
     payload: dict[str, object], kind: str, *, include_body: bool
 ) -> str:
+    payload = _render_visibility_payload(payload)
     title = str(payload.get("title") or "")
     number = payload.get("number")
     url = str(payload.get("url") or "")
@@ -473,6 +485,7 @@ def markdown_issue_or_pr(
     lines = [heading, ""]
     if url:
         lines.append(f"- **URL:** {url}")
+    lines.extend(render_visibility_metadata_lines(payload))
     if state:
         lines.append(f"- **State:** {state}")
     if author_name:
@@ -495,6 +508,7 @@ def markdown_commit(
     repo: str,
     include_patch: bool,
 ) -> str:
+    payload = _render_visibility_payload(payload)
     sha = str(payload.get("sha") or "")
     html_url = str(payload.get("html_url") or "")
     commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
@@ -507,6 +521,7 @@ def markdown_commit(
     lines = [f"# {owner}/{repo} commit {sha[:12]}: {subject}", ""]
     if html_url:
         lines.append(f"- **URL:** {html_url}")
+    lines.extend(render_visibility_metadata_lines(payload))
     if sha:
         lines.append(f"- **SHA:** `{sha}`")
     if author_name:
@@ -669,20 +684,24 @@ def _normalize_repo_search_item(item: dict[str, object]) -> dict[str, object]:
     owner = item.get("owner")
     if not isinstance(owner, dict):
         owner = {}
-    return {
-        "kind": "repo",
-        "fullName": str(item.get("full_name") or ""),
-        "name": str(item.get("name") or ""),
-        "url": str(item.get("html_url") or ""),
-        "description": str(item.get("description") or "").strip(),
-        "language": str(item.get("language") or ""),
-        "stars": int(item.get("stargazers_count") or 0),
-        "owner": str(owner.get("login") or ""),
-        "createdAt": str(item.get("created_at") or ""),
-        "updatedAt": str(item.get("updated_at") or ""),
-        "pushedAt": str(item.get("pushed_at") or ""),
-        "defaultBranch": str(item.get("default_branch") or ""),
-    }
+    return with_visibility_metadata(
+        {
+            "kind": "repo",
+            "fullName": str(item.get("full_name") or ""),
+            "name": str(item.get("name") or ""),
+            "url": str(item.get("html_url") or ""),
+            "description": str(item.get("description") or "").strip(),
+            "language": str(item.get("language") or ""),
+            "stars": int(item.get("stargazers_count") or 0),
+            "owner": str(owner.get("login") or ""),
+            "createdAt": str(item.get("created_at") or ""),
+            "updatedAt": str(item.get("updated_at") or ""),
+            "pushedAt": str(item.get("pushed_at") or ""),
+            "defaultBranch": str(item.get("default_branch") or ""),
+            "visibility": str(item.get("visibility") or ""),
+        },
+        provider="github",
+    )
 
 
 def _issue_repository_name(item: dict[str, object]) -> str:
@@ -704,19 +723,22 @@ def _normalize_issue_search_item(item: dict[str, object]) -> dict[str, object]:
                 if name:
                     label_names.append(name)
     is_pr = isinstance(item.get("pull_request"), dict)
-    return {
-        "kind": "pr" if is_pr else "issue",
-        "title": str(item.get("title") or ""),
-        "number": item.get("number"),
-        "url": str(item.get("html_url") or ""),
-        "state": str(item.get("state") or ""),
-        "author": str(user.get("login") or ""),
-        "repository": _issue_repository_name(item),
-        "createdAt": str(item.get("created_at") or ""),
-        "updatedAt": str(item.get("updated_at") or ""),
-        "body": str(item.get("body") or "").strip(),
-        "labels": label_names,
-    }
+    return with_visibility_metadata(
+        {
+            "kind": "pr" if is_pr else "issue",
+            "title": str(item.get("title") or ""),
+            "number": item.get("number"),
+            "url": str(item.get("html_url") or ""),
+            "state": str(item.get("state") or ""),
+            "author": str(user.get("login") or ""),
+            "repository": _issue_repository_name(item),
+            "createdAt": str(item.get("created_at") or ""),
+            "updatedAt": str(item.get("updated_at") or ""),
+            "body": str(item.get("body") or "").strip(),
+            "labels": label_names,
+        },
+        provider="github",
+    )
 
 
 def _normalize_code_search_item(item: dict[str, object]) -> dict[str, object]:
@@ -732,15 +754,19 @@ def _normalize_code_search_item(item: dict[str, object]) -> dict[str, object]:
             fragment = str(entry.get("fragment") or "").strip()
             if fragment:
                 fragments.append(fragment)
-    return {
-        "kind": "code",
-        "repository": str(repository.get("nameWithOwner") or ""),
-        "repositoryUrl": str(repository.get("url") or ""),
-        "path": str(item.get("path") or ""),
-        "sha": str(item.get("sha") or ""),
-        "url": str(item.get("url") or ""),
-        "textMatches": fragments,
-    }
+    return with_visibility_metadata(
+        {
+            "kind": "code",
+            "repository": str(repository.get("nameWithOwner") or ""),
+            "repositoryUrl": str(repository.get("url") or ""),
+            "path": str(item.get("path") or ""),
+            "sha": str(item.get("sha") or ""),
+            "url": str(item.get("url") or ""),
+            "textMatches": fragments,
+            "repositoryVisibility": str(repository.get("visibility") or ""),
+        },
+        provider="github",
+    )
 
 
 def _code_search_item_owner(item: dict[str, object]) -> str:
@@ -946,22 +972,26 @@ def search_repositories_payload(
         search_plan = "global-excluding-owned"
     else:
         search_plan = "owned-only"
-    return {
-        "surface": "github",
-        "type": "repo",
-        "query": query,
-        "effectiveQuery": effective_query,
-        "scopeRepo": repo,
-        "searchPlan": search_plan,
-        "accessibleOwners": sorted(accessible_owners),
-        "scopedResultCount": len(scoped_items[:limit]),
-        "globalResultCount": len(global_items[:limit]),
-        "scopedTotalCount": scoped_total,
-        "globalTotalCount": global_total,
-        "totalCount": scoped_total if not (repo or global_search) else global_total,
-        "resultCount": len(results),
-        "results": results,
-    }
+    return with_visibility_metadata(
+        {
+            "surface": "github",
+            "type": "repo",
+            "query": query,
+            "effectiveQuery": effective_query,
+            "scopeRepo": repo,
+            "searchPlan": search_plan,
+            "accessibleOwners": sorted(accessible_owners),
+            "scopedResultCount": len(scoped_items[:limit]),
+            "globalResultCount": len(global_items[:limit]),
+            "scopedTotalCount": scoped_total,
+            "globalTotalCount": global_total,
+            "totalCount": scoped_total if not (repo or global_search) else global_total,
+            "resultCount": len(results),
+            "results": results,
+        },
+        provider="github",
+        subcommand="search",
+    )
 
 
 def search_issueish_payload(
@@ -1018,22 +1048,26 @@ def search_issueish_payload(
         search_plan = "global-excluding-owned"
     else:
         search_plan = "owned-only"
-    return {
-        "surface": "github",
-        "type": search_type,
-        "query": query,
-        "effectiveQuery": effective_query,
-        "scopeRepo": repo,
-        "searchPlan": search_plan,
-        "accessibleOwners": sorted(accessible_owners),
-        "scopedResultCount": len(scoped_items[:limit]),
-        "globalResultCount": len(global_items[:limit]),
-        "scopedTotalCount": scoped_total,
-        "globalTotalCount": global_total,
-        "totalCount": scoped_total if not (repo or global_search) else global_total,
-        "resultCount": len(results),
-        "results": results,
-    }
+    return with_visibility_metadata(
+        {
+            "surface": "github",
+            "type": search_type,
+            "query": query,
+            "effectiveQuery": effective_query,
+            "scopeRepo": repo,
+            "searchPlan": search_plan,
+            "accessibleOwners": sorted(accessible_owners),
+            "scopedResultCount": len(scoped_items[:limit]),
+            "globalResultCount": len(global_items[:limit]),
+            "scopedTotalCount": scoped_total,
+            "globalTotalCount": global_total,
+            "totalCount": scoped_total if not (repo or global_search) else global_total,
+            "resultCount": len(results),
+            "results": results,
+        },
+        provider="github",
+        subcommand="search",
+    )
 
 
 def _code_search_cli_args(
@@ -1167,25 +1201,30 @@ def search_code_payload(
         search_plan = "global-excluding-owned"
     else:
         search_plan = "owned-only"
-    return {
-        "surface": "github",
-        "type": "code",
-        "query": query,
-        "scopeRepo": repo,
-        "filename": filename,
-        "extension": extension,
-        "language": language,
-        "match": match,
-        "searchPlan": search_plan,
-        "accessibleOwners": sorted(accessible_owners),
-        "scopedResultCount": len(scoped_items[:limit]),
-        "globalResultCount": len(global_items[:limit]),
-        "resultCount": len(results),
-        "results": results,
-    }
+    return with_visibility_metadata(
+        {
+            "surface": "github",
+            "type": "code",
+            "query": query,
+            "scopeRepo": repo,
+            "filename": filename,
+            "extension": extension,
+            "language": language,
+            "match": match,
+            "searchPlan": search_plan,
+            "accessibleOwners": sorted(accessible_owners),
+            "scopedResultCount": len(scoped_items[:limit]),
+            "globalResultCount": len(global_items[:limit]),
+            "resultCount": len(results),
+            "results": results,
+        },
+        provider="github",
+        subcommand="search",
+    )
 
 
 def markdown_search(payload: dict[str, object], *, include_details: bool) -> str:
+    payload = _render_visibility_payload(payload)
     search_type = str(payload.get("type") or "repo")
     results = payload.get("results")
     if not isinstance(results, list) or not results:
@@ -1226,6 +1265,7 @@ def markdown_search(payload: dict[str, object], *, include_details: bool) -> str
         lines.append(f"- _Language_: `{language}`")
     if match:
         lines.append(f"- _Match_: `{match}`")
+    lines.extend(render_visibility_metadata_lines(payload))
     lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
     lines.append("")
     if search_type == "repo":
@@ -1251,6 +1291,11 @@ def markdown_search(payload: dict[str, object], *, include_details: bool) -> str
                 details.append(f"updated `{updated}`")
             if pushed:
                 details.append(f"pushed `{pushed}`")
+            visibility = str(item.get("visibility_level") or "").strip()
+            boundary = str(item.get("visibility_boundary") or "").strip()
+            confidence = str(item.get("visibility_confidence") or "").strip()
+            if visibility and boundary and confidence:
+                details.append(f"visibility `{visibility}` ({boundary}, {confidence})")
             if details:
                 line += " - " + ", ".join(details)
             lines.append(line)
@@ -2096,6 +2141,7 @@ def main(argv: list[str]) -> int:
             )
         except RuntimeError as exc:
             return die(str(exc), code=1)
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
         if parsed.output in {"summary", "markdown"}:
             emit_markdown(
                 markdown_issue_or_pr(
@@ -2127,6 +2173,7 @@ def main(argv: list[str]) -> int:
             )
         except RuntimeError as exc:
             return die(str(exc), code=1)
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
         if parsed.output == "markdown":
             emit_markdown(
                 markdown_issue_or_pr(payload, "issue", include_body=True)
@@ -2148,6 +2195,7 @@ def main(argv: list[str]) -> int:
             payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/commits/{sha}"])
         except RuntimeError as exc:
             return die(str(exc), code=1)
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
         if parsed.output in {"summary", "markdown"}:
             emit_markdown(
                 markdown_commit(
@@ -2225,6 +2273,7 @@ def main(argv: list[str]) -> int:
             payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/releases/tags/{tag}"])
         except RuntimeError as exc:
             return die(str(exc), code=1)
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
         if parsed.output in {"summary", "markdown"}:
             emit_markdown(markdown_release(payload, owner=owner, repo=repo))
             return 0
@@ -2266,6 +2315,7 @@ def main(argv: list[str]) -> int:
             )
         except RuntimeError as exc:
             return die(str(exc), code=1)
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
         if parsed.output == "summary":
             emit_markdown(markdown_repo(payload))
             return 0

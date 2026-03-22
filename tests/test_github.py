@@ -552,6 +552,7 @@ def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
                         "name": "signal",
                         "html_url": "https://github.com/acme/signal",
                         "owner": {"login": "acme"},
+                        "visibility": "internal",
                     }
                 ],
             }
@@ -569,6 +570,8 @@ def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
 
     assert payload["searchPlan"] == "owned-only"
     assert payload["results"][0]["fullName"] == "acme/signal"
+    assert payload["results"][0]["visibility_level"] == "internal"
+    assert payload["results"][0]["visibility_boundary"] == "same_company"
     assert payload["scopedResultCount"] == 1
     assert payload["globalResultCount"] == 0
 
@@ -678,6 +681,7 @@ def test_main_repo_markdown_falls_back_to_directory_listing(monkeypatch, capsys)
     assert github.main(["--output", "markdown", "https://github.com/acme/widgets"]) == 0
     output = capsys.readouterr().out
     assert "# widgets" in output
+    assert "- Visibility: restricted (same_company, high)" in output
     assert "https://github.com/acme/widgets/tree/main" in output
     assert "- **README:** [README.md](https://github.com/acme/widgets/blob/main/README.md)" in output
 
@@ -796,3 +800,4 @@ def test_markdown_repo_includes_source_times() -> None:
     assert "- **Created:** 2026-03-01T10:00:00Z" in rendered
     assert "- **Updated:** 2026-03-10T11:30:00Z" in rendered
     assert "- **Pushed:** 2026-03-11T09:15:00Z" in rendered
+    assert "- Visibility: restricted (same_company, high)" in rendered

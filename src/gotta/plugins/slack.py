@@ -24,7 +24,12 @@ from typing import Any
 
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.routing import query_route, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+    render_visibility_metadata_lines,
+    with_visibility_metadata,
+)
 from gotta.providers.slack import (
     default_workspace,
     ensure_live_search_auth,
@@ -1913,7 +1918,7 @@ def normalize_directory_channel_item(
         normalized["purpose"] = {"value": ""}
     if not isinstance(normalized.get("topic"), dict):
         normalized["topic"] = {"value": ""}
-    return normalized
+    return with_visibility_metadata(normalized, provider="slack")
 
 
 def latest_user_rows(conn: sqlite3.Connection, user_ids: set[str]) -> dict[str, dict[str, Any]]:
@@ -2056,7 +2061,8 @@ def channel_type(channel_data: dict[str, Any], channel_id: str) -> str:
 
 def normalize_channel(row: sqlite3.Row | None) -> dict[str, Any]:
     if row is None:
-        return {
+        return with_visibility_metadata(
+            {
             "id": "",
             "name": "",
             "type": "unknown",
@@ -2068,7 +2074,9 @@ def normalize_channel(row: sqlite3.Row | None) -> dict[str, Any]:
             "is_private": False,
             "is_shared": False,
             "is_ext_shared": False,
-        }
+            },
+            provider="slack",
+        )
     data = parse_json_blob(row["data"])
     normalized = {
         "id": str(row["id"]),
@@ -2083,7 +2091,7 @@ def normalize_channel(row: sqlite3.Row | None) -> dict[str, Any]:
     normalized["is_private"] = bool(normalized["isPrivate"])
     normalized["is_shared"] = bool(normalized["isShared"])
     normalized["is_ext_shared"] = bool(normalized["isExtShared"])
-    return normalized
+    return with_visibility_metadata(normalized, provider="slack")
 
 
 def merge_channels(
@@ -2240,24 +2248,33 @@ def build_threads(
             }
         )
         threads.append(
-            {
-                "threadTs": thread_ts,
-                "rootTs": ordered[0]["ts"],
-                "latestTs": ordered[-1]["ts"],
-                "permalink": canonical_thread_url(
+            with_visibility_metadata(
+                {
+                    "threadTs": thread_ts,
+                    "rootTs": ordered[0]["ts"],
+                    "latestTs": ordered[-1]["ts"],
+                    "permalink": canonical_thread_url(
+                        workspace,
+                        channel_id,
+                        thread_ts,
+                    ),
+                    "title": title_from_messages(
+                        ordered,
+                        str(channel.get("name") or ""),
+                    ),
+                    "messageCount": len(ordered),
+                    "participantCount": len(participants),
+                    "participants": participants,
+                    "messages": ordered,
+                    "channel": channel,
+                },
+                provider="slack",
+                locator=canonical_thread_url(
                     workspace,
                     channel_id,
                     thread_ts,
                 ),
-                "title": title_from_messages(
-                    ordered,
-                    str(channel.get("name") or ""),
-                ),
-                "messageCount": len(ordered),
-                "participantCount": len(participants),
-                "participants": participants,
-                "messages": ordered,
-            }
+            )
         )
     threads.sort(
         key=lambda item: int(str(item["latestTs"]).replace(".", "")),
@@ -2339,21 +2356,25 @@ def build_envelope(
         messages=messages,
     )
     title = title_from_messages(messages, str(channel.get("name") or ""))
-    envelope = {
-        "workspace": ref.workspace,
-        "ref": {
-            "kind": ref.kind,
-            "channelId": ref.channel_id,
-            "threadTs": ref.thread_ts,
-            "url": ref.url or canonical_thread_url(ref.workspace, ref.channel_id, ref.thread_ts),
+    envelope = with_visibility_metadata(
+        {
+            "workspace": ref.workspace,
+            "ref": {
+                "kind": ref.kind,
+                "channelId": ref.channel_id,
+                "threadTs": ref.thread_ts,
+                "url": ref.url or canonical_thread_url(ref.workspace, ref.channel_id, ref.thread_ts),
+            },
+            "channel": channel,
+            "title": title,
+            "messageCount": len(messages),
+            "threadCount": len(threads),
+            "threads": threads,
+            "messages": messages,
         },
-        "channel": channel,
-        "title": title,
-        "messageCount": len(messages),
-        "threadCount": len(threads),
-        "threads": threads,
-        "messages": messages,
-    }
+        provider="slack",
+        locator=ref.url or canonical_thread_url(ref.workspace, ref.channel_id, ref.thread_ts or ""),
+    )
     if coverage is not None:
         envelope["window"] = coverage
     return envelope
@@ -2375,6 +2396,13 @@ def envelope_meta(envelope: dict[str, Any]) -> dict[str, Any]:
         "retrieval": envelope_retrieval(envelope),
         "fidelity": envelope_fidelity(envelope),
     }
+    meta.update(
+        {
+            key: value
+            for key, value in envelope.items()
+            if key.startswith("visibility_")
+        }
+    )
     if "window" in envelope:
         meta["window"] = envelope["window"]
     return meta
@@ -2454,6 +2482,7 @@ def render_markdown(envelope: dict[str, Any]) -> str:
             f"- _Retrieval_: `{retrieval['state']}`",
             f"- _Fidelity_: `{fidelity['mode']}` ({fidelity['detail']})",
         ]
+        lines.extend(render_visibility_metadata_lines(envelope))
         if created:
             lines.append(f"- Created: {created}")
         if updated:
@@ -2481,6 +2510,7 @@ def render_markdown(envelope: dict[str, Any]) -> str:
                     "",
                 ]
             )
+            lines[-1:-1] = render_visibility_metadata_lines(thread)
             for message in thread["messages"]:
                 stamp = format_local_ts(message["ts"])
                 rendered = single_line_text(message["textResolved"])
@@ -2498,6 +2528,7 @@ def render_markdown(envelope: dict[str, Any]) -> str:
         f"- _Fidelity_: `{fidelity['mode']}` ({fidelity['detail']})",
         "",
     ]
+    lines[-1:-1] = render_visibility_metadata_lines(envelope)
     if created:
         lines.insert(4, f"- Created: {created}")
     if updated:
@@ -2804,19 +2835,24 @@ def query_search(
             thread_ts=thread_ts,
         )
         results.append(
-            {
-                "channelId": result_channel_id,
-                "channelName": result_channel.get("name"),
-                "ts": str(row["ts"]),
-                "threadTs": thread_ts,
-                "threadPermalink": canonical_thread_url(workspace, result_channel_id, thread_ts),
-                "permalink": permalink,
-                "followCommand": search_follow_command(permalink),
-                "text": text,
-                "textResolved": resolve_mentions(text, users, channels),
-                "userId": user_id,
-                "userDisplayName": message_display_name(data, users.get(user_id), user_id),
-            }
+            with_visibility_metadata(
+                {
+                    "channelId": result_channel_id,
+                    "channelName": result_channel.get("name"),
+                    "ts": str(row["ts"]),
+                    "threadTs": thread_ts,
+                    "threadPermalink": canonical_thread_url(workspace, result_channel_id, thread_ts),
+                    "permalink": permalink,
+                    "followCommand": search_follow_command(permalink),
+                    "text": text,
+                    "textResolved": resolve_mentions(text, users, channels),
+                    "userId": user_id,
+                    "userDisplayName": message_display_name(data, users.get(user_id), user_id),
+                    "channel": result_channel,
+                },
+                provider="slack",
+                locator=permalink,
+            )
         )
     threads: dict[str, dict[str, Any]] = {}
     for item in results:
@@ -2827,17 +2863,22 @@ def query_search(
             if len(title_seed) > 96:
                 title_seed = title_seed[:93] + "..."
             thread_permalink = item["threadPermalink"]
-            threads[thread_key] = {
-                "threadTs": item["threadTs"],
-                "channelId": item["channelId"],
-                "channelName": item["channelName"],
-                "permalink": thread_permalink,
-                "followCommand": search_follow_command(thread_permalink),
-                "latestTs": item["ts"],
-                "matchCount": 1,
-                "title": title_seed or f"Thread in #{item['channelName'] or item['channelId']}",
-                "results": [item],
-            }
+            threads[thread_key] = with_visibility_metadata(
+                {
+                    "threadTs": item["threadTs"],
+                    "channelId": item["channelId"],
+                    "channelName": item["channelName"],
+                    "permalink": thread_permalink,
+                    "followCommand": search_follow_command(thread_permalink),
+                    "latestTs": item["ts"],
+                    "matchCount": 1,
+                    "title": title_seed or f"Thread in #{item['channelName'] or item['channelId']}",
+                    "results": [item],
+                    "channel": item.get("channel") or {},
+                },
+                provider="slack",
+                locator=thread_permalink,
+            )
             continue
         thread["matchCount"] += 1
         thread["results"].append(item)
@@ -2859,22 +2900,25 @@ def query_search(
             str(item.get("id") or ""),
         ),
     )
-    payload = {
-        "workspace": workspace,
-        "query": query,
-        "terms": spec.terms,
-        "modifiers": spec.modifiers,
-        "matchMode": spec.match_mode,
-        "scope": "channel" if channel_id else "workspace",
-        "source": source,
-        "channel": search_channel,
-        "channelCount": len(result_channel_ids),
-        "channels": matched_channels,
-        "resultCount": len(results),
-        "threadCount": len(thread_results),
-        "threads": thread_results,
-        "results": results,
-    }
+    payload = with_visibility_metadata(
+        {
+            "workspace": workspace,
+            "query": query,
+            "terms": spec.terms,
+            "modifiers": spec.modifiers,
+            "matchMode": spec.match_mode,
+            "scope": "channel" if channel_id else "workspace",
+            "source": source,
+            "channel": search_channel,
+            "channelCount": len(result_channel_ids),
+            "channels": matched_channels,
+            "resultCount": len(results),
+            "threadCount": len(thread_results),
+            "threads": thread_results,
+            "results": results,
+        },
+        provider="slack",
+    )
     if applied_modifiers:
         payload["appliedModifiers"] = applied_modifiers
     if source_detail:
@@ -2925,7 +2969,7 @@ def _normalize_live_channel(channel: dict[str, Any]) -> dict[str, Any]:
     normalized["is_shared"] = normalized["isShared"]
     normalized["is_ext_shared"] = normalized["isExtShared"]
     normalized["is_archived"] = normalized["isArchived"]
-    return normalized
+    return with_visibility_metadata(normalized, provider="slack")
 
 
 def _live_search_queries(spec: SearchSpec) -> list[str]:
@@ -2962,19 +3006,22 @@ def _live_search_channel(
     channels = ensure_channel_directory_entries(workspace, {channel_id})
     if channel_id in channels:
         return channels[channel_id]
-    return {
-        "id": channel_id,
-        "name": channel_id,
-        "type": "unknown",
-        "isPrivate": False,
-        "isArchived": False,
-        "isShared": False,
-        "isExtShared": False,
-        "is_private": False,
-        "is_archived": False,
-        "is_shared": False,
-        "is_ext_shared": False,
-    }
+    return with_visibility_metadata(
+        {
+            "id": channel_id,
+            "name": channel_id,
+            "type": "unknown",
+            "isPrivate": False,
+            "isArchived": False,
+            "isShared": False,
+            "isExtShared": False,
+            "is_private": False,
+            "is_archived": False,
+            "is_shared": False,
+            "is_ext_shared": False,
+        },
+        provider="slack",
+    )
 
 
 def _normalize_live_search_match(
@@ -3004,20 +3051,24 @@ def _normalize_live_search_match(
         thread_permalink = canonical_thread_url(workspace, channel_id, thread_ts)
     text = str(raw.get("text") or "").strip()
     username = str(raw.get("username") or raw.get("user") or "").strip() or "unknown"
-    return {
-        "channelId": channel_id,
-        "channelName": channel.get("name"),
-        "ts": ts,
-        "threadTs": thread_ts,
-        "threadPermalink": thread_permalink,
-        "permalink": permalink,
-        "followCommand": search_follow_command(thread_permalink or permalink),
-        "text": text,
-        "textResolved": text,
-        "userId": str(raw.get("user") or "").strip(),
-        "userDisplayName": username,
-        "channel": channel,
-    }
+    return with_visibility_metadata(
+        {
+            "channelId": channel_id,
+            "channelName": channel.get("name"),
+            "ts": ts,
+            "threadTs": thread_ts,
+            "threadPermalink": thread_permalink,
+            "permalink": permalink,
+            "followCommand": search_follow_command(thread_permalink or permalink),
+            "text": text,
+            "textResolved": text,
+            "userId": str(raw.get("user") or "").strip(),
+            "userDisplayName": username,
+            "channel": channel,
+        },
+        provider="slack",
+        locator=thread_permalink or permalink,
+    )
 
 
 def _live_search_messages(
@@ -3084,17 +3135,22 @@ def search_live_payload(
         if len(summary) > 96:
             summary = summary[:93] + "..."
         threads.append(
-            {
-                "threadTs": item["threadTs"],
-                "channelId": item["channelId"],
-                "channelName": item["channelName"],
-                "permalink": item["threadPermalink"],
-                "followCommand": search_follow_command(item["threadPermalink"]),
-                "latestTs": item["ts"],
-                "matchCount": 1,
-                "title": summary or f"Thread in #{item['channelName'] or item['channelId']}",
-                "results": [item],
-            }
+            with_visibility_metadata(
+                {
+                    "threadTs": item["threadTs"],
+                    "channelId": item["channelId"],
+                    "channelName": item["channelName"],
+                    "permalink": item["threadPermalink"],
+                    "followCommand": search_follow_command(item["threadPermalink"]),
+                    "latestTs": item["ts"],
+                    "matchCount": 1,
+                    "title": summary or f"Thread in #{item['channelName'] or item['channelId']}",
+                    "results": [item],
+                    "channel": item.get("channel") or {},
+                },
+                provider="slack",
+                locator=str(item.get("threadPermalink") or ""),
+            )
         )
     matched_channels = sorted(
         {
@@ -3107,23 +3163,26 @@ def search_live_payload(
         key=lambda entry: entry[0],
     )
     channel_records = [json.loads(channel_json) for _, channel_json in matched_channels]
-    payload = {
-        "workspace": workspace,
-        "query": query,
-        "terms": spec.terms,
-        "modifiers": spec.modifiers,
-        "matchMode": spec.match_mode,
-        "scope": "channel" if channel_id else "workspace",
-        "source": "live-search",
-        "sourceDetail": "native Slack search API",
-        "channel": _live_search_channel(workspace, channel_id),
-        "channelCount": len(channel_records),
-        "channels": channel_records,
-        "resultCount": len(results),
-        "threadCount": len(threads),
-        "threads": threads,
-        "results": results,
-    }
+    payload = with_visibility_metadata(
+        {
+            "workspace": workspace,
+            "query": query,
+            "terms": spec.terms,
+            "modifiers": spec.modifiers,
+            "matchMode": spec.match_mode,
+            "scope": "channel" if channel_id else "workspace",
+            "source": "live-search",
+            "sourceDetail": "native Slack search API",
+            "channel": _live_search_channel(workspace, channel_id),
+            "channelCount": len(channel_records),
+            "channels": channel_records,
+            "resultCount": len(results),
+            "threadCount": len(threads),
+            "threads": threads,
+            "results": results,
+        },
+        provider="slack",
+    )
     if spec.modifiers:
         payload["appliedModifiers"] = list(spec.modifiers)
     if results:
@@ -3155,6 +3214,7 @@ def render_search_markdown(result: dict[str, Any]) -> str:
         lines.insert(5, f"- _Modifiers_: `{', '.join(result['modifiers'])}`")
     if result.get("appliedModifiers"):
         lines.insert(6, f"- _Applied Filters_: `{', '.join(result['appliedModifiers'])}`")
+    lines.extend(render_visibility_metadata_lines(result))
     lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(result)))
     lines.append("")
     channel = result.get("channel")
@@ -3182,6 +3242,7 @@ def render_search_markdown(result: dict[str, Any]) -> str:
                 "",
             ]
         )
+        lines[-1:-1] = render_visibility_metadata_lines(thread)
         for item in thread["results"]:
             lines.append(
                 f"- _{format_local_ts(item['ts'])}_ **{item['userDisplayName']}**: "

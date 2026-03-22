@@ -53,6 +53,11 @@ from gotta.leads import (
     snapshot_locator,
 )
 from gotta.notes import actor_notes_ready
+from gotta.source import (
+    best_visibility_metadata,
+    classify_visibility_metadata,
+    normalize_visibility_metadata,
+)
 
 TIMELINE_MODE_ALIASES = {
     "acquisition": "acquired",
@@ -308,22 +313,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return _print_dirs(args, payload)
 
 
-def _manifest_entries(dirs) -> list[dict[str, str]]:
+def _manifest_entries(dirs) -> list[dict[str, object]]:
     manifest_path = dirs.content_dir / "manifest.jsonl"
     if not manifest_path.exists():
         return []
-    entries: list[dict[str, str]] = []
+    entries: list[dict[str, object]] = []
     for raw_line in manifest_path.read_text(encoding="utf-8").splitlines():
         if not raw_line.strip():
             continue
         payload = json.loads(raw_line)
         if isinstance(payload, dict):
-            entries.append({key: str(value) for key, value in payload.items()})
+            entries.append(payload)
     return entries
 
 
 def _filter_manifest_entries(
-    entries: list[dict[str, str]],
+    entries: list[dict[str, object]],
     *,
     plugin: str = "",
     actor: str = "",
@@ -332,7 +337,7 @@ def _filter_manifest_entries(
     plugin_filter = plugin.strip()
     actor_filter = actor.strip()
     locator_filter = locator.strip()
-    filtered: list[dict[str, str]] = []
+    filtered: list[dict[str, object]] = []
     for entry in entries:
         if plugin_filter and entry.get("plugin", "") != plugin_filter:
             continue
@@ -347,7 +352,7 @@ def _filter_manifest_entries(
     return filtered
 
 
-def _manifest_entry_sort_key(entry: dict[str, str]) -> tuple[str, str, str]:
+def _manifest_entry_sort_key(entry: dict[str, object]) -> tuple[str, str, str]:
     return (
         entry.get("fetched_at", ""),
         entry.get("canonical_locator", "") or entry.get("locator", ""),
@@ -364,6 +369,16 @@ def _artifact_human_locator(preferred_name: str, checksum: str) -> str:
     if not checksum.strip():
         return ""
     return artifact_locator(preferred_name or "data", checksum)
+
+
+def _visibility_summary(payload: dict[str, object] | dict[str, str]) -> str:
+    visibility = normalize_visibility_metadata(payload)
+    if not visibility:
+        return ""
+    return (
+        f"{visibility['visibility_level']} "
+        f"({visibility['visibility_boundary']}, {visibility['visibility_confidence']})"
+    )
 
 
 def _manifest_payload(
@@ -599,6 +614,12 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "follow_command": str(raw.get("follow_command") or "").strip(),
                 "detail": str(raw.get("detail") or "").strip(),
                 "event_kind": "local",
+                **classify_visibility_metadata(
+                    {},
+                    provider="gotta",
+                    plugin=str(raw.get("plugin") or "session").strip() or "session",
+                    locator=locator,
+                ),
             }
         )
     candidates: list[tuple[str, Path, str, str]] = [
@@ -637,6 +658,12 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "follow_command": follow_command,
                 "detail": "local surface snapshot",
                 "event_kind": "local",
+                **classify_visibility_metadata(
+                    {},
+                    provider="gotta",
+                    plugin=plugin,
+                    locator=locator,
+                ),
             }
         )
     return events
@@ -683,6 +710,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
                     "fetched_at": fetched_at,
                     "follow_command": _follow_command(locator, checksum=snapshot.digest),
                     "event_kind": "source",
+                    **normalize_visibility_metadata(snapshot.metadata),
                 }
             )
         if normalized_mode == "best-effort":
@@ -730,6 +758,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
                 checksum=str(entry.get("checksum", "")).strip(),
             ),
             "event_kind": "source",
+            **normalize_visibility_metadata(entry),
         }
         for entry in _manifest_entries(dirs)
     ]
@@ -798,6 +827,7 @@ def _graph_payload(dirs) -> dict[str, object]:
     edge_counts: dict[tuple[str, str, str], int] = {}
     content_names: dict[str, str] = {}
     source_variants: dict[str, set[tuple[str, str]]] = {}
+    source_visibility: dict[str, dict[str, object]] = {}
     for entry in entries:
         source = entry.get("canonical_locator") or entry.get("locator") or "unknown"
         checksum = entry.get("checksum") or ""
@@ -809,6 +839,10 @@ def _graph_payload(dirs) -> dict[str, object]:
         edge_key = (source, checksum, plugin)
         edge_counts[edge_key] = edge_counts.get(edge_key, 0) + 1
         content_names.setdefault(checksum, entry.get("preferred_name") or "data")
+        source_visibility[source] = best_visibility_metadata(
+            source_visibility.get(source, {}),
+            entry,
+        )
         snapshot = snapshot_by_digest.get(str(checksum))
         if snapshot is not None:
             source_variants.setdefault(source, set()).add(_render_variant(snapshot))
@@ -824,6 +858,7 @@ def _graph_payload(dirs) -> dict[str, object]:
                 _render_variant_label(variant)
                 for variant in sorted(source_variants.get(locator, set()))
             ],
+            **source_visibility.get(locator, {}),
         }
         for locator, checksums in sorted(source_to_content.items())
     ]
@@ -836,6 +871,11 @@ def _graph_payload(dirs) -> dict[str, object]:
             "followCommand": f"gotta read {sh_quote(_artifact_human_locator(content_names.get(checksum, 'data'), checksum))}",
             "sourceCount": len(locators),
             "collision": len(locators) > 1,
+            **(
+                normalize_visibility_metadata(snapshot_by_digest.get(checksum).metadata)
+                if snapshot_by_digest.get(checksum) is not None
+                else {}
+            ),
         }
         for checksum, locators in sorted(content_to_sources.items())
     ]
@@ -1090,6 +1130,7 @@ def _analysis_payload(dirs) -> dict[str, object]:
                 "actors": set(),
                 "entries": 0,
                 "variants": set(),
+                "visibility": {},
             },
         )
         source_state["content"].add(checksum)
@@ -1100,6 +1141,10 @@ def _analysis_payload(dirs) -> dict[str, object]:
         source_state["plugins"].add(plugin)
         source_state["actors"].add(actor)
         source_state["entries"] = int(source_state["entries"]) + 1
+        source_state["visibility"] = best_visibility_metadata(
+            source_state.get("visibility", {}),
+            entry,
+        )
         snapshot = snapshot_by_digest.get(str(checksum))
         if snapshot is not None:
             source_state["variants"].add(_render_variant(snapshot))
@@ -1139,6 +1184,7 @@ def _analysis_payload(dirs) -> dict[str, object]:
             "providers": sorted(content_details.get(snapshot.digest, {}).get("providers", set())),
             "actors": sorted(content_details.get(snapshot.digest, {}).get("actors", set())),
             "resourceHints": sorted(content_details.get(snapshot.digest, {}).get("resource_hints", set())),
+            **normalize_visibility_metadata(snapshot.metadata),
         }
         for snapshot in snapshots
     ]
@@ -1158,6 +1204,7 @@ def _analysis_payload(dirs) -> dict[str, object]:
                 _render_variant_label(variant)
                 for variant in sorted(state["variants"])
             ],
+            **best_visibility_metadata(state.get("visibility", {})),
         }
         for locator, state in sorted(source_map.items())
     ]
@@ -1345,6 +1392,7 @@ def _leads_payload(
                 "lastFetchedAt": snapshot_last_fetched_at(snapshot),
                 "leadCount": len(edges),
                 "leads": edges[: max(limit, 0)],
+                **normalize_visibility_metadata(snapshot.metadata),
             }
         )
     materialized_count = sum(1 for source in lead_sources if bool(source["materialized"]))
@@ -1742,6 +1790,9 @@ def cmd_leads(args: argparse.Namespace) -> int:
                 f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
                 f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
             )
+            visibility = _visibility_summary(lead)
+            if visibility:
+                print(f"    visibility: {visibility}")
             print(f"    follow: `{lead['followCommand']}`")
             stored_targets = _stored_target_locators(lead)
             if stored_targets:
@@ -1760,6 +1811,9 @@ def cmd_leads(args: argparse.Namespace) -> int:
         for artifact in payload["artifacts"]:
             print(f"- {artifact['preferredName']} ({str(artifact['checksum'])[:12]})")
             print(f"  source: `{artifact['sourceLocator'] or 'unknown'}`")
+            artifact_visibility = _visibility_summary(artifact)
+            if artifact_visibility:
+                print(f"  visibility: {artifact_visibility}")
             print(
                 f"  stored: `{artifact['artifactLocator']}`, `{artifact['contentLocator']}`"
             )
@@ -1773,6 +1827,9 @@ def cmd_leads(args: argparse.Namespace) -> int:
                     f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=False))}] "
                     f"{lead['targetLocator']} ({lead['provider']}, {lead['relation']})"
                 )
+                visibility = _visibility_summary(lead)
+                if visibility:
+                    print(f"    visibility: {visibility}")
                 print(f"    follow: `{lead['followCommand']}`")
                 stored_targets = _stored_target_locators(lead)
                 if stored_targets:
@@ -1821,6 +1878,9 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         print(
             f"- {fetched_at} [{plugin}/{actor}] {locator} -> {preferred_name} ({short})"
         )
+        visibility = _visibility_summary(entry)
+        if visibility:
+            print(f"  visibility: {visibility}")
         if entry.get("artifact_locator") or entry.get("content_locator"):
             print(
                 "  "
@@ -1861,6 +1921,9 @@ def cmd_timeline(args: argparse.Namespace) -> int:
                 f"{event['locator']} -> {event['preferred_name']} ({checksum}) "
                 f"(from {event.get('source_time_field') or 'unknown-field'})"
             )
+            visibility = _visibility_summary(event)
+            if visibility:
+                print(f"  visibility: {visibility}")
             if event.get("artifact_locator") or event.get("content_locator"):
                 print(
                     "  "
@@ -1881,6 +1944,9 @@ def cmd_timeline(args: argparse.Namespace) -> int:
                 f"{event['locator']} -> {event['preferred_name']} ({checksum})"
                 f"{' (local)' if event.get('event_kind') == 'local' else ''}"
             )
+            visibility = _visibility_summary(event)
+            if visibility:
+                print(f"  visibility: {visibility}")
             if event.get("artifact_locator") or event.get("content_locator"):
                 print(
                     "  "

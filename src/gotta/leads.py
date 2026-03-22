@@ -19,6 +19,10 @@ from gotta.content import (
     write_text_atomic,
 )
 from gotta.providers import atlassian as atl
+from gotta.source import (
+    best_visibility_metadata,
+    classify_visibility_metadata,
+)
 
 URL_RE = re.compile(r"https?://[^\s<>\"]+")
 JIRA_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
@@ -870,7 +874,7 @@ def extract_explicit_leads(text: str) -> list[LeadMention]:
 
 
 def materialized_source_index(
-    manifest_entries: list[dict[str, str]],
+    manifest_entries: list[dict[str, object]],
     snapshot_by_digest: dict[str, ContentSnapshot],
 ) -> dict[str, set[str]]:
     index: dict[str, set[str]] = {}
@@ -898,9 +902,23 @@ def materialized_target_locators(
     return artifact_locators, content_locators
 
 
+def materialized_target_visibility(
+    locator: str,
+    source_index: dict[str, set[str]],
+    snapshot_by_digest: dict[str, ContentSnapshot],
+) -> dict[str, object]:
+    return best_visibility_metadata(
+        *[
+            snapshot_by_digest[digest].metadata
+            for digest in sorted(source_index.get(locator, set()))
+            if digest in snapshot_by_digest
+        ]
+    )
+
+
 def build_lead_edge_records(
     snapshots: list[ContentSnapshot],
-    manifest_entries: list[dict[str, str]],
+    manifest_entries: list[dict[str, object]],
     *,
     classify_kind,
 ) -> list[dict[str, object]]:
@@ -956,6 +974,18 @@ def build_lead_edge_records(
                 source_index,
                 snapshot_by_digest,
             )
+            target_visibility = best_visibility_metadata(
+                classify_visibility_metadata(
+                    {},
+                    provider=str(state["provider"]),
+                    locator=str(state["targetLocator"]),
+                ),
+                materialized_target_visibility(
+                    str(state["targetLocator"]),
+                    source_index,
+                    snapshot_by_digest,
+                ),
+            )
             state["materialized"] = bool(artifact_locators or content_locators)
             state["targetArtifactLocators"] = artifact_locators
             state["targetContentLocators"] = content_locators
@@ -964,6 +994,7 @@ def build_lead_edge_records(
                 kind=str(state["kind"]),
             )
             state["searchSeed"] = str(state["kind"]).endswith("-search")
+            state.update(target_visibility)
             rendered.append(state)
     return sorted(
         rendered,
@@ -998,6 +1029,7 @@ def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[s
                 "searchOrigins": [],
                 "exampleRaw": "",
                 "contexts": [],
+                "visibility": {},
             },
         )
         state["firstParty"] = bool(state["firstParty"] or edge.get("firstParty"))
@@ -1039,6 +1071,10 @@ def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[s
             value = str(snippet).strip()
             if value and value not in state["contexts"] and len(state["contexts"]) < 3:
                 state["contexts"].append(value)
+        state["visibility"] = best_visibility_metadata(
+            state.get("visibility", {}),
+            edge,
+        )
     rendered: list[dict[str, object]] = []
     for locator, state in aggregated.items():
         relation_kinds = {str(value) for value in state["relationKinds"]}
@@ -1076,6 +1112,7 @@ def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[s
                 "bestSearchRank": int(search_origins[0].get("rank") or 0) if search_origins else 0,
                 "searchLikeSourceCount": search_like_source_count,
                 "searchOrigins": search_origins[:5],
+                **best_visibility_metadata(state.get("visibility", {})),
             }
         )
     return sorted(rendered, key=lead_source_best_first_sort_key)
@@ -1084,7 +1121,7 @@ def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[s
 def resolve_lead_snapshots(
     target: str,
     snapshots: list[ContentSnapshot],
-    manifest_entries: list[dict[str, str]],
+    manifest_entries: list[dict[str, object]],
 ) -> list[ContentSnapshot]:
     ordered = sorted(snapshots, key=snapshot_sort_key, reverse=True)
     requested = target.strip()

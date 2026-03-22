@@ -1473,6 +1473,10 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
             "plugin": "jira",
             "locator": "get ABC-1",
             "canonical_locator": "jira:ABC-1",
+            "visibility_level": "restricted",
+            "visibility_boundary": "same_company",
+            "visibility_confidence": "high",
+            "visibility_basis": ["provider=jira", "policy=test"],
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
@@ -1494,6 +1498,12 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
     analysis_mermaid = session._render_analysis_mermaid(analysis_payload)
 
     assert analysis_payload["leadSourceCount"] == 3
+    assert any(
+        source["locator"] == "jira:ABC-1"
+        and source["visibility_level"] == "restricted"
+        and source["visibility_boundary"] == "same_company"
+        for source in analysis_payload["sources"]
+    )
     assert analysis_payload["materializedLeadSourceCount"] == 1
     assert analysis_payload["unmaterializedLeadSourceCount"] == 2
     assert analysis_payload["leadEdgeCount"] == 3
@@ -1537,6 +1547,10 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
             "plugin": "jira",
             "locator": "get ABC-1",
             "canonical_locator": "jira:ABC-1",
+            "visibility_level": "restricted",
+            "visibility_boundary": "same_company",
+            "visibility_confidence": "high",
+            "visibility_basis": ["provider=jira", "policy=test"],
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
@@ -1564,6 +1578,8 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
     assert payload["artifactCount"] == 1
     assert payload["leadCount"] == 2
     assert payload["artifacts"][0]["artifactLocator"] == artifact
+    assert payload["artifacts"][0]["visibility_level"] == "restricted"
+    assert payload["artifacts"][0]["visibility_boundary"] == "same_company"
     assert any(
         lead["targetLocator"] == "jira:ABC-2" and lead["materialized"] is True
         for lead in payload["artifacts"][0]["leads"]
@@ -2018,6 +2034,10 @@ def test_session_manifest_has_native_summary_surface(
             "locator": "demo",
             "canonical_locator": "demo",
             "actor": "claude",
+            "visibility_level": "personal",
+            "visibility_boundary": "same_user",
+            "visibility_confidence": "high",
+            "visibility_basis": ["provider=gotta", "plugin=read"],
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
@@ -2033,6 +2053,8 @@ def test_session_manifest_has_native_summary_surface(
     assert payload["entries"][0]["artifact_locator"].startswith("artifact:demo.md@")
     assert payload["entries"][0]["content_follow_command"].startswith("gotta read 'content:")
     assert payload["entries"][0]["artifact_follow_command"].startswith("gotta read 'artifact:demo.md@")
+    assert payload["entries"][0]["visibility_level"] == "personal"
+    assert payload["entries"][0]["visibility_boundary"] == "same_user"
 
 
 def test_session_manifest_accepts_stdout_flag_for_uniformity(
@@ -2098,6 +2120,10 @@ def test_session_timeline_has_native_continuity_surface(
             "plugin": "jira",
             "locator": "PROJ-1",
             "canonical_locator": "jira:PROJ-1",
+            "visibility_level": "restricted",
+            "visibility_boundary": "same_company",
+            "visibility_confidence": "high",
+            "visibility_basis": ["provider=jira", "policy=test"],
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
@@ -2123,6 +2149,8 @@ def test_session_timeline_has_native_continuity_surface(
     assert payload["events"][0]["locator"] == "jira:PROJ-1"
     assert payload["events"][0]["content_locator"].startswith("content:")
     assert payload["events"][0]["artifact_locator"].startswith("artifact:first.md@")
+    assert payload["events"][0]["visibility_level"] == "restricted"
+    assert payload["events"][0]["visibility_boundary"] == "same_company"
     assert payload["events"][1]["actor"] == "claude"
 
 

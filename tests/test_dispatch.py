@@ -895,6 +895,82 @@ def test_materialize_invocation_extracts_json_source_times(
     assert metadata["source_updated_at"] == "2026-02-03T11:30:00Z"
 
 
+def test_materialize_invocation_persists_visibility_metadata(
+    tmp_path: Path,
+) -> None:
+    dirs = content.ResolvedDirs(
+        session_dir=tmp_path / "session-root",
+        content_dir=tmp_path / "session-root" / "content",
+    )
+    dirs.session_dir.mkdir(parents=True, exist_ok=True)
+    dirs.content_dir.mkdir(parents=True, exist_ok=True)
+
+    result = dispatch._materialize_invocation(
+        "github",
+        ["https://github.com/example/repo", "--output", "json"],
+        content.CommonOptions(),
+        json.dumps(
+            {
+                "name": "repo",
+                "url": "https://github.com/example/repo",
+                "visibility": "private",
+                "createdAt": "2026-02-01T10:00:00Z",
+            }
+        ).encode("utf-8"),
+        dirs=dirs,
+    )
+
+    assert result is not None
+    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    manifest = json.loads((dirs.content_dir / "manifest.jsonl").read_text(encoding="utf-8"))
+
+    assert metadata["visibility_level"] == "restricted"
+    assert metadata["visibility_boundary"] == "same_company"
+    assert metadata["visibility_confidence"] == "high"
+    assert metadata["visibility_basis"] == [
+        "provider=github",
+        "repo.visibility=private",
+    ]
+    assert manifest["visibility_level"] == "restricted"
+    assert manifest["visibility_boundary"] == "same_company"
+    assert manifest["visibility_confidence"] == "high"
+    assert manifest["visibility_basis"] == [
+        "provider=github",
+        "repo.visibility=private",
+    ]
+
+
+def test_materialize_invocation_extracts_visibility_from_markdown(
+    tmp_path: Path,
+) -> None:
+    dirs = content.ResolvedDirs(
+        session_dir=tmp_path / "session-root",
+        content_dir=tmp_path / "session-root" / "content",
+    )
+    dirs.session_dir.mkdir(parents=True, exist_ok=True)
+    dirs.content_dir.mkdir(parents=True, exist_ok=True)
+
+    result = dispatch._materialize_invocation(
+        "slack",
+        ["get", "https://example.slack.com/archives/C12345678/p1773085070240949", "--output", "markdown"],
+        content.CommonOptions(),
+        (
+            b"### Slack Thread: Example\n\n"
+            b"- _Channel_: `#ops`\n"
+            b"- _Source_: https://example.slack.com/archives/C12345678/p1773085070240949\n"
+            b"- Visibility: internal (same_company, high)\n"
+            b"- Created: 2026-03-09T19:37:50.240949Z\n"
+        ),
+        dirs=dirs,
+    )
+
+    assert result is not None
+    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    assert metadata["visibility_level"] == "internal"
+    assert metadata["visibility_boundary"] == "same_company"
+    assert metadata["visibility_confidence"] == "high"
+
+
 def test_materialize_invocation_derives_nested_search_source_times_from_json(
     tmp_path: Path,
 ) -> None:

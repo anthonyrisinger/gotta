@@ -1040,6 +1040,8 @@ def test_build_envelope_thread_uses_directory_channel_for_root_channel(
 
     assert envelope["channel"]["id"] == "C12345678"
     assert envelope["channel"]["name"] == "ops"
+    assert envelope["visibility_level"] == "internal"
+    assert envelope["visibility_boundary"] == "same_company"
 
 
 def test_query_search_reply_results_follow_root_thread_permalink() -> None:
@@ -1088,6 +1090,7 @@ def test_query_search_reply_results_follow_root_thread_permalink() -> None:
         "https://demo.slack.com/archives/C12345678/"
         "p1773086070240949?thread_ts=1773085070.240949"
     )
+    assert result["results"][0]["visibility_level"] == "unknown"
     assert result["results"][0]["followCommand"] == (
         "gotta read https://demo.slack.com/archives/C12345678/p1773085070240949"
     )
@@ -1104,6 +1107,10 @@ def test_render_markdown_marks_thread_reads_full_fidelity() -> None:
                 "url": "https://demo.slack.com/archives/C12345678/p1773085070240949",
             },
             "channel": {"id": "C12345678", "name": "ops"},
+            "visibility_level": "internal",
+            "visibility_boundary": "same_company",
+            "visibility_confidence": "high",
+            "visibility_basis": ["provider=slack", "channel.type=public_channel"],
             "title": "Slack Thread: Example",
             "messageCount": 1,
             "threadCount": 1,
@@ -1121,6 +1128,30 @@ def test_render_markdown_marks_thread_reads_full_fidelity() -> None:
 
     assert "- _Retrieval_: `materialized`" in rendered
     assert "- _Fidelity_: `full` (full thread render from the hydrated bounded archive window)" in rendered
+    assert "- Visibility: internal (same_company, high)" in rendered
+
+
+def test_normalize_live_search_match_carries_channel_visibility() -> None:
+    item = slack._normalize_live_search_match(
+        "demo",
+        {
+            "channel": {
+                "id": "G12345678",
+                "name": "partners",
+                "is_private": True,
+                "is_shared": True,
+                "is_ext_shared": True,
+            },
+            "ts": "1773086070.240949",
+            "thread_ts": "1773085070.240949",
+            "text": "reply match",
+            "user": "U1",
+            "username": "Alice",
+        },
+    )
+
+    assert item["visibility_level"] == "restricted"
+    assert item["visibility_boundary"] == "cross_company"
 
 
 def test_cmd_get_thread_hydration_retries_refresh_automatically(
