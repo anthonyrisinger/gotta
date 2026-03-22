@@ -484,8 +484,22 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
         == "jira:issue-types --project OPS"
     )
     assert (
+        dispatch.canonical_locator(
+            "jira",
+            ["projects", "--limit", "25", "--offset", "25"],
+        )
+        == "jira:projects --limit 25 --offset 25"
+    )
+    assert (
         dispatch.canonical_locator("jira", ["sprints", "--project", "OPS"])
         == "jira:sprints --project OPS"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "grafana",
+            ["datasources", "--limit", "25", "--offset", "25"],
+        )
+        == "grafana:datasources --limit 25 --offset 25"
     )
     assert (
         dispatch.canonical_locator(
@@ -1250,6 +1264,15 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "Weekly Review",
     ]
     assert plugin_api.get_plugin("grafana").route_target("grafana:status") == ["status"]
+    assert plugin_api.get_plugin("grafana").route_target(
+        "grafana:datasources --limit 25 --offset 25"
+    ) == [
+        "datasources",
+        "--limit",
+        "25",
+        "--offset",
+        "25",
+    ]
     assert plugin_api.get_plugin("grafana").route_target("grafana:search Architecture") == [
         "search",
         "Architecture",
@@ -1261,6 +1284,15 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
     assert plugin_api.get_plugin("jira").route_target("jira:search Architecture") == [
         "search",
         "Architecture",
+    ]
+    assert plugin_api.get_plugin("jira").route_target(
+        "jira:projects --limit 25 --offset 25"
+    ) == [
+        "projects",
+        "--limit",
+        "25",
+        "--offset",
+        "25",
     ]
     assert plugin_api.get_plugin("jira").route_target("jira:sprints --project OPS") == [
         "sprints",

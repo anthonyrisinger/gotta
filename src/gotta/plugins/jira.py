@@ -108,6 +108,9 @@ def print_json(data: Any) -> None:
     sys.stdout.write("\n")
 
 
+DEFAULT_LIST_LIMIT = 100
+
+
 def positive_int(raw: str) -> int:
     try:
         value = int(raw)
@@ -115,6 +118,16 @@ def positive_int(raw: str) -> int:
         raise argparse.ArgumentTypeError(f"expected integer, got: {raw}") from exc
     if value <= 0:
         raise argparse.ArgumentTypeError("expected a positive integer")
+    return value
+
+
+def nonnegative_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected integer, got: {raw}") from exc
+    if value < 0:
+        raise argparse.ArgumentTypeError("expected a non-negative integer")
     return value
 
 
@@ -197,6 +210,69 @@ def _output_extension(output: str) -> str:
     }.get(output, "md")
 
 
+def _list_window_suffix(*, limit: int, offset: int, include_all: bool) -> str:
+    parts: list[str] = []
+    if include_all:
+        parts.append("all")
+    elif limit != DEFAULT_LIST_LIMIT:
+        parts.append(f"limit-{limit}")
+    if offset:
+        parts.append(f"offset-{offset}")
+    return ("-" + "-".join(parts)) if parts else ""
+
+
+def _append_list_window_args(parts: list[str], args: argparse.Namespace) -> None:
+    if getattr(args, "all", False):
+        parts.append("--all")
+    elif getattr(args, "limit", DEFAULT_LIST_LIMIT) != DEFAULT_LIST_LIMIT:
+        parts.extend(["--limit", str(args.limit)])
+    if getattr(args, "offset", 0):
+        parts.extend(["--offset", str(args.offset)])
+
+
+def _paginate_items(
+    items: list[Any],
+    *,
+    offset: int,
+    limit: int,
+    include_all: bool,
+) -> tuple[list[Any], dict[str, Any]]:
+    total_count = len(items)
+    if include_all:
+        paged = items[offset:]
+        applied_limit: int | None = None
+    else:
+        paged = items[offset : offset + limit]
+        applied_limit = limit
+    shown_count = len(paged)
+    next_offset = offset + shown_count
+    truncated = next_offset < total_count
+    return paged, {
+        "offset": offset,
+        "limit": applied_limit,
+        "totalCount": total_count,
+        "shownCount": shown_count,
+        "nextOffset": next_offset if truncated else None,
+        "truncated": truncated,
+    }
+
+
+def _listing_count_line(
+    label: str,
+    *,
+    total_count: int,
+    shown_count: int,
+    offset: int,
+    next_offset: int | None,
+) -> str:
+    if shown_count == total_count and offset == 0 and next_offset is None:
+        return f"{label}: {total_count}"
+    details = [f"showing {shown_count}", f"offset {offset}"]
+    if next_offset is not None:
+        details.append(f"next {next_offset}")
+    return f"{label}: {total_count} total ({', '.join(details)})"
+
+
 def _parse_cli(argv: list[str]) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
@@ -246,11 +322,16 @@ def canonical_locator(argv: list[str]) -> str:
     if args.command == "get":
         return f"jira:{_issue_key_for_locator(args.issue)}"
     if args.command == "projects":
-        return "jira:projects"
+        parts = ["projects"]
+        _append_list_window_args(parts, args)
+        return f"jira:{shlex.join(parts)}"
     if args.command == "sprints":
         if args.board is not None:
-            return f"jira:{shlex.join(['sprints', '--board', str(args.board)])}"
-        return f"jira:{shlex.join(['sprints', '--project', args.project])}"
+            parts = ["sprints", "--board", str(args.board)]
+        else:
+            parts = ["sprints", "--project", args.project]
+        _append_list_window_args(parts, args)
+        return f"jira:{shlex.join(parts)}"
     if args.command == "add-to-sprint":
         parts = ["add-to-sprint", _issue_key_for_locator(args.issue)]
         if args.current:
@@ -263,15 +344,21 @@ def canonical_locator(argv: list[str]) -> str:
             parts.extend(["--sprint", str(args.sprint)])
         return f"jira:{shlex.join(parts)}"
     if args.command == "issue-types":
-        return f"jira:{shlex.join(['issue-types', '--project', args.project])}"
+        parts = ["issue-types", "--project", args.project]
+        _append_list_window_args(parts, args)
+        return f"jira:{shlex.join(parts)}"
     if args.command == "fields":
         if args.issue:
             return f"jira:{shlex.join(['fields', _issue_key_for_locator(args.issue)])}"
         return f"jira:{shlex.join(['fields', '--project', args.project, '--type', args.type])}"
     if args.command == "link-types":
-        return "jira:link-types"
+        parts = ["link-types"]
+        _append_list_window_args(parts, args)
+        return f"jira:{shlex.join(parts)}"
     if args.command == "transitions":
-        return f"jira:{shlex.join(['transitions', _issue_key_for_locator(args.issue)])}"
+        parts = ["transitions", _issue_key_for_locator(args.issue)]
+        _append_list_window_args(parts, args)
+        return f"jira:{shlex.join(parts)}"
     if args.command == "search":
         return f"jira:search {args.query}"
     if args.command == "jql":
@@ -289,17 +376,20 @@ def preferred_name(argv: list[str], options: object) -> str:
         issue_key = _issue_key_for_locator(args.issue)
         return f"{issue_key}.{_output_extension(args.output)}"
     if args.command == "projects":
-        return f"jira-projects.{_output_extension(args.output)}"
+        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        return f"jira-projects{suffix}.{_output_extension(args.output)}"
     if args.command == "sprints":
+        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
         if args.board is not None:
-            return f"jira-sprints-board-{args.board}.{_output_extension(args.output)}"
-        return f"jira-sprints-{_slug(args.project, fallback='jira')}.{_output_extension(args.output)}"
+            return f"jira-sprints-board-{args.board}{suffix}.{_output_extension(args.output)}"
+        return f"jira-sprints-{_slug(args.project, fallback='jira')}{suffix}.{_output_extension(args.output)}"
     if args.command == "add-to-sprint":
         issue_key = _issue_key_for_locator(args.issue)
         return f"{issue_key}-add-to-sprint.{_output_extension(args.output)}"
     if args.command == "issue-types":
         suffix = _slug(args.project, fallback="jira")
-        return f"jira-issue-types-{suffix}.{_output_extension(args.output)}"
+        window_suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        return f"jira-issue-types-{suffix}{window_suffix}.{_output_extension(args.output)}"
     if args.command == "fields":
         if args.issue:
             issue_key = _issue_key_for_locator(args.issue)
@@ -307,10 +397,12 @@ def preferred_name(argv: list[str], options: object) -> str:
         suffix = _slug(f"{args.project}-{args.type}", fallback="jira")
         return f"jira-fields-{suffix}.{_output_extension(args.output)}"
     if args.command == "link-types":
-        return f"jira-link-types.{_output_extension(args.output)}"
+        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        return f"jira-link-types{suffix}.{_output_extension(args.output)}"
     if args.command == "transitions":
         issue_key = _issue_key_for_locator(args.issue)
-        return f"jira-transitions-{issue_key}.{_output_extension(args.output)}"
+        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        return f"jira-transitions-{issue_key}{suffix}.{_output_extension(args.output)}"
     if args.command == "create":
         suffix = _slug(f"{args.project}-{args.title}", fallback="jira")
         return f"jira-create-{suffix}.{_output_extension(args.output)}"
@@ -346,7 +438,7 @@ def route_target(target: str) -> list[str] | None:
         )
     if target.startswith("jira:"):
         payload = target.removeprefix("jira:")
-        if payload in {"status", "projects", "link-types"}:
+        if payload == "status":
             return [payload]
         try:
             argv = shlex.split(payload)
@@ -356,7 +448,16 @@ def route_target(target: str) -> list[str] | None:
             return None
         if len(argv) == 1 and ISSUE_KEY_RE.fullmatch(argv[0]):
             return ["get", normalize_issue_key(argv[0])]
-        if argv[0] in {"get", "issue-types", "fields", "transitions", "sprints", "add-to-sprint"}:
+        if argv[0] in {
+            "get",
+            "projects",
+            "issue-types",
+            "fields",
+            "link-types",
+            "transitions",
+            "sprints",
+            "add-to-sprint",
+        }:
             return argv
         return None
     return None
@@ -1883,8 +1984,23 @@ def apply_generic_fields(
         payload_fields[field_id] = coerce_field_value(field_id, fields[field_id], raw_values)
 
 
-def render_projects_summary(projects: list[dict[str, Any]]) -> str:
-    lines = [f"projects: {len(projects)}"]
+def render_projects_summary(
+    projects: list[dict[str, Any]],
+    *,
+    total_count: int,
+    shown_count: int,
+    offset: int,
+    next_offset: int | None,
+) -> str:
+    lines = [
+        _listing_count_line(
+            "projects",
+            total_count=total_count,
+            shown_count=shown_count,
+            offset=offset,
+            next_offset=next_offset,
+        )
+    ]
     for project in projects:
         key = project.get("key") or ""
         name = project.get("name") or ""
@@ -1899,8 +2015,25 @@ def render_projects_summary(projects: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_issue_types_summary(project_key: str, issue_types: list[dict[str, Any]]) -> str:
-    lines = [f"project: {project_key}", f"issue_types: {len(issue_types)}"]
+def render_issue_types_summary(
+    project_key: str,
+    issue_types: list[dict[str, Any]],
+    *,
+    total_count: int,
+    shown_count: int,
+    offset: int,
+    next_offset: int | None,
+) -> str:
+    lines = [
+        f"project: {project_key}",
+        _listing_count_line(
+            "issue_types",
+            total_count=total_count,
+            shown_count=shown_count,
+            offset=offset,
+            next_offset=next_offset,
+        ),
+    ]
     for item in issue_types:
         line = f"- {item.get('name') or ''}"
         details = [f"id `{item.get('id') or ''}`"] if item.get("id") else []
@@ -1950,8 +2083,25 @@ def render_fields_summary(fields: dict[str, dict[str, Any]], *, context: str) ->
     return "\n".join(lines) + "\n"
 
 
-def render_transitions_summary(issue_key: str, transitions: list[dict[str, Any]]) -> str:
-    lines = [f"issue: {issue_key}", f"transitions: {len(transitions)}"]
+def render_transitions_summary(
+    issue_key: str,
+    transitions: list[dict[str, Any]],
+    *,
+    total_count: int,
+    shown_count: int,
+    offset: int,
+    next_offset: int | None,
+) -> str:
+    lines = [
+        f"issue: {issue_key}",
+        _listing_count_line(
+            "transitions",
+            total_count=total_count,
+            shown_count=shown_count,
+            offset=offset,
+            next_offset=next_offset,
+        ),
+    ]
     for item in transitions:
         line = f"- {item.get('name') or ''} - id `{item.get('id') or ''}`"
         to_name = ((item.get("to") or {}).get("name") or "")
@@ -1974,12 +2124,25 @@ def render_sprints_summary(
     *,
     project_key_or_id: str = "",
     board_sprints: list[dict[str, Any]],
+    paging_unit: str,
+    total_count: int,
+    shown_count: int,
+    offset: int,
+    next_offset: int | None,
 ) -> str:
     state_order = {"active": 0, "future": 1, "closed": 2}
     lines: list[str] = []
     if project_key_or_id:
         lines.append(f"project: {project_key_or_id}")
-    lines.append(f"boards: {len(board_sprints)}")
+    lines.append(
+        _listing_count_line(
+            paging_unit,
+            total_count=total_count,
+            shown_count=shown_count,
+            offset=offset,
+            next_offset=next_offset,
+        )
+    )
     for board in board_sprints:
         lines.append(f"- board {board.get('id') or ''}: {board.get('name') or ''}")
         sprints = board.get("sprints")
@@ -2006,6 +2169,26 @@ def render_sprints_summary(
                 line += f" - goal {goal}"
             lines.append(line)
     return "\n".join(lines) + "\n"
+
+
+def add_list_paging_arguments(parser: argparse.ArgumentParser, *, noun: str) -> None:
+    parser.add_argument(
+        "--limit",
+        type=positive_int,
+        default=DEFAULT_LIST_LIMIT,
+        help=f"maximum {noun} to show in one page; defaults to a bounded page",
+    )
+    parser.add_argument(
+        "--offset",
+        type=nonnegative_int,
+        default=0,
+        help=f"skip the first N {noun} before rendering the current page",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help=f"show all {noun} explicitly instead of the default bounded page",
+    )
 
 
 def required_missing_fields(fields: dict[str, dict[str, Any]], payload_fields: dict[str, Any]) -> list[str]:
@@ -2542,28 +2725,58 @@ def build_comment_payload(args: argparse.Namespace) -> tuple[str, dict[str, Any]
 
 def cmd_projects(args: argparse.Namespace) -> int:
     _, projects = fetch_projects(args.base_url)
+    paged_projects, page = _paginate_items(
+        projects,
+        offset=args.offset,
+        limit=args.limit,
+        include_all=bool(args.all),
+    )
     if args.output == "json":
-        print_json({"projects": projects})
+        print_json({**page, "projects": paged_projects})
         return 0
-    sys.stdout.write(render_projects_summary(projects))
+    sys.stdout.write(
+        render_projects_summary(
+            paged_projects,
+            total_count=int(page["totalCount"]),
+            shown_count=int(page["shownCount"]),
+            offset=int(page["offset"]),
+            next_offset=page["nextOffset"],
+        )
+    )
     return 0
 
 
 def cmd_issue_types(args: argparse.Namespace) -> int:
     session, project = resolve_project(args.base_url, args.project)
     issue_types = fetch_create_issue_types(session, str(project.get("key") or args.project))
+    paged_issue_types, page = _paginate_items(
+        issue_types,
+        offset=args.offset,
+        limit=args.limit,
+        include_all=bool(args.all),
+    )
     payload = {
         "project": {
             "id": str(project.get("id") or ""),
             "key": str(project.get("key") or args.project),
             "name": str(project.get("name") or ""),
         },
-        "issueTypes": issue_types,
+        **page,
+        "issueTypes": paged_issue_types,
     }
     if args.output == "json":
         print_json(payload)
         return 0
-    sys.stdout.write(render_issue_types_summary(payload["project"]["key"], issue_types))
+    sys.stdout.write(
+        render_issue_types_summary(
+            payload["project"]["key"],
+            paged_issue_types,
+            total_count=int(page["totalCount"]),
+            shown_count=int(page["shownCount"]),
+            offset=int(page["offset"]),
+            next_offset=page["nextOffset"],
+        )
+    )
     return 0
 
 
@@ -2589,11 +2802,25 @@ def cmd_fields(args: argparse.Namespace) -> int:
 
 def cmd_link_types(args: argparse.Namespace) -> int:
     _, link_types = fetch_issue_link_types(args.base_url)
+    paged_link_types, page = _paginate_items(
+        link_types,
+        offset=args.offset,
+        limit=args.limit,
+        include_all=bool(args.all),
+    )
     if args.output == "json":
-        print_json({"linkTypes": link_types})
+        print_json({**page, "linkTypes": paged_link_types})
         return 0
-    lines = [f"link_types: {len(link_types)}"]
-    for item in link_types:
+    lines = [
+        _listing_count_line(
+            "link_types",
+            total_count=int(page["totalCount"]),
+            shown_count=int(page["shownCount"]),
+            offset=int(page["offset"]),
+            next_offset=page["nextOffset"],
+        )
+    ]
+    for item in paged_link_types:
         lines.append(
             f"- {item.get('name') or ''} - id `{item.get('id') or ''}`, outward `{item.get('outward') or ''}`, inward `{item.get('inward') or ''}`"
         )
@@ -2604,10 +2831,25 @@ def cmd_link_types(args: argparse.Namespace) -> int:
 def cmd_transitions(args: argparse.Namespace) -> int:
     issue_ref = parse_issue_ref(args.issue, base_url_override=args.base_url)
     _, transitions = fetch_transitions(issue_ref)
+    paged_transitions, page = _paginate_items(
+        transitions,
+        offset=args.offset,
+        limit=args.limit,
+        include_all=bool(args.all),
+    )
     if args.output == "json":
-        print_json({"issue": issue_ref.issue_key, "transitions": transitions})
+        print_json({**page, "issue": issue_ref.issue_key, "transitions": paged_transitions})
         return 0
-    sys.stdout.write(render_transitions_summary(issue_ref.issue_key, transitions))
+    sys.stdout.write(
+        render_transitions_summary(
+            issue_ref.issue_key,
+            paged_transitions,
+            total_count=int(page["totalCount"]),
+            shown_count=int(page["shownCount"]),
+            offset=int(page["offset"]),
+            next_offset=page["nextOffset"],
+        )
+    )
     return 0
 
 
@@ -2619,9 +2861,54 @@ def cmd_sprints(args: argparse.Namespace) -> int:
         project_key_or_id=args.project or "",
         board_id=args.board,
     )
+    paging_unit = "sprints"
+    if args.board is not None:
+        board = dict(board_sprints[0] if board_sprints else {"id": str(args.board), "name": "", "type": "scrum"})
+        sprints = list(board.get("sprints") or [])
+        paged_sprints, page = _paginate_items(
+            sprints,
+            offset=args.offset,
+            limit=args.limit,
+            include_all=bool(args.all),
+        )
+        if paged_sprints or not sprints:
+            paged_boards = [{**board, "sprints": paged_sprints}]
+        else:
+            paged_boards = []
+    else:
+        flat_sprints: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for board in board_sprints:
+            for sprint in list(board.get("sprints") or []):
+                flat_sprints.append((board, sprint))
+        if flat_sprints:
+            paged_pairs, page = _paginate_items(
+                flat_sprints,
+                offset=args.offset,
+                limit=args.limit,
+                include_all=bool(args.all),
+            )
+            grouped: dict[str, dict[str, Any]] = {}
+            order: list[str] = []
+            for board, sprint in paged_pairs:
+                board_id = str(board.get("id") or "")
+                if board_id not in grouped:
+                    grouped[board_id] = {**board, "sprints": []}
+                    order.append(board_id)
+                grouped[board_id]["sprints"].append(sprint)
+            paged_boards = [grouped[board_id] for board_id in order]
+        else:
+            paging_unit = "boards"
+            paged_boards, page = _paginate_items(
+                board_sprints,
+                offset=args.offset,
+                limit=args.limit,
+                include_all=bool(args.all),
+            )
     payload = {
         "project": args.project or "",
-        "boards": board_sprints,
+        **page,
+        "pagingUnit": paging_unit,
+        "boards": paged_boards,
     }
     if args.output == "json":
         print_json(payload)
@@ -2629,7 +2916,12 @@ def cmd_sprints(args: argparse.Namespace) -> int:
     sys.stdout.write(
         render_sprints_summary(
             project_key_or_id=args.project or "",
-            board_sprints=board_sprints,
+            board_sprints=paged_boards,
+            paging_unit=paging_unit,
+            total_count=int(page["totalCount"]),
+            shown_count=int(page["shownCount"]),
+            offset=int(page["offset"]),
+            next_offset=page["nextOffset"],
         )
     )
     return 0
@@ -3262,6 +3554,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
     )
+    add_list_paging_arguments(p, noun="projects")
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_projects)
 
@@ -3276,6 +3569,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
     )
+    add_list_paging_arguments(p, noun="boards or board-local sprints")
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_sprints)
 
@@ -3289,6 +3583,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
     )
+    add_list_paging_arguments(p, noun="issue types")
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_issue_types)
 
@@ -3313,6 +3608,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
     )
+    add_list_paging_arguments(p, noun="link types")
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_link_types)
 
@@ -3323,6 +3619,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override for bare issue keys (default: {JIRA_BASE_URL_ENV})",
     )
+    add_list_paging_arguments(p, noun="transitions")
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_transitions)
 

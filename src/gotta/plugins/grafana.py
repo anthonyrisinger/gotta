@@ -33,6 +33,7 @@ GRAFANA_ORG_ID_ENV = "GOTTA_GRAFANA_ORG_ID"
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 5000
+DEFAULT_DATASOURCE_LIST_LIMIT = 100
 DASHBOARD_URL_RE = re.compile(r"^https?://[^/]+(?:/[^?#]*)?/d(?:-solo)?/(?P<uid>[^/?#]+)")
 DEFAULT_USER_AGENT = "gotta/grafana-plugin"
 
@@ -64,6 +65,64 @@ def die(message: str, code: int = 2) -> int:
 def print_json(data: Any) -> None:
     json.dump(data, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
+
+
+def positive_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected integer, got: {raw}") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return value
+
+
+def nonnegative_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected integer, got: {raw}") from exc
+    if value < 0:
+        raise argparse.ArgumentTypeError("expected a non-negative integer")
+    return value
+
+
+def _list_window_suffix(*, limit: int, offset: int, include_all: bool, default_limit: int) -> str:
+    parts: list[str] = []
+    if include_all:
+        parts.append("all")
+    elif limit != default_limit:
+        parts.append(f"limit-{limit}")
+    if offset:
+        parts.append(f"offset-{offset}")
+    return ("-" + "-".join(parts)) if parts else ""
+
+
+def _paginate_items(
+    items: list[Any],
+    *,
+    offset: int,
+    limit: int,
+    include_all: bool,
+) -> tuple[list[Any], dict[str, Any]]:
+    total_count = len(items)
+    if include_all:
+        paged = items[offset:]
+        applied_limit: int | None = None
+    else:
+        paged = items[offset : offset + limit]
+        applied_limit = limit
+    shown_count = len(paged)
+    next_offset = offset + shown_count
+    truncated = next_offset < total_count
+    return paged, {
+        "offset": offset,
+        "limit": applied_limit,
+        "totalCount": total_count,
+        "shownCount": shown_count,
+        "nextOffset": next_offset if truncated else None,
+        "truncated": truncated,
+    }
 
 
 def _load_grafana_config_env() -> dict[str, str]:
@@ -542,16 +601,28 @@ def _datasources_payload(args: argparse.Namespace) -> dict[str, Any]:
                 "readOnly": bool(item.get("readOnly")),
             }
         )
+    paged, page = _paginate_items(
+        datasources,
+        offset=args.offset,
+        limit=args.limit,
+        include_all=bool(args.all),
+    )
     return {
         "provider": "grafana",
         "baseUrl": session.base_url,
-        "count": len(datasources),
-        "datasources": datasources,
+        **page,
+        "datasources": paged,
     }
 
 
 def _datasources_summary(payload: dict[str, Any]) -> str:
-    lines = [f"count\t{payload.get('count') or 0}"]
+    lines = [
+        f"total\t{payload.get('totalCount') or 0}",
+        f"shown\t{payload.get('shownCount') or 0}",
+        f"offset\t{payload.get('offset') or 0}",
+    ]
+    if payload.get("nextOffset") is not None:
+        lines.append(f"next_offset\t{payload.get('nextOffset')}")
     for item in payload.get("datasources") or []:
         lines.append(
             "\t".join(
@@ -887,6 +958,19 @@ def _normalize_search_locator_tail(args: argparse.Namespace) -> list[str]:
     return parts
 
 
+def _normalize_datasources_locator_tail(args: argparse.Namespace) -> list[str]:
+    parts = ["datasources"]
+    if getattr(args, "all", False):
+        parts.append("--all")
+    elif int(getattr(args, "limit", DEFAULT_DATASOURCE_LIST_LIMIT)) != DEFAULT_DATASOURCE_LIST_LIMIT:
+        parts.extend(["--limit", str(args.limit)])
+    if int(getattr(args, "offset", 0)):
+        parts.extend(["--offset", str(args.offset)])
+    if getattr(args, "output", "summary") != "summary":
+        parts.extend(["--output", args.output])
+    return parts
+
+
 def _normalize_query_locator_tail(args: argparse.Namespace) -> list[str]:
     dashboard_ref, effective_org_id, effective_from_time, effective_to_time = _effective_query_context(
         args
@@ -921,6 +1005,11 @@ def route_target(target: str) -> list[str] | None:
             return ["status"]
         if rest == "datasources":
             return ["datasources"]
+        if rest.startswith("datasources "):
+            parts = split_locator_tail(rest.removeprefix("datasources ").strip())
+            if not parts:
+                return None
+            return ["datasources", *parts]
         if rest == "search":
             return ["search"]
         if rest.startswith("search "):
@@ -972,6 +1061,18 @@ def _build_parser() -> argparse.ArgumentParser:
     auth.add_argument("--output", choices=["json", "summary"], default="summary")
     status.add_argument("--output", choices=["json", "summary"], default="summary")
     datasources.add_argument("--output", choices=["json", "summary"], default="summary")
+    datasources.add_argument("--limit", type=positive_int, default=DEFAULT_DATASOURCE_LIST_LIMIT)
+    datasources.add_argument(
+        "--offset",
+        type=nonnegative_int,
+        default=0,
+        help="skip the first N datasources before rendering the current page",
+    )
+    datasources.add_argument(
+        "--all",
+        action="store_true",
+        help="show all datasources explicitly instead of the default bounded page",
+    )
 
     search.add_argument("query", nargs="?", default="", help="optional Grafana search query")
     search.add_argument("--type", choices=["dash-folder", "dash-db"], default="")
@@ -1020,7 +1121,7 @@ def canonical_locator(argv: list[str]) -> str:
     if args.command == "status":
         return "grafana:status"
     if args.command == "datasources":
-        return "grafana:datasources"
+        return "grafana:" + " ".join(_normalize_datasources_locator_tail(args))
     if args.command == "auth":
         return "grafana:auth"
     if args.command == "search":
@@ -1035,7 +1136,13 @@ def preferred_name(argv: list[str], _options: Any) -> str:
     if args.command in {"status", "auth", "datasources"}:
         extension = "json" if getattr(args, "output", "summary") == "json" else "summary"
         if args.command == "datasources":
-            return f"grafana-datasources.{extension}"
+            suffix = _list_window_suffix(
+                limit=args.limit,
+                offset=args.offset,
+                include_all=bool(args.all),
+                default_limit=DEFAULT_DATASOURCE_LIST_LIMIT,
+            )
+            return f"grafana-datasources{suffix}.{extension}"
         return f"grafana.{extension}"
     if args.command == "search":
         extension = {"markdown": "md", "summary": "summary", "json": "json"}[args.output]

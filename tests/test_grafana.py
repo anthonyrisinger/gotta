@@ -110,8 +110,37 @@ def test_grafana_datasources_renders_summary(monkeypatch, capsys) -> None:
     assert grafana.main(["datasources"]) == 0
 
     output = capsys.readouterr().out
+    assert "total\t1" in output
+    assert "shown\t1" in output
     assert "prom-main" in output
     assert "Main Prometheus" in output
+
+
+def test_grafana_datasources_supports_limit_and_offset(monkeypatch, capsys) -> None:
+    monkeypatch.setenv(grafana.GRAFANA_BASE_URL_ENV, "https://grafana.example.com")
+    monkeypatch.setenv(grafana.GRAFANA_TOKEN_ENV, "glsa_secret")
+
+    def fake_json(session, path, *, method="GET", params=None, payload=None):
+        assert session.base_url == "https://grafana.example.com"
+        assert path == "/api/datasources"
+        assert method == "GET"
+        return [
+            {"uid": "ds-1", "name": "Datasource One", "type": "prometheus", "url": "", "access": "proxy"},
+            {"uid": "ds-2", "name": "Datasource Two", "type": "prometheus", "url": "", "access": "proxy"},
+            {"uid": "ds-3", "name": "Datasource Three", "type": "loki", "url": "", "access": "proxy"},
+        ]
+
+    monkeypatch.setattr(grafana, "_grafana_json", fake_json)
+
+    assert grafana.main(["datasources", "--limit", "1", "--offset", "1", "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] == 2
+    assert payload["truncated"] is True
+    assert [item["uid"] for item in payload["datasources"]] == ["ds-2"]
 
 
 def test_grafana_search_can_list_dashboards(monkeypatch, capsys) -> None:

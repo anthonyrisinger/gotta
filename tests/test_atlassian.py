@@ -2002,6 +2002,114 @@ def test_jira_sprints_summary_lists_scrum_boards_and_sprints(monkeypatch, capsys
     assert "sprint 32: Sprint 32 [future]" in rendered
 
 
+def test_jira_projects_supports_bounded_json_pages(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        jira,
+        "fetch_projects",
+        lambda base_url: (
+            jira.Session(token="token", cloud_id="cloud-123", base_url="https://example.atlassian.net"),
+            [
+                {"id": "10000", "key": "OPS", "name": "Operations", "projectTypeKey": "software", "simplified": False},
+                {"id": "10001", "key": "PLAT", "name": "Platform", "projectTypeKey": "software", "simplified": False},
+                {"id": "10002", "key": "SEC", "name": "Security", "projectTypeKey": "software", "simplified": False},
+            ],
+        ),
+    )
+
+    assert jira.main(["projects", "--limit", "1", "--offset", "1", "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] == 2
+    assert payload["truncated"] is True
+    assert [item["key"] for item in payload["projects"]] == ["PLAT"]
+
+
+def test_jira_sprints_pages_across_project_sprints(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        jira,
+        "collect_board_sprints",
+        lambda base_url, project_key_or_id="", board_id=None, state="": (
+            jira.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            ),
+            [
+                {
+                    "id": "21",
+                    "name": "Delivery Board",
+                    "type": "scrum",
+                    "sprints": [
+                        {"id": "31", "name": "Sprint 31", "state": "active", "goal": ""},
+                        {"id": "32", "name": "Sprint 32", "state": "future", "goal": ""},
+                    ],
+                },
+                {
+                    "id": "22",
+                    "name": "Platform Board",
+                    "type": "scrum",
+                    "sprints": [{"id": "41", "name": "Sprint 41", "state": "active", "goal": ""}],
+                },
+            ],
+        ),
+    )
+
+    assert jira.main(["sprints", "--project", "OPS", "--limit", "1", "--offset", "1", "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["pagingUnit"] == "sprints"
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] == 2
+    assert payload["truncated"] is True
+    assert len(payload["boards"]) == 1
+    assert payload["boards"][0]["id"] == "21"
+    assert [item["id"] for item in payload["boards"][0]["sprints"]] == ["32"]
+
+
+def test_jira_explicit_board_sprint_page_exhaustion_does_not_render_empty_board(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        jira,
+        "collect_board_sprints",
+        lambda base_url, project_key_or_id="", board_id=None, state="": (
+            jira.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            ),
+            [
+                {
+                    "id": "21",
+                    "name": "Delivery Board",
+                    "type": "scrum",
+                    "sprints": [{"id": "31", "name": "Sprint 31", "state": "active", "goal": ""}],
+                }
+            ],
+        ),
+    )
+
+    assert jira.main(["sprints", "--board", "21", "--limit", "1", "--offset", "99", "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["pagingUnit"] == "sprints"
+    assert payload["totalCount"] == 1
+    assert payload["shownCount"] == 0
+    assert payload["offset"] == 99
+    assert payload["boards"] == []
+
+    assert jira.main(["sprints", "--board", "21", "--limit", "1", "--offset", "99"]) == 0
+    rendered = capsys.readouterr().out
+    assert "sprints: 1 total (showing 0, offset 99)" in rendered
+    assert "Delivery Board" not in rendered
+    assert "no sprints" not in rendered
+
+
 def test_jira_add_to_sprint_preview_resolves_current_sprint(monkeypatch, capsys) -> None:
     session = jira.Session(
         token="token",

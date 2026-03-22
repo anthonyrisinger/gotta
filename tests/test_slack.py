@@ -92,6 +92,158 @@ def test_cmd_schema_degrades_per_view_instead_of_crashing(
     assert "no such column: M.SESSION_ID" in by_name["V_BROKEN"]["error"]
 
 
+def test_list_channels_defaults_to_bounded_json_page(monkeypatch, tmp_path: Path, capsys) -> None:
+    workspace = "demo"
+    directory_db = tmp_path / "_directory.sqlite"
+    conn = sqlite3.connect(directory_db)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE channel_directory (
+                id TEXT,
+                name TEXT,
+                type TEXT,
+                is_private INTEGER,
+                is_archived INTEGER,
+                lookup_name TEXT,
+                raw_json TEXT
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO channel_directory (id, name, type, is_private, is_archived, lookup_name, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "C001",
+                    "alpha",
+                    "public_channel",
+                    0,
+                    0,
+                    "alpha",
+                    json.dumps({"id": "C001", "name": "alpha", "is_private": False, "is_archived": False}),
+                ),
+                (
+                    "C002",
+                    "bravo",
+                    "public_channel",
+                    0,
+                    0,
+                    "bravo",
+                    json.dumps({"id": "C002", "name": "bravo", "is_private": False, "is_archived": False}),
+                ),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def open_db(_workspace: str) -> sqlite3.Connection:
+        conn = sqlite3.connect(directory_db)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(slack, "seed_channel_directory_from_archive", lambda workspace: None)
+    monkeypatch.setattr(slack, "open_directory_db", open_db)
+
+    assert slack.main(["list-channels", "--workspace", workspace, "--limit", "1", "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totalCount"] == 2
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 0
+    assert payload["nextOffset"] == 1
+    assert payload["truncated"] is True
+    assert [item["id"] for item in payload["results"]] == ["C001"]
+
+
+def test_list_users_supports_offset_paging(monkeypatch, tmp_path: Path, capsys) -> None:
+    workspace = "demo"
+    directory_db = tmp_path / "_directory.sqlite"
+    conn = sqlite3.connect(directory_db)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE user_directory (
+                id TEXT,
+                display_name TEXT,
+                username TEXT,
+                lookup_name TEXT,
+                raw_json TEXT
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO user_directory (id, display_name, username, lookup_name, raw_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "U001",
+                    "Alpha User",
+                    "alpha",
+                    "alpha user",
+                    json.dumps({"id": "U001", "profile": {"display_name": "Alpha User"}, "name": "alpha"}),
+                ),
+                (
+                    "U002",
+                    "Bravo User",
+                    "bravo",
+                    "bravo user",
+                    json.dumps({"id": "U002", "profile": {"display_name": "Bravo User"}, "name": "bravo"}),
+                ),
+                (
+                    "U003",
+                    "Charlie User",
+                    "charlie",
+                    "charlie user",
+                    json.dumps({"id": "U003", "profile": {"display_name": "Charlie User"}, "name": "charlie"}),
+                ),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def open_db(_workspace: str) -> sqlite3.Connection:
+        conn = sqlite3.connect(directory_db)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(slack, "seed_user_directory_from_archive", lambda workspace: None)
+    monkeypatch.setattr(slack, "open_directory_db", open_db)
+
+    assert (
+        slack.main(
+            [
+                "list-users",
+                "--workspace",
+                workspace,
+                "--limit",
+                "1",
+                "--offset",
+                "1",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totalCount"] == 3
+    assert payload["shownCount"] == 1
+    assert payload["offset"] == 1
+    assert payload["nextOffset"] == 2
+    assert payload["truncated"] is True
+    assert [item["id"] for item in payload["results"]] == ["U002"]
+
+
 def test_missing_workspace_is_explicit() -> None:
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(slack_provider, "default_workspace", lambda: "")

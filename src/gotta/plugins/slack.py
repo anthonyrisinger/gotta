@@ -140,6 +140,75 @@ def print_json(data: Any) -> None:
     sys.stdout.write("\n")
 
 
+DEFAULT_DIRECTORY_LIST_LIMIT = 100
+
+
+def positive_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected integer, got: {raw}") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return value
+
+
+def nonnegative_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected integer, got: {raw}") from exc
+    if value < 0:
+        raise argparse.ArgumentTypeError("expected a non-negative integer")
+    return value
+
+
+def _paginate_directory_results(
+    items: list[Any],
+    *,
+    offset: int,
+    limit: int,
+    include_all: bool,
+) -> tuple[list[Any], dict[str, Any]]:
+    total_count = len(items)
+    if include_all:
+        paged = items[offset:]
+        applied_limit: int | None = None
+    else:
+        paged = items[offset : offset + limit]
+        applied_limit = limit
+    shown_count = len(paged)
+    next_offset = offset + shown_count
+    truncated = next_offset < total_count
+    return paged, {
+        "offset": offset,
+        "limit": applied_limit,
+        "totalCount": total_count,
+        "shownCount": shown_count,
+        "nextOffset": next_offset if truncated else None,
+        "truncated": truncated,
+    }
+
+
+def _emit_directory_paging_notice(
+    *,
+    entity: str,
+    total_count: int,
+    shown_count: int,
+    offset: int,
+    next_offset: int | None,
+) -> None:
+    if next_offset is None:
+        return
+    print(
+        (
+            f"note: showing {shown_count} of {total_count} {entity} starting at offset {offset}; "
+            f"pass --offset {next_offset} for the next page or --all for everything"
+        ),
+        file=sys.stderr,
+    )
+
+
 def emit_progress(message: str) -> None:
     print(message, file=sys.stderr)
 
@@ -3935,12 +4004,19 @@ def cmd_list_channels(args: argparse.Namespace) -> int:
         if query and query not in channel_directory_text(item).lower():
             continue
         filtered.append((row, item))
+    paged, page = _paginate_directory_results(
+        filtered,
+        offset=args.offset,
+        limit=args.limit,
+        include_all=bool(args.all),
+    )
     if args.output == "json":
         print_json(
             {
                 "workspace": args.workspace,
                 "source": "local-directory",
                 "query": args.query or "",
+                **page,
                 "filters": {
                     "channelTypes": sorted(channel_types) if channel_types else [],
                     "private": args.private,
@@ -3948,11 +4024,11 @@ def cmd_list_channels(args: argparse.Namespace) -> int:
                     "extShared": args.ext_shared,
                     "archived": args.archived,
                 },
-                "results": [raw for _, raw in filtered],
+                "results": [raw for _, raw in paged],
             }
         )
         return 0
-    for row, item in filtered:
+    for row, item in paged:
         channel_id = str(item.get("id") or "")
         name = str(item.get("name") or channel_id)
         kind = str(row["type"] or channel_type(item, channel_id))
@@ -3978,6 +4054,13 @@ def cmd_list_channels(args: argparse.Namespace) -> int:
             )
             + "\n"
         )
+    _emit_directory_paging_notice(
+        entity="channels",
+        total_count=int(page["totalCount"]),
+        shown_count=int(page["shownCount"]),
+        offset=int(page["offset"]),
+        next_offset=page["nextOffset"],
+    )
     return 0
 
 
@@ -3992,39 +4075,42 @@ def cmd_list_users(args: argparse.Namespace) -> int:
         )
     else:
         seed_user_directory_from_archive(args.workspace)
-    if args.output == "json":
-        conn = open_directory_db(args.workspace)
-        try:
-            rows = conn.execute(
-                """
-                SELECT raw_json
-                FROM user_directory
-                ORDER BY lookup_name ASC, id ASC
-                """
-            ).fetchall()
-        finally:
-            conn.close()
-        print_json(
-            {
-                "workspace": args.workspace,
-                "source": "local-directory",
-                "results": [parse_json_blob(row["raw_json"]) for row in rows],
-            }
-        )
-        return 0
     conn = open_directory_db(args.workspace)
     try:
         rows = conn.execute(
             """
-            SELECT id, display_name, username
+            SELECT id, display_name, username, raw_json
             FROM user_directory
             ORDER BY lookup_name ASC, id ASC
             """
         ).fetchall()
     finally:
         conn.close()
-    for row in rows:
+    paged, page = _paginate_directory_results(
+        list(rows),
+        offset=args.offset,
+        limit=args.limit,
+        include_all=bool(args.all),
+    )
+    if args.output == "json":
+        print_json(
+            {
+                "workspace": args.workspace,
+                "source": "local-directory",
+                **page,
+                "results": [parse_json_blob(row["raw_json"]) for row in paged],
+            }
+        )
+        return 0
+    for row in paged:
         sys.stdout.write(f"{row['id']}\t{row['display_name']}\t{row['username']}\n")
+    _emit_directory_paging_notice(
+        entity="users",
+        total_count=int(page["totalCount"]),
+        shown_count=int(page["shownCount"]),
+        offset=int(page["offset"]),
+        next_offset=page["nextOffset"],
+    )
     return 0
 
 
@@ -4235,6 +4321,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--shared", choices=["any", "only", "exclude"], default="any")
     p.add_argument("--ext-shared", choices=["any", "only", "exclude"], default="any")
     p.add_argument("--archived", choices=["any", "only", "exclude"], default="any")
+    p.add_argument(
+        "--limit",
+        type=positive_int,
+        default=DEFAULT_DIRECTORY_LIST_LIMIT,
+        help="maximum channels to show after filtering; defaults to a bounded page",
+    )
+    p.add_argument(
+        "--offset",
+        type=nonnegative_int,
+        default=0,
+        help="skip the first N filtered channels before rendering the current page",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="show all filtered channels explicitly instead of the default bounded page",
+    )
     p.add_argument("--refresh", action="store_true")
     p.add_argument("--output", choices=["json", "text"], default="json")
     p.set_defaults(func=cmd_list_channels)
@@ -4244,6 +4347,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="list users from the local directory cache; refresh is explicit",
     )
     p.add_argument("--workspace", default=default_workspace())
+    p.add_argument(
+        "--limit",
+        type=positive_int,
+        default=DEFAULT_DIRECTORY_LIST_LIMIT,
+        help="maximum users to show; defaults to a bounded page",
+    )
+    p.add_argument(
+        "--offset",
+        type=nonnegative_int,
+        default=0,
+        help="skip the first N users before rendering the current page",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="show all users explicitly instead of the default bounded page",
+    )
     p.add_argument("--refresh", action="store_true")
     p.add_argument("--output", choices=["json", "text"], default="json")
     p.set_defaults(func=cmd_list_users)
