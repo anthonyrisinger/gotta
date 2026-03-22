@@ -11,6 +11,7 @@ from gotta import builtin
 from gotta import content
 from gotta import main as cli
 from gotta import session as sessionlib
+from gotta.plugins import github
 from gotta.plugins import jira
 
 
@@ -52,7 +53,7 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["read", "--head", "120", "README.md"]) == 0
+    assert cli.main(["todo", "append", "first task"]) == 0
     first_err = capsys.readouterr().err
     session_root = Path(seen[-1][1])
     assert session_root.parent.name == "actors"
@@ -70,7 +71,7 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     assert (session_root / "OOPS.md").is_file()
     assert "created a new gotta session" in first_err
 
-    assert cli.main(["todo", "append", "real task"]) == 0
+    assert cli.main(["todo", "append", "second task"]) == 0
     second_err = capsys.readouterr().err
     assert seen[-1][1] == str(session_root)
     assert "created a new gotta session" not in second_err
@@ -118,6 +119,135 @@ def test_main_provider_status_surfaces_do_not_create_session(
     assert not (tmp_path / "session").exists()
 
 
+def test_main_read_retrieval_runs_sessionless_without_creating_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append((list(inner_argv or []), os.environ.get("GOTTA_SESSION_DIR", "")))
+        return 0
+
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["read", "https://example.com/manual.txt"]) == 0
+
+    captured = capsys.readouterr()
+    assert seen == [(["read", "https://example.com/manual.txt"], "")]
+    assert captured.err == ""
+    assert not (tmp_path / "session").exists()
+
+
+def test_main_ambient_provider_search_materializes_discovery_in_bound_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+
+    def fake_github_main(argv: list[str]) -> int:
+        print("# Search Results\n\n- one\n")
+        return 0
+
+    monkeypatch.setattr(github, "main", fake_github_main)
+
+    assert cli.main(["github", "search", "platform"]) == 0
+    captured = capsys.readouterr()
+
+    assert "stored discovery artifact:" in captured.err
+    manifest_path = registry / "demo" / "content" / "manifest.jsonl"
+    entries = [
+        json.loads(line)
+        for line in manifest_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert entries[-1]["plugin"] == "github"
+    assert entries[-1]["artifact_kind"] == "discovery"
+    assert entries[-1]["actor"] == cli._session_token("thread-123")
+
+
+def test_main_read_routed_provider_search_preserves_discovery_artifact_kind(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+
+    def fake_github_main(argv: list[str]) -> int:
+        print("# Search Results\n\n- one\n")
+        return 0
+
+    monkeypatch.setattr(github, "main", fake_github_main)
+
+    assert cli.main(["read", "github:search platform"]) == 0
+    captured = capsys.readouterr()
+
+    assert "stored discovery artifact:" in captured.err
+    manifest_path = registry / "demo" / "content" / "manifest.jsonl"
+    entries = [
+        json.loads(line)
+        for line in manifest_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert entries[-1]["plugin"] == "github"
+    assert entries[-1]["artifact_kind"] == "discovery"
+
+
+def test_main_ambient_provider_get_honors_explicit_actor_attribution(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Claude"]) == 0
+    capsys.readouterr()
+
+    def fake_github_main(argv: list[str]) -> int:
+        print("# Repo\n\nmain body\n")
+        return 0
+
+    monkeypatch.setattr(github, "main", fake_github_main)
+
+    assert (
+        cli.main(
+            [
+                "github",
+                "https://github.com/acme/widgets",
+                "--session",
+                "demo",
+                "--actor",
+                "claude",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+
+    assert "stored evidence artifact:" in captured.err
+    shared_root = registry / "demo"
+    claude = _actor_id(shared_root, "claude")
+    manifest_path = shared_root / "content" / "manifest.jsonl"
+    entries = [
+        json.loads(line)
+        for line in manifest_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert entries[-1]["plugin"] == "github"
+    assert entries[-1]["artifact_kind"] == "evidence"
+    assert entries[-1]["actor"] == claude
+
+
 def test_main_dispatches_direct_plugin_args_inside_bound_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -131,10 +261,10 @@ def test_main_dispatches_direct_plugin_args_inside_bound_session(
     monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["read", "--head", "120", "README.md"]) == 0
+    assert cli.main(["todo", "append", "real task"]) == 0
 
     session_root = Path(seen[0][1])
-    assert seen == [(["read", "--head", "120", "README.md"], str(session_root))]
+    assert seen == [(["todo", "append", "real task"], str(session_root))]
     assert (session_root / "state" / "env").exists()
     assert "created a new gotta session" in capsys.readouterr().err
 
@@ -553,13 +683,13 @@ def test_main_uses_term_session_id_for_deterministic_binding_on_write_surfaces(
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.setenv("TERM_SESSION_ID", "term-session-1")
 
-    assert cli.main(["read", "--head", "120", "README.md"]) == 0
+    assert cli.main(["todo", "append", "real task"]) == 0
 
     session_root = Path(seen[-1][1])
     assert session_root.parent.name == "actors"
     assert session_root.parent.parent == (tmp_path / "session" / cli._session_token("term-session-1"))
     assert session_root.name == cli._session_token("term-session-1")
-    assert seen[-1][0] == ["read", "--head", "120", "README.md"]
+    assert seen[-1][0] == ["todo", "append", "real task"]
     assert seen[-1][2] == "term-session-1"
     assert seen[-1][3] == "term_session"
     assert "created a new gotta session" in capsys.readouterr().err

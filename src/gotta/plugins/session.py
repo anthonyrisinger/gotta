@@ -381,6 +381,44 @@ def _visibility_summary(payload: dict[str, object] | dict[str, str]) -> str:
     )
 
 
+def _artifact_kind(raw: object) -> str:
+    value = str(raw or "").strip().lower()
+    return value if value in {"discovery", "evidence"} else ""
+
+
+def _artifact_kind_counts(records: list[dict[str, object]]) -> tuple[int, int]:
+    discovery = 0
+    evidence = 0
+    for record in records:
+        kind = _artifact_kind(record.get("artifact_kind") or record.get("artifactKind"))
+        if kind == "discovery":
+            discovery += 1
+        elif kind == "evidence":
+            evidence += 1
+    return discovery, evidence
+
+
+def _artifact_kind_label(record: dict[str, object]) -> str:
+    return _artifact_kind(record.get("artifact_kind") or record.get("artifactKind"))
+
+
+def _topology_next_step(*, discovery_count: int, evidence_count: int) -> str:
+    if discovery_count <= 0 and evidence_count <= 0:
+        return (
+            "No materialized artifacts yet. That is normal before first retrieval. "
+            "Materialize one strong anchor with a provider-native search/get command "
+            "or `gotta read <locator>`, then revisit manifest, timeline, leads, graph, "
+            "and analyze."
+        )
+    if evidence_count <= 0 and discovery_count > 0:
+        return (
+            "Discovery artifacts are present, but no evidence artifacts exist yet. "
+            "Follow one strong locator with a provider-native get command or "
+            "`gotta read <locator>` to land evidence in the shared session web."
+        )
+    return ""
+
+
 def _manifest_payload(
     dirs,
     *,
@@ -396,10 +434,12 @@ def _manifest_payload(
         locator=locator,
     )
     ordered = sorted(entries, key=_manifest_entry_sort_key, reverse=True)
+    discovery_count, evidence_count = _artifact_kind_counts(ordered)
     limited = ordered[: max(limit, 0)]
     rendered_entries = [
         {
             **entry,
+            "artifactKind": _artifact_kind(entry.get("artifact_kind")),
             "content_locator": content_locator(str(entry.get("checksum", "")).strip())
             if str(entry.get("checksum", "")).strip()
             else "",
@@ -431,6 +471,8 @@ def _manifest_payload(
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
         "entryCount": len(entries),
         "shownCount": len(rendered_entries),
+        "discoveryArtifactCount": discovery_count,
+        "evidenceArtifactCount": evidence_count,
         "pluginFilter": plugin,
         "actorFilter": actor,
         "locatorFilter": locator,
@@ -609,6 +651,7 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "locator": locator,
                 "preferred_name": str(raw.get("preferred_name") or locator).strip() or locator,
                 "checksum": "",
+                "artifactKind": "",
                 "content_locator": "",
                 "artifact_locator": "",
                 "follow_command": str(raw.get("follow_command") or "").strip(),
@@ -653,6 +696,7 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 "locator": locator,
                 "preferred_name": path.name,
                 "checksum": "",
+                "artifactKind": "",
                 "content_locator": "",
                 "artifact_locator": "",
                 "follow_command": follow_command,
@@ -702,6 +746,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
                     "locator": locator,
                     "preferred_name": snapshot_display_name(snapshot),
                     "checksum": snapshot.digest,
+                    "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
                     "content_locator": content_locator(snapshot.digest),
                     "artifact_locator": _artifact_human_locator(
                         snapshot_display_name(snapshot),
@@ -724,6 +769,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
             ),
         )
         limited = ordered[-max(limit, 0) :] if limit > 0 else ordered
+        discovery_count, evidence_count = _artifact_kind_counts(limited)
         return {
             "sessionDir": str(dirs.session_dir),
             "contentDir": str(dirs.content_dir),
@@ -733,6 +779,8 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
             "modeDescription": TIMELINE_MODE_DESCRIPTIONS[normalized_mode],
             "coverageGapCount": coverage_gap_count,
             "eventCount": len(limited),
+            "discoveryArtifactCount": discovery_count,
+            "evidenceArtifactCount": evidence_count,
             "events": limited,
         }
     manifest_events = [
@@ -745,6 +793,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
             "locator": str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown",
             "preferred_name": str(entry.get("preferred_name", "")).strip() or "data",
             "checksum": str(entry.get("checksum", "")).strip(),
+            "artifactKind": _artifact_kind(entry.get("artifact_kind")),
             "content_locator": content_locator(str(entry.get("checksum", "")).strip())
             if str(entry.get("checksum", "")).strip()
             else "",
@@ -771,6 +820,7 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
         ),
     )
     limited = events[-max(limit, 0) :] if limit > 0 else events
+    discovery_count, evidence_count = _artifact_kind_counts(limited)
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -780,6 +830,8 @@ def _timeline_payload(dirs, *, limit: int = 100, mode: str = "acquired") -> dict
         "modeDescription": TIMELINE_MODE_DESCRIPTIONS[normalized_mode],
         "coverageGapCount": 0,
         "eventCount": len(limited),
+        "discoveryArtifactCount": discovery_count,
+        "evidenceArtifactCount": evidence_count,
         "events": limited,
     }
 
@@ -800,11 +852,7 @@ def _mermaid_label(value: str) -> str:
 
 
 def _empty_topology_next_step() -> str:
-    return (
-        "No evidence nodes yet. That is normal before first retrieval. Materialize one "
-        "strong anchor with a provider-native search/get command or `gotta read <locator>`, "
-        "then revisit manifest, timeline, leads, graph, and analyze."
-    )
+    return _topology_next_step(discovery_count=0, evidence_count=0)
 
 
 def _no_leads_next_step(*, has_artifacts: bool) -> str:
@@ -827,6 +875,7 @@ def _graph_payload(dirs) -> dict[str, object]:
     edge_counts: dict[tuple[str, str, str], int] = {}
     content_names: dict[str, str] = {}
     source_variants: dict[str, set[tuple[str, str]]] = {}
+    source_artifact_kinds: dict[str, set[str]] = {}
     source_visibility: dict[str, dict[str, object]] = {}
     for entry in entries:
         source = entry.get("canonical_locator") or entry.get("locator") or "unknown"
@@ -839,6 +888,9 @@ def _graph_payload(dirs) -> dict[str, object]:
         edge_key = (source, checksum, plugin)
         edge_counts[edge_key] = edge_counts.get(edge_key, 0) + 1
         content_names.setdefault(checksum, entry.get("preferred_name") or "data")
+        kind = _artifact_kind(entry.get("artifact_kind"))
+        if kind:
+            source_artifact_kinds.setdefault(source, set()).add(kind)
         source_visibility[source] = best_visibility_metadata(
             source_visibility.get(source, {}),
             entry,
@@ -851,6 +903,12 @@ def _graph_payload(dirs) -> dict[str, object]:
             "locator": locator,
             "followCommand": _follow_command(locator),
             "contentCount": len(checksums),
+            "artifactKind": (
+                next(iter(source_artifact_kinds.get(locator, set())))
+                if len(source_artifact_kinds.get(locator, set())) == 1
+                else ""
+            ),
+            "artifactKinds": sorted(str(value) for value in source_artifact_kinds.get(locator, set())),
             "collision": False,
             "variant": len(source_variants.get(locator, set())) > 1,
             "variantCount": len(source_variants.get(locator, set())),
@@ -866,6 +924,11 @@ def _graph_payload(dirs) -> dict[str, object]:
         {
             "checksum": checksum,
             "preferredName": content_names.get(checksum, "data"),
+            "artifactKind": _artifact_kind(
+                snapshot_by_digest.get(checksum).metadata.get("artifact_kind")
+            )
+            if snapshot_by_digest.get(checksum) is not None
+            else "",
             "contentLocator": content_locator(checksum),
             "artifactLocator": _artifact_human_locator(content_names.get(checksum, "data"), checksum),
             "followCommand": f"gotta read {sh_quote(_artifact_human_locator(content_names.get(checksum, 'data'), checksum))}",
@@ -889,6 +952,8 @@ def _graph_payload(dirs) -> dict[str, object]:
         for (source, checksum, plugin), count in sorted(edge_counts.items())
     ]
     empty = not sources and not content and not edges
+    discovery_count = sum(1 for item in content if item.get("artifactKind") == "discovery")
+    evidence_count = sum(1 for item in content if item.get("artifactKind") == "evidence")
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -896,8 +961,13 @@ def _graph_payload(dirs) -> dict[str, object]:
         "sourceCount": len(sources),
         "contentCount": len(content),
         "edgeCount": len(edges),
+        "discoveryArtifactCount": discovery_count,
+        "evidenceArtifactCount": evidence_count,
         "empty": empty,
-        "nextStep": _empty_topology_next_step() if empty else "",
+        "nextStep": _topology_next_step(
+            discovery_count=discovery_count,
+            evidence_count=evidence_count,
+        ),
         "sources": sources,
         "content": content,
         "edges": edges,
@@ -921,6 +991,9 @@ def _render_mermaid(payload: dict[str, object]) -> str:
             ]
         )
         return "\n".join(lines)
+    if payload.get("nextStep"):
+        lines.append(f'  note["{_mermaid_label(str(payload["nextStep"]))}"]')
+        lines.append("  class note emptyState")
     for source in payload["sources"]:
         locator = str(source["locator"])
         node_id = _mermaid_id("src", locator)
@@ -959,6 +1032,7 @@ def _render_mermaid(payload: dict[str, object]) -> str:
             "  classDef content fill:#eef4ff,stroke:#2a62c7,color:#173058;",
             "  classDef variant fill:#fff7e6,stroke:#b7791f,color:#5a3b09;",
             "  classDef collision fill:#fff1f1,stroke:#c73434,color:#6b1111;",
+            "  classDef emptyState fill:#f7fafc,stroke:#4a5568,color:#1a202c;",
             "",
         ]
     )
@@ -1128,6 +1202,7 @@ def _analysis_payload(dirs) -> dict[str, object]:
                 "locators": set(),
                 "plugins": set(),
                 "actors": set(),
+                "artifact_kinds": set(),
                 "entries": 0,
                 "variants": set(),
                 "visibility": {},
@@ -1140,6 +1215,9 @@ def _analysis_payload(dirs) -> dict[str, object]:
         actor = _rendered_actor(entry.get("actor"), session_root=dirs.session_dir)
         source_state["plugins"].add(plugin)
         source_state["actors"].add(actor)
+        kind = _artifact_kind(entry.get("artifact_kind"))
+        if kind:
+            source_state["artifact_kinds"].add(kind)
         source_state["entries"] = int(source_state["entries"]) + 1
         source_state["visibility"] = best_visibility_metadata(
             source_state.get("visibility", {}),
@@ -1172,6 +1250,7 @@ def _analysis_payload(dirs) -> dict[str, object]:
         {
             "checksum": snapshot.digest,
             "preferredName": snapshot_display_name(snapshot),
+            "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
             "contentLocator": content_locator(snapshot.digest),
             "artifactLocator": snapshot_artifact_locator(snapshot),
             "followCommand": f"gotta read {sh_quote(snapshot_artifact_locator(snapshot))}",
@@ -1193,6 +1272,12 @@ def _analysis_payload(dirs) -> dict[str, object]:
             "locator": locator,
             "contentCount": len(state["content"]),
             "entryCount": int(state["entries"]),
+            "artifactKind": (
+                next(iter(state["artifact_kinds"]))
+                if len(state["artifact_kinds"]) == 1
+                else ""
+            ),
+            "artifactKinds": sorted(str(value) for value in state["artifact_kinds"]),
             "plugins": sorted(str(value) for value in state["plugins"]),
             "actors": sorted(str(value) for value in state["actors"]),
             "locators": sorted(str(value) for value in state["locators"]),
@@ -1237,6 +1322,8 @@ def _analysis_payload(dirs) -> dict[str, object]:
         1 for source in lead_sources if bool(source["materialized"])
     )
     empty = not sources and not content and not source_edges and not revision_edges and not lead_edges
+    discovery_count = sum(1 for item in content if item.get("artifactKind") == "discovery")
+    evidence_count = sum(1 for item in content if item.get("artifactKind") == "evidence")
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -1246,6 +1333,8 @@ def _analysis_payload(dirs) -> dict[str, object]:
         "sourceCount": len(sources),
         "sourceEdgeCount": len(source_edges),
         "revisionEdgeCount": len(revision_edges),
+        "discoveryArtifactCount": discovery_count,
+        "evidenceArtifactCount": evidence_count,
         "collisionCount": len(collisions),
         "collisions": collisions,
         "duplicateMaterializationCount": len(duplicate_materializations),
@@ -1259,7 +1348,10 @@ def _analysis_payload(dirs) -> dict[str, object]:
         "unmaterializedLeadSourceCount": len(lead_sources) - materialized_lead_count,
         "leadEdgeCount": len(lead_edges),
         "empty": empty,
-        "nextStep": _empty_topology_next_step() if empty else "",
+        "nextStep": _topology_next_step(
+            discovery_count=discovery_count,
+            evidence_count=evidence_count,
+        ),
         "sources": sources,
         "content": content,
         "sourceEdges": source_edges,
@@ -1386,6 +1478,7 @@ def _leads_payload(
             {
                 "checksum": snapshot.digest,
                 "preferredName": snapshot_display_name(snapshot),
+                "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
                 "sourceLocator": snapshot_locator(snapshot),
                 "artifactLocator": snapshot_artifact_locator(snapshot),
                 "contentLocator": content_locator(snapshot.digest),
@@ -1396,9 +1489,11 @@ def _leads_payload(
             }
         )
     materialized_count = sum(1 for source in lead_sources if bool(source["materialized"]))
+    discovery_count = sum(1 for item in artifacts if item.get("artifactKind") == "discovery")
+    evidence_count = sum(1 for item in artifacts if item.get("artifactKind") == "evidence")
     empty = not selected
     next_step = (
-        _empty_topology_next_step()
+        _topology_next_step(discovery_count=discovery_count, evidence_count=evidence_count)
         if empty
         else _no_leads_next_step(has_artifacts=bool(selected))
         if not lead_sources
@@ -1410,6 +1505,8 @@ def _leads_payload(
         "target": target.strip(),
         "limit": max(limit, 0),
         "artifactCount": len(selected),
+        "discoveryArtifactCount": discovery_count,
+        "evidenceArtifactCount": evidence_count,
         "leadCount": len(lead_sources),
         "shownCount": len(limited_sources),
         "materializedLeadCount": materialized_count,
@@ -1453,6 +1550,8 @@ def _semantic_payload(dirs) -> dict[str, object]:
         add_node(provider_id, label=provider, kind="provider", group=provider)
         add_node(source_id, label=locator, kind="source", group=provider)
         nodes[source_id]["materialized"] = True
+        nodes[source_id]["artifactKind"] = str(source.get("artifactKind") or "")
+        nodes[source_id]["artifactKinds"] = list(source.get("artifactKinds") or [])
         add_edge(provider_id, source_id, "source")
 
         query_label = _query_label(locator)
@@ -1483,6 +1582,7 @@ def _semantic_payload(dirs) -> dict[str, object]:
             kind="content",
             group="content",
         )
+        nodes[content_id]["artifactKind"] = str(content.get("artifactKind") or "")
 
     for edge in lineage["sourceEdges"]:
         source_id = f"source:{edge['source']}"
@@ -1504,6 +1604,22 @@ def _semantic_payload(dirs) -> dict[str, object]:
             nodes[source_id].get("materialized") or lead_source.get("materialized")
         )
         nodes[source_id]["discovered"] = True
+        if not nodes[source_id].get("artifactKinds"):
+            nodes[source_id]["artifactKinds"] = []
+        kinds = {
+            str(value)
+            for value in nodes[source_id].get("artifactKinds") or []
+            if str(value)
+        }
+        lead_kind = str(lead_source.get("artifactKind") or "")
+        if lead_kind:
+            kinds.add(lead_kind)
+        nodes[source_id]["artifactKinds"] = sorted(kinds)
+        nodes[source_id]["artifactKind"] = (
+            nodes[source_id]["artifactKinds"][0]
+            if len(nodes[source_id]["artifactKinds"]) == 1
+            else ""
+        )
         add_edge(provider_id, source_id, "source")
         resource_kind, resource_label = _resource_label(locator)
         if resource_kind and resource_label:
@@ -1524,14 +1640,21 @@ def _semantic_payload(dirs) -> dict[str, object]:
         add_edge(from_id, to_id, relation if count <= 1 else f"{relation} x{count}")
 
     empty = not nodes and not edges
+    discovery_count = int(lineage.get("discoveryArtifactCount") or 0)
+    evidence_count = int(lineage.get("evidenceArtifactCount") or 0)
     return {
         "sessionDir": lineage["sessionDir"],
         "contentDir": lineage["contentDir"],
         "manifestPath": lineage["manifestPath"],
         "nodeCount": len(nodes),
         "edgeCount": len(edges),
+        "discoveryArtifactCount": discovery_count,
+        "evidenceArtifactCount": evidence_count,
         "empty": empty,
-        "nextStep": _empty_topology_next_step() if empty else "",
+        "nextStep": _topology_next_step(
+            discovery_count=discovery_count,
+            evidence_count=evidence_count,
+        ),
         "nodes": sorted(nodes.values(), key=lambda item: (item["kind"], item["label"])),
         "edges": [
             {"source": source, "target": target, "label": label}
@@ -1557,6 +1680,9 @@ def _render_semantic_mermaid(payload: dict[str, object]) -> str:
             ]
         )
         return "\n".join(lines)
+    if payload.get("nextStep"):
+        lines.append(f'  note["{_mermaid_label(str(payload["nextStep"]))}"]')
+        lines.append("  class note emptyState")
     for node in payload["nodes"]:
         node_id = _analysis_mermaid_id("sem", str(node["id"]))
         label = _mermaid_label(str(node["label"]))
@@ -1588,6 +1714,7 @@ def _render_semantic_mermaid(payload: dict[str, object]) -> str:
             "  classDef slack_thread fill:#ebf8ff,stroke:#2b6cb0,color:#1a365d;",
             "  classDef slack_channel fill:#ebf8ff,stroke:#2b6cb0,color:#1a365d;",
             "  classDef github_repo fill:#f7fafc,stroke:#4a5568,color:#1a202c;",
+            "  classDef emptyState fill:#f7fafc,stroke:#4a5568,color:#1a202c;",
             "",
         ]
     )
@@ -1611,6 +1738,9 @@ def _render_analysis_mermaid(payload: dict[str, object]) -> str:
             ]
         )
         return "\n".join(lines)
+    if payload.get("nextStep"):
+        lines.append(f'  note["{_mermaid_label(str(payload["nextStep"]))}"]')
+        lines.append("  class note emptyState")
     for source in payload["sources"]:
         locator = str(source["locator"])
         node_id = _analysis_mermaid_id("src", locator)
@@ -1692,6 +1822,7 @@ def _render_analysis_mermaid(payload: dict[str, object]) -> str:
             "  classDef variant fill:#fff7e6,stroke:#b7791f,color:#5a3b09;",
             "  classDef collision fill:#fff1f1,stroke:#c73434,color:#6b1111;",
             "  classDef leadgap fill:#fffaf0,stroke:#b7791f,color:#5a3b09;",
+            "  classDef emptyState fill:#f7fafc,stroke:#4a5568,color:#1a202c;",
             "",
         ]
     )
@@ -1773,7 +1904,12 @@ def cmd_leads(args: argparse.Namespace) -> int:
         return 0
     print(f"session: {payload['sessionDir']}")
     print(f"target: {payload['target'] or '(session-wide)'}")
-    print(f"artifacts: {payload['artifactCount']}")
+    print(
+        "artifacts: "
+        f"{payload['artifactCount']} "
+        f"(discovery {payload['discoveryArtifactCount']}, "
+        f"evidence {payload['evidenceArtifactCount']})"
+    )
     print(
         "leads: "
         f"{payload['leadCount']} total (showing {payload['shownCount']}; "
@@ -1811,6 +1947,8 @@ def cmd_leads(args: argparse.Namespace) -> int:
         for artifact in payload["artifacts"]:
             print(f"- {artifact['preferredName']} ({str(artifact['checksum'])[:12]})")
             print(f"  source: `{artifact['sourceLocator'] or 'unknown'}`")
+            if artifact.get("artifactKind"):
+                print(f"  artifact_kind: {artifact['artifactKind']}")
             artifact_visibility = _visibility_summary(artifact)
             if artifact_visibility:
                 print(f"  visibility: {artifact_visibility}")
@@ -1865,7 +2003,12 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     print(f"manifest: {payload['manifestPath']}")
-    print(f"entries: {payload['entryCount']} (showing {payload['shownCount']})")
+    print(
+        "entries: "
+        f"{payload['entryCount']} (showing {payload['shownCount']}; "
+        f"discovery {payload['discoveryArtifactCount']}, "
+        f"evidence {payload['evidenceArtifactCount']})"
+    )
     print("follow: pass any emitted locator directly to `gotta read <locator>`")
     for entry in payload["entries"]:
         fetched_at = str(entry.get("fetched_at", "")).strip() or "unknown-time"
@@ -1878,6 +2021,9 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         print(
             f"- {fetched_at} [{plugin}/{actor}] {locator} -> {preferred_name} ({short})"
         )
+        artifact_kind = str(entry.get("artifactKind") or "").strip()
+        if artifact_kind:
+            print(f"  artifact_kind: {artifact_kind}")
         visibility = _visibility_summary(entry)
         if visibility:
             print(f"  visibility: {visibility}")
@@ -1908,7 +2054,12 @@ def cmd_timeline(args: argparse.Namespace) -> int:
     print(f"activity: {payload['activityPath']}")
     print(f"mode: {payload['mode']} ({payload['modeDescription']})")
     print(f"coverage_gaps: {payload.get('coverageGapCount', 0)}")
-    print(f"events: {payload['eventCount']}")
+    print(
+        "events: "
+        f"{payload['eventCount']} "
+        f"(discovery {payload['discoveryArtifactCount']}, "
+        f"evidence {payload['evidenceArtifactCount']})"
+    )
     for event in payload["events"]:
         actor_label = event["actor"]
         if event.get("target_actor") and event["target_actor"] != actor_label:
@@ -1921,6 +2072,8 @@ def cmd_timeline(args: argparse.Namespace) -> int:
                 f"{event['locator']} -> {event['preferred_name']} ({checksum}) "
                 f"(from {event.get('source_time_field') or 'unknown-field'})"
             )
+            if event.get("artifactKind"):
+                print(f"  artifact_kind: {event['artifactKind']}")
             visibility = _visibility_summary(event)
             if visibility:
                 print(f"  visibility: {visibility}")
@@ -1944,6 +2097,8 @@ def cmd_timeline(args: argparse.Namespace) -> int:
                 f"{event['locator']} -> {event['preferred_name']} ({checksum})"
                 f"{' (local)' if event.get('event_kind') == 'local' else ''}"
             )
+            if event.get("artifactKind"):
+                print(f"  artifact_kind: {event['artifactKind']}")
             visibility = _visibility_summary(event)
             if visibility:
                 print(f"  visibility: {visibility}")
@@ -1987,6 +2142,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         "sourceCount": payload["sourceCount"],
         "sourceEdgeCount": payload["sourceEdgeCount"],
         "revisionEdgeCount": payload["revisionEdgeCount"],
+        "discoveryArtifactCount": payload["discoveryArtifactCount"],
+        "evidenceArtifactCount": payload["evidenceArtifactCount"],
         "collisionCount": payload["collisionCount"],
         "collisions": payload["collisions"],
         "duplicateMaterializationCount": payload["duplicateMaterializationCount"],

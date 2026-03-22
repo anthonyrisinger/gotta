@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+from typing import Literal
 import urllib.parse
 
 from gotta.builtin import PluginSpec, get_plugin
@@ -16,6 +17,7 @@ from gotta.providers import atlassian as atl
 
 SUPPRESS_MATERIALIZATION_ENV = "GOTTA_SUPPRESS_MATERIALIZATION"
 HELP_TOKENS = {"-h", "--help", "--help-all", "help-all"}
+ArtifactIntent = Literal["none", "discovery", "evidence"]
 
 CONTROL_SUBCOMMANDS = {
     "confluence": {"auth", "mcp", "status"},
@@ -38,12 +40,94 @@ class ResolvedInvocation:
     canonical_locator: str
     preferred_name: str
     content_type: str
+    artifact_intent: ArtifactIntent
+    artifact_kind: str
     should_materialize: bool
     provider: str
 
 
+DISCOVERY_SUBCOMMANDS: dict[str, set[str]] = {
+    "confluence": {"search", "cql"},
+    "gdocs": {"search"},
+    "gdrive": {"search"},
+    "grafana": {"search"},
+    "granola": {"list", "search", "search-transcript"},
+    "gsheets": {"search"},
+    "jira": {"search", "jql"},
+    "slack": {"search"},
+}
+
+EVIDENCE_SUBCOMMANDS: dict[str, set[str]] = {
+    "confluence": {"get"},
+    "gdocs": {"get"},
+    "gdrive": {"get"},
+    "grafana": {"get"},
+    "granola": {"get", "transcript"},
+    "gsheets": {"get"},
+    "jira": {"get"},
+    "slack": {"get"},
+}
+
+NON_ARTIFACT_SUBCOMMANDS: dict[str, set[str]] = {
+    "confluence": {
+        "auth",
+        "batch",
+        "create-page",
+        "find",
+        "mcp",
+        "render-markdown",
+        "replace",
+        "replace-section",
+        "resolve-page",
+        "status",
+        "update-body",
+    },
+    "gdocs": {"auth", "status"},
+    "gdrive": {"auth", "status"},
+    "grafana": {"auth", "datasources", "query", "status"},
+    "granola": {"export", "status"},
+    "gsheets": {"auth", "status"},
+    "jira": {
+        "add-to-sprint",
+        "auth",
+        "comment",
+        "create",
+        "fields",
+        "issue-types",
+        "link",
+        "link-types",
+        "mcp",
+        "projects",
+        "sprints",
+        "status",
+        "transition",
+        "transitions",
+        "update",
+    },
+    "slack": {
+        "auth",
+        "list-channels",
+        "list-users",
+        "mcp",
+        "schema",
+        "sql",
+        "status",
+        "sync",
+        "workspaces",
+    },
+}
+
+
 def _plugin_spec(plugin: str) -> PluginSpec | None:
     return get_plugin(plugin)
+
+
+def _materialization_enabled() -> bool:
+    return os.environ.get(SUPPRESS_MATERIALIZATION_ENV) != "1"
+
+
+def _artifact_kind(intent: ArtifactIntent) -> str:
+    return "" if intent == "none" else intent
 
 
 def _invocation_locator(plugin: str, argv: list[str]) -> str:
@@ -345,28 +429,53 @@ def _infer_content_type(plugin: str, argv: list[str], name: str) -> str:
     return "application/octet-stream"
 
 
-def _generic_should_materialize(plugin: str, argv: list[str]) -> bool:
-    if os.environ.get(SUPPRESS_MATERIALIZATION_ENV) == "1":
-        return False
-    if any(arg in HELP_TOKENS for arg in argv):
-        return False
+def _generic_artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
     spec = _plugin_spec(plugin)
     if spec and spec.should_materialize is not None:
-        return bool(spec.should_materialize(argv))
-    if spec is not None:
-        access = spec.session_access
-        if callable(access):
-            access = access(argv)
-        if access == "none":
-            return False
+        return "evidence" if bool(spec.should_materialize(argv)) else "none"
     if plugin == "session":
-        return False
+        return "none"
     if not argv:
-        return True
+        return "evidence"
     subcommand = argv[0]
     if subcommand == "status":
-        return False
-    return subcommand not in CONTROL_SUBCOMMANDS.get(plugin, set())
+        return "none"
+    return "none" if subcommand in CONTROL_SUBCOMMANDS.get(plugin, set()) else "evidence"
+
+
+def _artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
+    if any(arg in HELP_TOKENS for arg in argv):
+        return "none"
+    if plugin == "github":
+        if not argv or argv[0] == "status":
+            return "none"
+        if argv[0] == "search":
+            return "discovery"
+        return "evidence"
+    subcommand = argv[0] if argv else ""
+    if subcommand in NON_ARTIFACT_SUBCOMMANDS.get(plugin, set()):
+        return "none"
+    if subcommand in DISCOVERY_SUBCOMMANDS.get(plugin, set()):
+        return "discovery"
+    if subcommand in EVIDENCE_SUBCOMMANDS.get(plugin, set()):
+        return "evidence"
+    return _generic_artifact_intent(plugin, argv)
+
+
+def artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
+    if plugin == "read":
+        try:
+            target = resolve_read_target(argv, CommonOptions())
+        except SystemExit:
+            return "none"
+        return "evidence" if target.should_materialize else "none"
+    return _artifact_intent(plugin, argv)
+
+
+def session_access_mode(plugin: str, argv: list[str]) -> str:
+    if plugin == "read":
+        return "ambient"
+    return "ambient" if artifact_intent(plugin, argv) != "none" else "none"
 
 
 def resolve_invocation(
@@ -389,6 +498,8 @@ def resolve_invocation(
             canonical_locator=f"{plugin}:help",
             preferred_name=preferred,
             content_type=_infer_content_type(plugin, argv, preferred),
+            artifact_intent="none",
+            artifact_kind="",
             should_materialize=False,
             provider=plugin,
         )
@@ -406,6 +517,8 @@ def resolve_invocation(
                 canonical_locator=target or "read",
                 preferred_name=preferred,
                 content_type=_infer_content_type("read", resolved_argv, preferred),
+                artifact_intent="none",
+                artifact_kind="",
                 should_materialize=False,
                 provider="read",
             )
@@ -416,7 +529,13 @@ def resolve_invocation(
         canonical = resolved_target.canonical_locator
         preferred = resolved_target.preferred_name
         content_type = _infer_content_type(resolved_plugin, resolved_argv, preferred)
-        should_materialize = resolved_target.should_materialize
+        if resolved_target.routed_plugin is not None:
+            routed_intent = _artifact_intent(resolved_plugin, resolved_argv)
+            intent: ArtifactIntent = (
+                routed_intent if resolved_target.should_materialize else "none"
+            )
+        else:
+            intent = "evidence" if resolved_target.should_materialize else "none"
         return ResolvedInvocation(
             entry_plugin=entry_plugin,
             entry_argv=entry_argv,
@@ -425,13 +544,15 @@ def resolve_invocation(
             canonical_locator=canonical,
             preferred_name=preferred,
             content_type=content_type,
-            should_materialize=should_materialize,
+            artifact_intent=intent,
+            artifact_kind=_artifact_kind(intent),
+            should_materialize=intent != "none" and _materialization_enabled(),
             provider=provider,
         )
     canonical = _canonical_locator(plugin, argv)
     preferred = _preferred_name(plugin, argv, options)
     content_type = _infer_content_type(plugin, argv, preferred)
-    should_materialize = _generic_should_materialize(plugin, argv)
+    intent = _artifact_intent(plugin, argv)
     return ResolvedInvocation(
         entry_plugin=entry_plugin,
         entry_argv=entry_argv,
@@ -440,7 +561,9 @@ def resolve_invocation(
         canonical_locator=canonical,
         preferred_name=preferred,
         content_type=content_type,
-        should_materialize=should_materialize,
+        artifact_intent=intent,
+        artifact_kind=_artifact_kind(intent),
+        should_materialize=intent != "none" and _materialization_enabled(),
         provider=plugin,
     )
 

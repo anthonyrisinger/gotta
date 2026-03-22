@@ -16,6 +16,7 @@ from gotta.builtin import SessionAccessMode, get_plugin
 from gotta.compat import UTC, datetime
 from gotta.actors import resolve_actor_context, seed_actor_context
 from gotta.dispatch import available_plugins, print_usage, run_plugin
+from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 from gotta.actor import session_actor, supervisor_stop_message, supervisor_stop_pending
 from gotta.content import (
@@ -146,6 +147,9 @@ def _gotta_main(argv: list[str]) -> int:
 
 def _session_token(context_id: str) -> str:
     return default_session_id(context_id)
+
+
+_AMBIENT_SESSIONLESS_ENV = "GOTTA_AMBIENT_SESSIONLESS"
 
 
 _SESSION_LOCK_TIMEOUT_SECONDS = 5.0
@@ -560,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
         context_id, context_source = current_context_binding()
         explicit_session = _explicit_session_arg(normalized)
         explicit_actor = _explicit_actor_arg(normalized)
+        explicit_target = bool(explicit_session or explicit_actor)
         session_access = _session_access_mode(normalized)
         if plugin_name == "session" and len(normalized) >= 2 and normalized[1] in {"bind"}:
             return _gotta_main(normalized)
@@ -626,11 +631,18 @@ def main(argv: list[str] | None = None) -> int:
             root = _resolve_existing_session_root(context_id, context_source)
         if root is None and session_access == "write":
             root, created = _bind_session_root(context_id, context_source)
-        if root is None:
+        if root is None and session_access != "ambient":
             return die(
                 "this command requires an existing session; run `gotta session bind` "
                 "first or pass `--session <session-id>`"
             )
+        if session_access == "ambient" and root is not None and not session_is_initialized(root):
+            if explicit_target:
+                return die(
+                    "ambient retrieval requires an existing initialized actor root in the "
+                    "target session; bind an actor there first or pass `--actor <actor>`"
+                )
+            root = None
         if session_access == "read" and not session_is_initialized(root):
             existing = _existing_actor_root_for_session(
                 root,
@@ -648,6 +660,8 @@ def main(argv: list[str] | None = None) -> int:
                     "explicit session inspection requires an initialized actor root in the "
                     "target shared session; bind an actor there first or pass --actor"
                 )
+        elif session_access == "ambient":
+            scaffold_created = False
         else:
             root, scaffold_created = _ensure_scaffolded_session(
                 root,
@@ -660,25 +674,29 @@ def main(argv: list[str] | None = None) -> int:
             acting_actor = resolve_actor_context(
                 default_speaker=_active_identity(context_id)
             ).speaker or _active_identity(context_id)
-            _hydrate_environment(root, context_id=context_id, context_source=context_source)
-            seed_actor_context(acting_actor)
-            if explicit_actor:
-                os.environ[SESSION_ACTOR_ENV] = content_session_identity(root)
-            if created:
-                print(
-                    "\n".join(
-                        [
-                            "created a new gotta session:",
-                            f"- session root: {root}",
-                            f"- context id: {context_id}",
-                            f"- context source: {context_source}",
-                        ]
-                    ),
-                    file=sys.stderr,
-                )
-            warning = _actor_stop_warning(root)
-            if warning:
-                print(warning, file=sys.stderr)
+            if root is not None:
+                _hydrate_environment(root, context_id=context_id, context_source=context_source)
+                seed_actor_context(acting_actor)
+                if explicit_actor:
+                    os.environ[SESSION_ACTOR_ENV] = content_session_identity(root)
+                if created:
+                    print(
+                        "\n".join(
+                            [
+                                "created a new gotta session:",
+                                f"- session root: {root}",
+                                f"- context id: {context_id}",
+                                f"- context source: {context_source}",
+                            ]
+                        ),
+                        file=sys.stderr,
+                    )
+                warning = _actor_stop_warning(root)
+                if warning:
+                    print(warning, file=sys.stderr)
+            elif session_access == "ambient":
+                os.environ[SUPPRESS_MATERIALIZATION_ENV] = "1"
+                os.environ[_AMBIENT_SESSIONLESS_ENV] = "1"
             return _gotta_main(normalized)
         finally:
             os.environ.clear()

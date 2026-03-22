@@ -485,8 +485,9 @@ def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
 def test_read_help_text_describes_plain_vs_shaped_materialization() -> None:
     description = target.build_parser().description or ""
 
-    assert "Plain remote/provider reads materialize durable evidence" in description
+    assert "store durable evidence only when an initialized session is already in play" in description
     assert "shaped reads (`--head`, `--tail`, `--section`)" in read.USAGE
+    assert "--actor" in target.build_parser().format_help()
 
 
 def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> None:

@@ -38,12 +38,17 @@ Routing:
   local directories   -> native listing, with optional recursive traversal
 
   Materialization:
-  plain routed provider fetches and direct remote reads materialize durable
-  evidence. shaped reads (`--head`, `--tail`, `--section`), local files, local
+  plain routed provider fetches and direct remote reads store durable evidence
+  only when an initialized session is already active or passed explicitly.
+  shaped reads (`--head`, `--tail`, `--section`), local files, local
   directories, and session-owned artifact rereads stay as non-materializing
   views so reopening evidence does not fork the evidence graph. Use session
   manifest, session leads <artifact>, or session analyze to continue from the
   content store rather than re-fetching blindly.
+
+  Attribution:
+  pass `--actor <actor>` to attribute any materialized artifact from this read
+  to one bound actor inside the selected/ambient session.
 """
 
 REMOTE_FETCH_TIMEOUT_SECONDS = 15

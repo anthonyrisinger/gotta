@@ -51,13 +51,17 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gotta read",
         description=(
             "Render one local or remote target through the native retrieval surface. "
-            "Plain remote/provider reads materialize durable evidence; shaped reads "
-            "and local/session-owned rereads stay as non-materializing views."
+            "Plain remote/provider reads store durable evidence only when an "
+            "initialized session is already in play or passed explicitly; shaped "
+            "reads and local/session-owned rereads stay as non-materializing views."
         ),
     )
     parser.add_argument("target", nargs="?")
     parser.add_argument("--session", help=argparse.SUPPRESS)
-    parser.add_argument("--actor", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--actor",
+        help="attribute any materialized artifact from this read to the selected bound actor",
+    )
     parser.add_argument(
         "--recursive",
         action="store_true",

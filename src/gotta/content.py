@@ -70,6 +70,7 @@ class Materialization:
     name_link: Path
     fetch_link: Path
     digest: str
+    artifact_kind: str
 
 
 @dataclass(frozen=True)
@@ -401,6 +402,9 @@ def resolve_session_reference(
         return resolved
     by_id = resolve_session_root_by_id(normalized)
     if by_id is not None:
+        shared_id = topology.parse_shared_session_root(by_id)
+        if shared_id is not None and identity:
+            return topology.session_root_for(shared_id, identity).resolve()
         return by_id
     if "/" in normalized:
         session_id, session_identity = normalized.split("/", 1)
@@ -747,6 +751,7 @@ def materialize_bytes(
             "fetcher": metadata.get("tool", "gotta"),
             "plugin": metadata.get("plugin", ""),
             "provider": metadata.get("provider", ""),
+            "artifact_kind": metadata.get("artifact_kind", ""),
             "actor": metadata.get("actor") or session_identity(dirs.session_dir) or _current_actor(),
             "actor_dir": metadata.get("actor_dir", ""),
             "session_root": metadata.get("session_root", ""),
@@ -775,6 +780,7 @@ def materialize_bytes(
         name_link=name_link,
         fetch_link=fetch_link,
         digest=digest,
+        artifact_kind=str(metadata.get("artifact_kind", "") or "").strip(),
     )
 
 

@@ -987,8 +987,13 @@ def _bootstrap_goal(
         - Read `TODO.md`, `LOGS.md`, and `OOPS.md`.
         - Treat `state/todo.jsonl`, `state/logs.jsonl`, and `state/oops.jsonl` as the
           canonical continuous state behind those readable views.
+        - Provider-native `search` commands can seed discovery artifacts and
+          provider-native `get` / plain `gotta read <locator>` retrieval can land
+          evidence artifacts, but only when an initialized session is already
+          active or passed explicitly. Sessionless retrieval still works; it just
+          does not store artifacts.
         - Do not worry if `session manifest`, `session leads`, `session graph`, or
-          `session analyze` are empty before the first retrieval; materialize one
+          `session analyze` are empty before the first stored retrieval; land one
           strong source anchor first, then use those session surfaces to continue.
           `session leads` shows the current best leads first and keeps the
           provenance signals visible so you can choose between materialized,

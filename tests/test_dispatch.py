@@ -25,19 +25,102 @@ def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert not dispatch.should_materialize("want", [])
     assert not dispatch.should_materialize("goal", ["--help"])
     assert not dispatch.should_materialize("gdocs", ["status"])
-    assert not dispatch.should_materialize("confluence", ["search", "abc"])
-    assert not dispatch.should_materialize("gdocs", ["search", "abc"])
-    assert not dispatch.should_materialize("gdrive", ["search", "abc"])
-    assert not dispatch.should_materialize("grafana", ["search", "--type", "dash-db"])
-    assert not dispatch.should_materialize("grafana", ["search", "abc"])
+    assert dispatch.should_materialize("confluence", ["search", "abc"])
+    assert dispatch.should_materialize("confluence", ["get", "10101"])
+    assert dispatch.should_materialize("gdocs", ["search", "abc"])
+    assert dispatch.should_materialize("gdocs", ["get", "doc-123"])
+    assert dispatch.should_materialize("gdrive", ["search", "abc"])
+    assert dispatch.should_materialize("gdrive", ["get", "file-123"])
+    assert dispatch.should_materialize("grafana", ["search", "--type", "dash-db"])
+    assert dispatch.should_materialize("grafana", ["search", "abc"])
+    assert dispatch.should_materialize("grafana", ["get", "dash-123"])
     assert not dispatch.should_materialize("grafana", ["query", "--datasource", "prom-main", "sum(up)"])
-    assert not dispatch.should_materialize("granola", ["search", "abc"])
-    assert not dispatch.should_materialize("gsheets", ["search", "abc"])
-    assert not dispatch.should_materialize("github", ["search", "abc"])
-    assert not dispatch.should_materialize("jira", ["search", "abc"])
-    assert not dispatch.should_materialize("slack", ["search", "abc"])
+    assert dispatch.should_materialize("granola", ["search", "abc"])
+    assert dispatch.should_materialize("granola", ["get", "note-123"])
+    assert dispatch.should_materialize("gsheets", ["search", "abc"])
+    assert dispatch.should_materialize("gsheets", ["get", "sheet-123"])
+    assert dispatch.should_materialize("github", ["search", "abc"])
+    assert dispatch.should_materialize("github", ["https://github.com/acme/widgets"])
+    assert dispatch.should_materialize("jira", ["search", "abc"])
+    assert dispatch.should_materialize("jira", ["get", "PROJ-1"])
+    assert dispatch.should_materialize("slack", ["search", "abc"])
+    assert dispatch.should_materialize("slack", ["get", "C12345678:1773085070.240949"])
     monkeypatch.setenv(dispatch.SUPPRESS_MATERIALIZATION_ENV, "1")
     assert not dispatch.should_materialize("github", ["https://github.com/acme/widgets"])
+
+
+def test_split_common_options_strips_shared_actor_target() -> None:
+    options, cleaned = dispatch.split_common_options(
+        ["search", "platform", "--session", "demo", "--actor", "claude", "--save-as", "x.md"],
+        strip_actor=True,
+    )
+
+    assert options.session_dir == "demo"
+    assert options.actor == "claude"
+    assert options.save_as == "x.md"
+    assert cleaned == ["search", "platform"]
+
+
+def test_session_access_mode_tracks_artifact_bearing_surfaces() -> None:
+    assert dispatch.session_access_mode("jira", ["search", "platform"]) == "ambient"
+    assert dispatch.session_access_mode("jira", ["status"]) == "none"
+    assert dispatch.session_access_mode("confluence", ["get", "10101"]) == "ambient"
+    assert dispatch.session_access_mode("confluence", ["replace", "10101", "a", "b"]) == "none"
+    assert dispatch.session_access_mode("read", ["README.md"]) == "ambient"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_plugin", "expected_args", "expected_intent", "expected_kind", "expected_materialize"),
+    [
+        (
+            ["github:search platform"],
+            "github",
+            ["search", "platform"],
+            "discovery",
+            "discovery",
+            True,
+        ),
+        (
+            ["granola:list"],
+            "granola",
+            ["list"],
+            "discovery",
+            "discovery",
+            True,
+        ),
+        (
+            ["slack:workspace:demo"],
+            "slack",
+            ["status", "--workspace", "demo", "--output", "summary"],
+            "none",
+            "",
+            False,
+        ),
+        (
+            ["grafana:status"],
+            "grafana",
+            ["status"],
+            "none",
+            "",
+            False,
+        ),
+    ],
+)
+def test_read_resolve_invocation_preserves_routed_provider_artifact_intent(
+    argv: list[str],
+    expected_plugin: str,
+    expected_args: list[str],
+    expected_intent: str,
+    expected_kind: str,
+    expected_materialize: bool,
+) -> None:
+    resolved = dispatch.resolve_invocation("read", argv, content.CommonOptions())
+
+    assert resolved.resolved_plugin == expected_plugin
+    assert resolved.resolved_argv == expected_args
+    assert resolved.artifact_intent == expected_intent
+    assert resolved.artifact_kind == expected_kind
+    assert resolved.should_materialize is expected_materialize
 
 
 def test_derive_preferred_name_for_delegated_read_targets() -> None:
@@ -185,6 +268,21 @@ def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
             options,
         )
         == "p1773085070240949.md"
+    )
+
+
+def test_root_help_exposes_session_aware_read_storage_contract(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", tmp_path / "session")
+    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", tmp_path / "session")
+
+    assert cli.main(["--help"]) == 0
+
+    output = capsys.readouterr().err
+    assert (
+        "acquire one target through the right retrieval surface with session-aware storage"
+        in output
     )
 
 

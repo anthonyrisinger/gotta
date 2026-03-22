@@ -1361,6 +1361,8 @@ def test_session_graph_prefers_canonical_locator_for_binding(tmp_path: Path) -> 
             "locator": "jira:PROJ-3960",
             "followCommand": "gotta read 'jira:PROJ-3960'",
             "contentCount": 1,
+            "artifactKind": "",
+            "artifactKinds": [],
             "collision": False,
             "variant": False,
             "variantCount": 0,
@@ -1381,18 +1383,52 @@ def test_session_empty_graph_and_analyze_make_empty_state_explicit(
 
     assert session.main(["graph", "--session", str(local_root)]) == 0
     graph_output = capsys.readouterr().out
-    assert "No evidence nodes yet." in graph_output
+    assert "No materialized artifacts yet." in graph_output
     assert "gotta read &lt;locator&gt;" in graph_output
 
     assert session.main(["graph", "--session", str(local_root), "--output", "json"]) == 0
     graph_payload = json.loads(capsys.readouterr().out)
     assert graph_payload["empty"] is True
-    assert graph_payload["nextStep"].startswith("No evidence nodes yet.")
+    assert graph_payload["nextStep"].startswith("No materialized artifacts yet.")
 
     assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
     analyze_output = capsys.readouterr().out
-    assert "No evidence nodes yet." in analyze_output
+    assert "No materialized artifacts yet." in analyze_output
     assert "gotta read &lt;locator&gt;" in analyze_output
+
+
+def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"See also https://kubernetes.io/docs/reference/networking/virtual-ips/\n",
+        dirs=dirs,
+        preferred_name="search.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "slack",
+            "artifact_kind": "discovery",
+            "locator": "search platform",
+            "canonical_locator": "slack:search platform",
+            "subcommand": "search",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert session.main(["graph", "--session", str(local_root), "--output", "json"]) == 0
+    graph_payload = json.loads(capsys.readouterr().out)
+    assert graph_payload["empty"] is False
+    assert graph_payload["discoveryArtifactCount"] == 1
+    assert graph_payload["evidenceArtifactCount"] == 0
+    assert graph_payload["nextStep"].startswith("Discovery artifacts are present")
+    assert graph_payload["content"][0]["artifactKind"] == "discovery"
+
+    assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
+    analyze_output = capsys.readouterr().out
+    assert "Discovery artifacts are present, but no evidence artifacts exist yet." in analyze_output
 
 
 def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
@@ -2070,6 +2106,7 @@ def test_session_manifest_has_native_summary_surface(
         metadata={
             "tool": "gotta",
             "plugin": "read",
+            "artifact_kind": "evidence",
             "locator": "demo",
             "canonical_locator": "demo",
             "actor": "claude",
@@ -2087,6 +2124,8 @@ def test_session_manifest_has_native_summary_surface(
     assert payload["entryCount"] == 1
     assert payload["entries"][0]["actor"] == "claude"
     assert payload["entries"][0]["canonical_locator"] == "demo"
+    assert payload["entries"][0]["artifactKind"] == "evidence"
+    assert payload["evidenceArtifactCount"] == 1
     assert payload["entries"][0]["follow_command"] == "gotta read 'demo'"
     assert payload["entries"][0]["content_locator"].startswith("content:")
     assert payload["entries"][0]["artifact_locator"].startswith("artifact:demo.md@")
@@ -2157,6 +2196,7 @@ def test_session_timeline_has_native_continuity_surface(
         metadata={
             "tool": "gotta",
             "plugin": "jira",
+            "artifact_kind": "evidence",
             "locator": "PROJ-1",
             "canonical_locator": "jira:PROJ-1",
             "visibility_level": "restricted",
@@ -2173,6 +2213,7 @@ def test_session_timeline_has_native_continuity_surface(
         metadata={
             "tool": "gotta",
             "plugin": "confluence",
+            "artifact_kind": "discovery",
             "locator": "3904339970",
             "canonical_locator": "confluence:3904339970",
             "actor": "claude",
@@ -2183,7 +2224,10 @@ def test_session_timeline_has_native_continuity_surface(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "acquired"
     assert payload["eventCount"] == 2
+    assert payload["discoveryArtifactCount"] == 1
+    assert payload["evidenceArtifactCount"] == 1
     assert payload["events"][0]["mode"] == "acquired"
+    assert payload["events"][0]["artifactKind"] == "evidence"
     assert payload["events"][0]["follow_command"] == "gotta read 'jira:PROJ-1'"
     assert payload["events"][0]["locator"] == "jira:PROJ-1"
     assert payload["events"][0]["content_locator"].startswith("content:")
@@ -2191,6 +2235,7 @@ def test_session_timeline_has_native_continuity_surface(
     assert payload["events"][0]["visibility_level"] == "restricted"
     assert payload["events"][0]["visibility_boundary"] == "same_company"
     assert payload["events"][1]["actor"] == "claude"
+    assert payload["events"][1]["artifactKind"] == "discovery"
 
 
 def test_session_timeline_accepts_stdout_flag_for_uniformity(

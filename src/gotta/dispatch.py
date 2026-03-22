@@ -34,11 +34,13 @@ from gotta.builtin import (
 from gotta.invocation import (
     ResolvedInvocation,
     SUPPRESS_MATERIALIZATION_ENV as INVOCATION_SUPPRESS_MATERIALIZATION_ENV,
+    artifact_intent as resolve_artifact_intent,
     canonical_locator as resolve_canonical_locator,
     infer_content_type as resolve_content_type,
     invocation_locator as resolve_invocation_locator,
     preferred_name as resolve_preferred_name,
     resolve_invocation,
+    session_access_mode as resolve_session_access_mode,
     should_materialize as resolve_should_materialize,
 )
 from gotta.source import (
@@ -97,9 +99,14 @@ def load_plugin_runner(plugin: str) -> Callable[[list[str]], int]:
     return spec.runner
 
 
-def split_common_options(argv: list[str]) -> tuple[CommonOptions, list[str]]:
+def split_common_options(
+    argv: list[str],
+    *,
+    strip_actor: bool = False,
+) -> tuple[CommonOptions, list[str]]:
     session_dir: str | None = None
     content_dir: str | None = None
+    actor: str | None = None
     save_as: str | None = None
 
     cleaned: list[str] = []
@@ -129,6 +136,16 @@ def split_common_options(argv: list[str]) -> tuple[CommonOptions, list[str]]:
             content_dir = argv[index + 1]
             index += 2
             continue
+        if strip_actor and item.startswith("--actor="):
+            actor = item.split("=", 1)[1]
+            index += 1
+            continue
+        if strip_actor and item == "--actor":
+            if index + 1 >= len(argv):
+                raise ContentError("--actor requires a value")
+            actor = argv[index + 1]
+            index += 2
+            continue
         if item.startswith("--save-as="):
             save_as = item.split("=", 1)[1]
             index += 1
@@ -145,6 +162,7 @@ def split_common_options(argv: list[str]) -> tuple[CommonOptions, list[str]]:
     return CommonOptions(
         session_dir=session_dir,
         content_dir=content_dir,
+        actor=actor,
         save_as=save_as,
     ), cleaned
 
@@ -167,6 +185,14 @@ def derive_preferred_name(plugin: str, argv: list[str], options: CommonOptions) 
 
 def infer_content_type(plugin: str, argv: list[str], name: str) -> str:
     return resolve_content_type(plugin, argv, name)
+
+
+def artifact_intent(plugin: str, argv: list[str]) -> str:
+    return resolve_artifact_intent(plugin, argv)
+
+
+def session_access_mode(plugin: str, argv: list[str]) -> str:
+    return resolve_session_access_mode(plugin, argv)
 
 
 class CapturedStdout(io.TextIOBase):
@@ -443,6 +469,7 @@ def _materialize_invocation(
         "tool": "gotta",
         "plugin": materialize_plugin,
         "provider": resolved.provider,
+        "artifact_kind": resolved.artifact_kind,
         "subcommand": materialize_argv[0] if materialize_argv else "",
         "argv": materialize_argv,
         "locator": invocation_locator(materialize_plugin, materialize_argv),
@@ -483,8 +510,9 @@ def _materialize_invocation(
 def _emit_materialization_receipt(result: Materialization | None) -> None:
     if result is None:
         return
+    artifact_kind = str(result.artifact_kind or "content").strip() or "content"
     print(
-        f"stored content: {result.name_link} (data: {result.data_path})",
+        f"stored {artifact_kind} artifact: {result.name_link} (data: {result.data_path})",
         file=sys.stderr,
     )
     print(
@@ -508,13 +536,40 @@ def require_operational_session(dirs: ResolvedDirs) -> None:
         )
 
 
+def _runtime_dirs(options: CommonOptions, *, access: str) -> ResolvedDirs:
+    if access == "ambient" and os.environ.get(SESSION_ENV, "").strip():
+        return resolve_dirs(CommonOptions(), create=False)
+    return resolve_dirs(options, create=False)
+
+
+def _emit_sessionless_notice(resolved: ResolvedInvocation) -> None:
+    if os.environ.get("GOTTA_AMBIENT_SESSIONLESS", "") != "1":
+        return
+    if not sys.stderr.isatty():
+        return
+    if resolved.artifact_intent == "discovery":
+        print(
+            "ran sessionless; bind or pass `--session <session-id>` to store this as a discovery artifact",
+            file=sys.stderr,
+        )
+        return
+    if resolved.artifact_intent == "evidence":
+        print(
+            "ran sessionless; bind or pass `--session <session-id>` to store this as an evidence artifact",
+            file=sys.stderr,
+        )
+
+
 def run_plugin(plugin: str, argv: list[str]) -> int:
     if plugin == "session":
         options = CommonOptions()
         cleaned = argv
     else:
         try:
-            options, cleaned = split_common_options(argv)
+            options, cleaned = split_common_options(
+                argv,
+                strip_actor=plugin in {"read", "confluence", "gdocs", "gdrive", "github", "grafana", "granola", "gsheets", "jira", "slack"},
+            )
         except ContentError as exc:
             return die(str(exc))
 
@@ -527,19 +582,24 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         return die(str(exc), code=1)
 
     resolved = resolve_invocation(plugin, cleaned, options)
+    access = session_access_mode(plugin, cleaned)
     if not resolved.should_materialize:
-        if options.session_dir or options.content_dir:
+        if access != "none" and (options.session_dir or options.content_dir or options.actor):
             try:
-                dirs = resolve_dirs(options, create=False)
+                dirs = _runtime_dirs(options, access=access)
                 require_operational_session(dirs)
             except ContentError as exc:
                 return die(str(exc))
             with scoped_runtime_env(dirs):
-                return _run_callable(runner, cleaned)
-        return _run_callable(runner, cleaned)
+                code = _run_callable(runner, cleaned)
+        else:
+            code = _run_callable(runner, cleaned)
+        if code == 0:
+            _emit_sessionless_notice(resolved)
+        return code
 
     try:
-        dirs = resolve_dirs(options, create=False)
+        dirs = _runtime_dirs(options, access=access)
         require_operational_session(dirs)
     except ContentError as exc:
         return die(str(exc))

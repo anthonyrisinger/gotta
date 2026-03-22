@@ -15,7 +15,7 @@ from typing import Any, Literal
 Runner = Callable[[list[str]], int]
 RouteTarget = Callable[[str], list[str] | None]
 ShouldMaterialize = Callable[[list[str]], bool]
-SessionAccessMode = Literal["none", "read", "write"]
+SessionAccessMode = Literal["none", "read", "write", "ambient"]
 ResolveSessionAccess = Callable[[list[str]], SessionAccessMode]
 InvocationLocator = Callable[[list[str]], str]
 CanonicalLocator = Callable[[list[str]], str]
@@ -175,6 +175,14 @@ def _module_attr(module_name: str, attr: str):
     return call
 
 
+def _artifact_session_access(plugin_name: str):
+    def resolve(argv: list[str]) -> SessionAccessMode:
+        module = importlib.import_module("gotta.invocation")
+        return module.session_access_mode(plugin_name, argv)
+
+    return resolve
+
+
 def confluence_plugin() -> PluginSpec:
     return PluginSpec(
         name="confluence",
@@ -182,7 +190,7 @@ def confluence_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.confluence"),
         route_target=_module_attr("gotta.plugins.confluence", "route_target"),
         route_priority=20,
-        session_access="none",
+        session_access=_artifact_session_access("confluence"),
         canonical_locator=_module_attr("gotta.plugins.confluence", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.confluence", "preferred_name"),
     )
@@ -205,10 +213,10 @@ def ask_plugin() -> PluginSpec:
 def read_plugin() -> PluginSpec:
     return PluginSpec(
         name="read",
-        description="acquire one target through the right retrieval surface and materialize the result",
+        description="acquire one target through the right retrieval surface with session-aware storage",
         runner=_runner("gotta.plugins.read"),
         should_materialize=_module_attr("gotta.target", "should_materialize"),
-        session_access="write",
+        session_access="ambient",
         canonical_locator=_module_attr("gotta.target", "canonical_locator"),
         preferred_name=_module_attr("gotta.target", "preferred_name"),
     )
@@ -291,7 +299,7 @@ def gdocs_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.gdocs"),
         route_target=_module_attr("gotta.plugins.gdocs", "route_target"),
         route_priority=50,
-        session_access="none",
+        session_access=_artifact_session_access("gdocs"),
         canonical_locator=_module_attr("gotta.plugins.gdocs", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.gdocs", "preferred_name"),
     )
@@ -304,7 +312,7 @@ def grafana_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.grafana"),
         route_target=_module_attr("gotta.plugins.grafana", "route_target"),
         route_priority=70,
-        session_access="none",
+        session_access=_artifact_session_access("grafana"),
         canonical_locator=_module_attr("gotta.plugins.grafana", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.grafana", "preferred_name"),
     )
@@ -317,7 +325,7 @@ def granola_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.granola"),
         route_target=_module_attr("gotta.plugins.granola", "route_target"),
         route_priority=65,
-        session_access="none",
+        session_access=_artifact_session_access("granola"),
         canonical_locator=_module_attr("gotta.plugins.granola", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.granola", "preferred_name"),
     )
@@ -330,7 +338,7 @@ def gsheets_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.gsheets"),
         route_target=_module_attr("gotta.plugins.gsheets", "route_target"),
         route_priority=55,
-        session_access="none",
+        session_access=_artifact_session_access("gsheets"),
         canonical_locator=_module_attr("gotta.plugins.gsheets", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.gsheets", "preferred_name"),
     )
@@ -343,7 +351,7 @@ def gdrive_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.gdrive"),
         route_target=_module_attr("gotta.plugins.gdrive", "route_target"),
         route_priority=60,
-        session_access="none",
+        session_access=_artifact_session_access("gdrive"),
         canonical_locator=_module_attr("gotta.plugins.gdrive", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.gdrive", "preferred_name"),
     )
@@ -356,7 +364,7 @@ def github_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.github"),
         route_target=_module_attr("gotta.plugins.github", "route_target"),
         route_priority=10,
-        session_access="none",
+        session_access=_artifact_session_access("github"),
         canonical_locator=_module_attr("gotta.plugins.github", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.github", "preferred_name"),
     )
@@ -369,7 +377,7 @@ def jira_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.jira"),
         route_target=_module_attr("gotta.plugins.jira", "route_target"),
         route_priority=30,
-        session_access="none",
+        session_access=_artifact_session_access("jira"),
         canonical_locator=_module_attr("gotta.plugins.jira", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.jira", "preferred_name"),
     )
@@ -392,7 +400,7 @@ def slack_plugin() -> PluginSpec:
         runner=_runner("gotta.plugins.slack"),
         route_target=_module_attr("gotta.plugins.slack", "route_target"),
         route_priority=40,
-        session_access="none",
+        session_access=_artifact_session_access("slack"),
         canonical_locator=_module_attr("gotta.plugins.slack", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.slack", "preferred_name"),
     )
