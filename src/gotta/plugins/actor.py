@@ -42,7 +42,7 @@ from gotta.session import (
 
 
 ACTOR_HEARTBEAT_SECONDS = 30
-LIVE_STATUSES = {"starting", "active", "producing_evidence", "stalled"}
+LIVE_STATUSES = {"starting", "active", "closing", "producing_evidence", "stalled"}
 TERMINAL_STATUSES = {"completed", "failed", "incomplete", "rejected", "signed_off"}
 FEEDBACK_DIRECTIVE_PREFIX = "@@gotta "
 FEEDBACK_SURFACES = {"notes", "logs", "oops"}
@@ -717,33 +717,31 @@ def _cmd_heartbeat(work_root: Path, actor_name: str) -> int:
 def _cmd_complete(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
     current = session_plugin._actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
-    detail = (
-        f"{args.summary}; closed while runtime still live"
-        if args.summary and live_closeout
-        else "closed while runtime still live"
-        if live_closeout
-        else args.summary
-    )
-    log_message = (
-        f"reviewed while runtime still live{': ' + args.summary if args.summary else ''}"
-        if live_closeout
-        else f"reviewed{': ' + args.summary if args.summary else ''}"
-    )
+    if live_closeout:
+        return _record_requested_disposition(
+            work_root,
+            actor_name,
+            requested_status="completed",
+            summary=args.summary,
+            event="complete_requested",
+            log_message=f"requested completion{': ' + args.summary if args.summary else ''}",
+            current_status=str(current.get("status") or ""),
+            action_label="completion",
+        )
     return _write_terminal_disposition(
         work_root,
         actor_name,
         status="completed",
         summary=args.summary,
         event="completed",
-        log_message=log_message,
-        detail=detail,
+        log_message=f"reviewed{': ' + args.summary if args.summary else ''}",
+        detail=args.summary,
     )
 
 
 def _cmd_fail(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
     current = session_plugin._actor_status_payload(work_root, actor_name)
-    current_status = str(current.get("status") or "")
-    if current_status in LIVE_STATUSES and not _actor_action_is_authoritative(actor_name):
+    if _runtime_closeout_note(current):
         return _record_requested_disposition(
             work_root,
             actor_name,
@@ -751,7 +749,7 @@ def _cmd_fail(args: argparse.Namespace, work_root: Path, actor_name: str) -> int
             summary=args.summary,
             event="failed_requested",
             log_message=f"requested failure{': ' + args.summary if args.summary else ''}",
-            current_status=current_status,
+            current_status=str(current.get("status") or ""),
         )
     return _write_terminal_disposition(
         work_root,
@@ -765,9 +763,8 @@ def _cmd_fail(args: argparse.Namespace, work_root: Path, actor_name: str) -> int
 
 def _cmd_stop(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
     current = session_plugin._actor_status_payload(work_root, actor_name)
-    current_status = str(current.get("status") or "")
     live_closeout = _runtime_closeout_note(current)
-    if current_status in LIVE_STATUSES and not _actor_action_is_authoritative(actor_name):
+    if live_closeout:
         return _record_requested_disposition(
             work_root,
             actor_name,
@@ -776,30 +773,18 @@ def _cmd_stop(args: argparse.Namespace, work_root: Path, actor_name: str) -> int
             summary=args.summary,
             event="stop_requested",
             log_message=f"requested graceful stop{': ' + args.summary if args.summary else ''}",
-            current_status=current_status,
+            current_status=str(current.get("status") or ""),
             action_label="stop",
         )
-    detail = (
-        f"{args.summary}; stopped while runtime still live"
-        if args.summary and live_closeout
-        else "stopped while runtime still live"
-        if live_closeout
-        else args.summary
-    )
-    log_message = (
-        f"stopped while runtime still live{': ' + args.summary if args.summary else ''}"
-        if live_closeout
-        else f"stopped{': ' + args.summary if args.summary else ''}"
-    )
     return _write_terminal_disposition(
         work_root,
         actor_name,
         status="signed_off",
         summary=args.summary,
         event="stopped",
-        log_message=log_message,
+        log_message=f"stopped{': ' + args.summary if args.summary else ''}",
         signoff_at=_timestamp(),
-        detail=detail,
+        detail=args.summary,
     )
 
 
@@ -884,32 +869,32 @@ def _cmd_signoff(args: argparse.Namespace, work_root: Path, actor_name: str) -> 
         raise SystemExit("signoff requires `--summary`")
     current = session_plugin._actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
-    detail = (
-        f"{summary}; closed while runtime still live"
-        if live_closeout
-        else summary
-    )
-    log_message = (
-        f"signed off while runtime still live: {summary}"
-        if live_closeout
-        else f"signed off: {summary}"
-    )
+    if live_closeout:
+        return _record_requested_disposition(
+            work_root,
+            actor_name,
+            requested_status="signed_off",
+            summary=summary,
+            event="signoff_requested",
+            log_message=f"requested sign-off: {summary}",
+            current_status=str(current.get("status") or ""),
+        )
     return _write_terminal_disposition(
         work_root,
         actor_name,
         status="signed_off",
         summary=summary,
         event="signed_off",
-        log_message=log_message,
+        log_message=f"signed off: {summary}",
         signoff_at=_timestamp(),
-        detail=detail,
+        detail=summary,
     )
 
 
 def _cmd_launch(work_root: Path, actor_name: str) -> int:
     actor_name = session_plugin._resolve_bound_actor_name(work_root, actor_name)
     current = session_plugin._actor_status_payload(work_root, actor_name)
-    if current["status"] in {"starting", "active"}:
+    if _runtime_closeout_note(current):
         raise SystemExit(
             f"{actor_name} is already {current['status']}; inspect with `gotta actor status {actor_name}`"
         )

@@ -76,6 +76,7 @@ ACTOR_STATE_STATUS = {
     "bound",
     "starting",
     "active",
+    "closing",
     "stalled",
     "completed",
     "failed",
@@ -99,6 +100,7 @@ ACTOR_STALL_SECONDS = 180
 ACTOR_RUNNING_STATUS = {
     "starting",
     "active",
+    "closing",
     "producing_evidence",
 }
 WANT_FILE = "WANT.md"
@@ -1879,6 +1881,8 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         )
     if derived_status in {"starting", "active"} and evidence_live:
         derived_status = "producing_evidence"
+    if requested_status and derived_status in {"starting", "active", "producing_evidence"}:
+        derived_status = "closing"
     still_running = derived_status in ACTOR_RUNNING_STATUS and not heartbeat_stale
     request_note = ""
     if requested_status and derived_status not in ACTOR_TERMINAL_STATUS:
@@ -1910,7 +1914,27 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + " That pending disposition will become authoritative automatically "
                 "when the actor runtime exits."
             )
-    if derived_status == "producing_evidence":
+    if derived_status == "closing":
+        if notes_ready:
+            next_step = (
+                "actor close-out is pending while the runtime is still live. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Let the actor finish the current wave, then wait for runtime exit before "
+                "treating the terminal disposition as authoritative."
+                + request_note
+                + runtime_note
+            )
+        else:
+            next_step = (
+                "actor close-out is pending while the runtime is still live, but NOTES.md is "
+                "still empty. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Land one final durable note before runtime exit so the close-out has "
+                "narration, then recheck actor status."
+                + request_note
+                + runtime_note
+            )
+    elif derived_status == "producing_evidence":
         if notes_ready:
             next_step = (
                 "actor is still active and producing evidence artifacts. "

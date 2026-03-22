@@ -206,18 +206,30 @@ def load_binding_record(binding_id: str) -> dict[str, object] | None:
     return payload
 
 
-def binding_records_for_session_root(session_root: Path) -> list[dict[str, object]]:
+def binding_targets_session(binding_id: str, session_root: Path) -> bool:
+    resolved_target = resolve_binding(binding_id)
+    if resolved_target is None:
+        return False
     target = session_root.expanduser().resolve()
+    in_shared_topology = (
+        parse_grouped_session_root(target) is not None
+        or parse_shared_session_root(target) is not None
+    )
+    if in_shared_topology:
+        return shared_session_id(resolved_target) == shared_session_id(target)
+    return resolved_target == target
+
+
+def binding_records_for_session(session_root: Path) -> list[dict[str, object]]:
     root = bindings_root()
     if not root.exists():
         return []
     records: list[dict[str, object]] = []
     for candidate in sorted(root.iterdir()):
         binding_id = candidate.name
-        resolved = resolve_binding(binding_id)
-        if resolved is None or resolved != target:
+        if not binding_targets_session(binding_id, session_root):
             continue
-        record = load_binding_record(binding_id) or {}
+        record = load_binding_record(binding_id)
         if not record:
             continue
         records.append(record)

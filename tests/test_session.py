@@ -669,7 +669,7 @@ def test_bound_session_root_prefers_explicit_identity_over_hyphen_split(
     )
 
 
-def test_actor_complete_becomes_terminal_immediately_and_survives_heartbeat(
+def test_actor_complete_stays_pending_while_runtime_is_live_and_survives_heartbeat(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -694,16 +694,19 @@ def test_actor_complete_becomes_terminal_immediately_and_survives_heartbeat(
     )
     capsys.readouterr()
     payload = sessionlib._actor_status_payload(root, claude)
-    assert payload["status"] == "completed"
-    assert payload["requested_pending"] is False
-    assert payload["summary"] == "ready for review"
+    assert payload["status"] == "closing"
+    assert payload["requested_pending"] is True
+    assert payload["requested_status"] == "completed"
+    assert payload.get("summary") in {"", None}
 
     assert actor.main(["heartbeat", claude, "--session", str(root)]) == 0
     capsys.readouterr()
-    assert sessionlib._actor_status_payload(root, claude)["status"] == "completed"
+    heartbeat_payload = sessionlib._actor_status_payload(root, claude)
+    assert heartbeat_payload["status"] == "closing"
+    assert heartbeat_payload["requested_pending"] is True
 
 
-def test_actor_signoff_becomes_terminal_immediately_and_survives_heartbeat(
+def test_actor_signoff_stays_pending_while_runtime_is_live_and_survives_heartbeat(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -728,13 +731,57 @@ def test_actor_signoff_becomes_terminal_immediately_and_survives_heartbeat(
     )
     capsys.readouterr()
     payload = sessionlib._actor_status_payload(root, claude)
-    assert payload["status"] == "signed_off"
-    assert payload["requested_pending"] is False
-    assert payload["signoff_summary"] == "accepted by operator"
+    assert payload["status"] == "closing"
+    assert payload["requested_pending"] is True
+    assert payload["requested_status"] == "signed_off"
+    assert payload.get("signoff_summary") in {"", None}
 
     assert actor.main(["heartbeat", claude, "--session", str(root)]) == 0
     capsys.readouterr()
-    assert sessionlib._actor_status_payload(root, claude)["status"] == "signed_off"
+    heartbeat_payload = sessionlib._actor_status_payload(root, claude)
+    assert heartbeat_payload["status"] == "closing"
+    assert heartbeat_payload["requested_pending"] is True
+
+
+def test_actor_runtime_exit_finalizes_pending_signoff_authoritatively(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    sessionlib._write_actor_state(root, claude, {"status": "active"})
+
+    assert (
+        actor.main(
+            [
+                "signoff",
+                claude,
+                "--session",
+                str(root),
+                "--summary",
+                "accepted by operator",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        actor._finalize_actor_runtime_exit(
+            root,
+            claude,
+            returncode=0,
+            finished_at="2026-03-17T00:03:00Z",
+        )
+        == 0
+    )
+
+    payload = sessionlib._actor_status_payload(root, claude)
+    assert payload["status"] == "signed_off"
+    assert payload["requested_pending"] is False
+    assert payload["signoff_summary"] == "accepted by operator"
 
 
 def test_actor_status_treats_signoff_timestamp_as_authoritative(
@@ -790,7 +837,7 @@ def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
     payload = sessionlib._actor_status_payload(root, claude)
 
     assert "authoritative status stays active" in output
-    assert payload["status"] == "active"
+    assert payload["status"] == "closing"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "failed"
     notes_text = actor_notes_surface_path(root, claude).read_text(encoding="utf-8")
@@ -825,7 +872,7 @@ def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
     payload = sessionlib._actor_status_payload(root, claude)
 
     assert f"recorded stop request for {claude}" in output
-    assert payload["status"] == "active"
+    assert payload["status"] == "closing"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "signed_off"
     assert payload["requested_mode"] == "stop"
@@ -1342,6 +1389,118 @@ def test_session_doctor_ignores_invalid_binding_record_instead_of_crashing(
     assert payload["runtime"]["contextId"] == "thread-123"
     assert payload["checks"]["durableBindingsPresent"]["status"] == "missing"
     assert payload["bindings"] == []
+
+
+def test_session_doctor_matches_durable_bindings_at_shared_session_boundary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+    _bind_actors(local_root, capsys, "Claude")
+    claude_root = _actor_root(local_root, "claude")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    binding_id = content.session_token("thread-123")
+    topology.write_binding(
+        binding_id,
+        local_root,
+        context_id="thread-123",
+        context_source="codex_thread",
+        session_id=content.session_id(local_root),
+        actor=content.session_identity(local_root),
+        created_at="2026-03-22T00:00:00Z",
+        updated_at="2026-03-22T00:00:00Z",
+    )
+
+    assert session.main(["doctor", "--session", str(claude_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bindings"][0]["bindingId"] == binding_id
+    assert payload["checks"]["durableBindingsPresent"]["status"] == "ok"
+    assert payload["checks"]["runtimeBindingMatchesTarget"]["status"] == "ok"
+    assert payload["checks"]["sessionTopologyConsistent"]["status"] == "ok"
+
+
+def test_session_doctor_does_not_merge_unrelated_local_sessions_with_same_name(
+    tmp_path: Path, capsys
+) -> None:
+    left_root = tmp_path / "left" / "session"
+    right_root = tmp_path / "right" / "session"
+    initialize_session(left_root)
+    initialize_session(right_root)
+    topology.write_binding(
+        "left-binding",
+        left_root,
+        context_id="ctx-left",
+        context_source="codex_thread",
+        session_id=content.session_id(left_root),
+        actor=content.session_identity(left_root),
+        created_at="2026-03-22T00:00:00Z",
+        updated_at="2026-03-22T00:00:00Z",
+    )
+
+    assert session.main(["doctor", "--session", str(right_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bindings"] == []
+    assert payload["checks"]["durableBindingsPresent"]["status"] == "missing"
+
+
+def test_session_doctor_ignores_binding_with_missing_root_target(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    binding_id = content.session_token("thread-123")
+    topology.write_binding(
+        binding_id,
+        local_root,
+        context_id="thread-123",
+        context_source="codex_thread",
+        session_id=content.session_id(local_root),
+        actor=content.session_identity(local_root),
+        created_at="2026-03-22T00:00:00Z",
+        updated_at="2026-03-22T00:00:00Z",
+    )
+    topology.binding_root_path_for(binding_id).unlink()
+
+    assert session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bindings"] == []
+    assert payload["checks"]["durableBindingsPresent"]["status"] == "missing"
+    assert payload["checks"]["sessionTopologyConsistent"]["status"] == "broken"
+
+
+def test_actor_launch_rejects_live_closing_actor(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    for path in (
+        root / "WANT.md",
+        root / "GOAL.md",
+        _actor_root(root, claude) / "WANT.md",
+        _actor_root(root, claude) / "GOAL.md",
+    ):
+        path.write_text("# Ready\n\nintentional\n", encoding="utf-8")
+    sessionlib._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "requested_status": "signed_off",
+            "requested_summary": "done",
+        },
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        actor.main(["launch", claude, "--session", str(root)])
+
+    assert f"{claude} is already closing" in str(excinfo.value)
 
 
 def test_session_analyze_writes_summary_and_graph(tmp_path: Path, monkeypatch, capsys) -> None:

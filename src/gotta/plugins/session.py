@@ -33,6 +33,7 @@ from gotta.content import (
     SESSION_REPO_ENV,
     session_identity,
     session_is_initialized,
+    shared_session_root,
     sh_quote,
     state_env_path,
     load_state_env_at_root,
@@ -333,9 +334,11 @@ def _doctor_payload(dirs) -> dict[str, object]:
     state = load_state_env_at_root(dirs.session_dir)
     runtime = current_context_binding()
     runtime_root = topology.resolve_binding(runtime.binding_id)
-    bindings = topology.binding_records_for_session_root(dirs.session_dir)
+    bindings = topology.binding_records_for_session(dirs.session_dir)
+    target_session_id = str(session_env.get("GOTTA_SESSION_ID") or "")
+    target_shared_root = shared_session_root(target_session_id).resolve()
     session_payload = {
-        "sessionId": str(session_env.get("GOTTA_SESSION_ID") or ""),
+        "sessionId": target_session_id,
         "actor": session_identity(dirs.session_dir),
         "sessionRoot": str(dirs.session_dir),
         "contentRoot": str(dirs.content_dir),
@@ -349,18 +352,31 @@ def _doctor_payload(dirs) -> dict[str, object]:
         "contextSource": runtime.context_source,
         "bindingId": runtime.binding_id,
     }
-    matching_runtime_binding = runtime_root is not None and runtime_root.resolve() == dirs.session_dir.resolve()
+    session_in_shared_topology = (
+        topology.parse_grouped_session_root(dirs.session_dir.resolve()) is not None
+        or topology.parse_shared_session_root(dirs.session_dir.resolve()) is not None
+    )
+    matching_runtime_binding = (
+        runtime_root is not None
+        and topology.shared_session_id(runtime_root) == target_session_id
+    )
+    bindings_match_target = all(
+        topology.normalize_session_id(str(record.get("sessionId") or "")) == target_session_id
+        and topology.shared_session_id(Path(str(record.get("sessionRoot") or target_shared_root)))
+        == target_session_id
+        for record in bindings
+    )
     topology_consistent = (
         dirs.session_dir.exists()
         and dirs.content_dir.exists()
         and session_is_initialized(dirs.session_dir)
-        and bool(bindings)
-        and all(
-            str(record.get("sessionId") or "") == session_payload["sessionId"]
-            and str(record.get("actor") or "") == session_payload["actor"]
-            and str(record.get("sessionRoot") or "") == session_payload["sessionRoot"]
-            for record in bindings
+        and topology.shared_session_id(dirs.session_dir) == target_session_id
+        and (
+            not session_in_shared_topology
+            or dirs.content_dir.resolve() == (target_shared_root / "content").resolve()
         )
+        and bool(bindings)
+        and bindings_match_target
     )
     checks = {
         "runtimeContextPresent": {
@@ -388,7 +404,8 @@ def _doctor_payload(dirs) -> dict[str, object]:
                 else "unknown"
             ),
             "detail": (
-                f"{runtime.binding_id} targets {runtime_root}"
+                f"{runtime.binding_id} targets session "
+                f"{topology.shared_session_id(runtime_root)} at {runtime_root}"
                 if runtime_root is not None
                 else "the active runtime binding has no durable target"
             )
