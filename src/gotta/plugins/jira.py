@@ -19,7 +19,12 @@ from typing import Any
 from gotta.config import set_provider_env_values
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.routing import query_route, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+    render_visibility_metadata_lines,
+    with_visibility_metadata,
+)
 from gotta.providers import atlassian as atl
 
 OAUTH_DIR = atl.OAUTH_DIR
@@ -31,6 +36,7 @@ DEFAULT_GET_FIELDS = [
     "summary",
     "status",
     "issuetype",
+    "security",
     "assignee",
     "reporter",
     "priority",
@@ -44,6 +50,7 @@ DEFAULT_SEARCH_FIELDS = [
     "summary",
     "status",
     "issuetype",
+    "security",
     "assignee",
     "priority",
     "labels",
@@ -292,29 +299,40 @@ def _search_issue_key(query: str) -> str:
 
 
 def _search_payload_for_issue(envelope: dict[str, Any], *, query: str) -> dict[str, Any]:
-    return {
-        "query": query,
-        "limit": 1,
-        "requestedNext": "",
-        "next": "",
-        "size": 1,
-        "results": [
-            {
-                "key": envelope.get("key"),
-                "summary": envelope.get("summary"),
-                "status": envelope.get("status"),
-                "issueType": envelope.get("issueType"),
-                "project": envelope.get("project"),
-                "priority": envelope.get("priority"),
-                "assignee": envelope.get("assignee"),
-                "labels": envelope.get("labels") or [],
-                "updated": envelope.get("updated") or "",
-                "issueUrl": envelope.get("issueUrl") or "",
-            }
-        ],
-        "source_created_at": envelope.get("created") or "",
-        "source_updated_at": envelope.get("updated") or "",
-    }
+    key = str(envelope.get("key") or "")
+    return _with_jira_visibility(
+        {
+            "query": query,
+            "limit": 1,
+            "requestedNext": "",
+            "next": "",
+            "size": 1,
+            "results": [
+                _with_jira_visibility(
+                    {
+                        "key": key,
+                        "summary": envelope.get("summary"),
+                        "status": envelope.get("status"),
+                        "issueType": envelope.get("issueType"),
+                        "security": envelope.get("security"),
+                        "project": envelope.get("project"),
+                        "priority": envelope.get("priority"),
+                        "assignee": envelope.get("assignee"),
+                        "labels": envelope.get("labels") or [],
+                        "updated": envelope.get("updated") or "",
+                        "issueUrl": envelope.get("issueUrl") or "",
+                        "siteUrl": envelope.get("siteUrl") or "",
+                    },
+                    subcommand="search",
+                    locator=_issue_locator(key),
+                )
+            ],
+            "source_created_at": envelope.get("created") or "",
+            "source_updated_at": envelope.get("updated") or "",
+        },
+        subcommand="search",
+        locator=_search_locator("search", query),
+    )
 
 
 def canonical_locator(argv: list[str]) -> str:
@@ -1775,6 +1793,31 @@ def issue_url(base_url: str, issue_key: str) -> str:
     return f"{site_root(base_url)}/browse/{issue_key}"
 
 
+def _issue_locator(issue_key: str) -> str:
+    key = str(issue_key or "").strip().upper()
+    return f"jira:{key}" if key else ""
+
+
+def _search_locator(subcommand: str, query: str) -> str:
+    command = str(subcommand or "search").strip().lower() or "search"
+    text = " ".join(str(query or "").split()).strip()
+    return f"jira:{command} {text}".strip()
+
+
+def _with_jira_visibility(
+    payload: dict[str, Any],
+    *,
+    subcommand: str,
+    locator: str = "",
+) -> dict[str, Any]:
+    return with_visibility_metadata(
+        dict(payload),
+        provider="jira",
+        subcommand=subcommand,
+        locator=locator,
+    )
+
+
 def normalize_issue(
     payload: dict[str, Any], *, base_url: str, include_description: bool
 ) -> dict[str, Any]:
@@ -1791,6 +1834,7 @@ def normalize_issue(
         "summary": str(fields.get("summary") or ""),
         "status": named_object(fields.get("status")),
         "issueType": named_object(fields.get("issuetype")),
+        "security": named_object(fields.get("security")),
         "project": named_object(fields.get("project"), include_key=True),
         "priority": named_object(fields.get("priority")),
         "assignee": normalize_person(fields.get("assignee")),
@@ -1804,22 +1848,28 @@ def normalize_issue(
 
 
 def meta_issue(envelope: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "siteUrl": envelope.get("siteUrl"),
-        "issueUrl": envelope.get("issueUrl"),
-        "id": envelope.get("id"),
-        "key": envelope.get("key"),
-        "summary": envelope.get("summary"),
-        "status": envelope.get("status"),
-        "issueType": envelope.get("issueType"),
-        "project": envelope.get("project"),
-        "priority": envelope.get("priority"),
-        "assignee": envelope.get("assignee"),
-        "reporter": envelope.get("reporter"),
-        "labels": envelope.get("labels"),
-        "created": envelope.get("created"),
-        "updated": envelope.get("updated"),
-    }
+    key = str(envelope.get("key") or "")
+    return _with_jira_visibility(
+        {
+            "siteUrl": envelope.get("siteUrl"),
+            "issueUrl": envelope.get("issueUrl"),
+            "id": envelope.get("id"),
+            "key": key,
+            "summary": envelope.get("summary"),
+            "status": envelope.get("status"),
+            "issueType": envelope.get("issueType"),
+            "security": envelope.get("security"),
+            "project": envelope.get("project"),
+            "priority": envelope.get("priority"),
+            "assignee": envelope.get("assignee"),
+            "reporter": envelope.get("reporter"),
+            "labels": envelope.get("labels"),
+            "created": envelope.get("created"),
+            "updated": envelope.get("updated"),
+        },
+        subcommand="get",
+        locator=_issue_locator(key),
+    )
 
 
 def jira_issue_api_url(session: Session, issue_key: str, fields: list[str]) -> str:
@@ -1850,7 +1900,11 @@ def fetch_issue(issue_ref: IssueRef, *, fields: list[str]) -> dict[str, Any]:
     )
     if not isinstance(payload, dict):
         raise ToolError("unexpected Jira issue response")
-    return normalize_issue(payload, base_url=session.base_url, include_description=True)
+    return _with_jira_visibility(
+        normalize_issue(payload, base_url=session.base_url, include_description=True),
+        subcommand="get",
+        locator=_issue_locator(issue_ref.issue_key),
+    )
 
 
 def jql_string_literal(value: str) -> str:
@@ -1897,6 +1951,7 @@ def search_jira(
     limit: int,
     cursor: str | None,
     fields: list[str],
+    subcommand: str = "search",
 ) -> dict[str, Any]:
     session = load_session(base_url)
     payload = {
@@ -1912,8 +1967,11 @@ def search_jira(
     issues = response.get("issues")
     if not isinstance(issues, list):
         issues = []
-    results = [
-        {
+    results = []
+    for item in issues:
+        if not isinstance(item, dict):
+            continue
+        normalized = {
             key: value
             for key, value in normalize_issue(
                 item, base_url=session.base_url, include_description=False
@@ -1927,6 +1985,7 @@ def search_jira(
                 "summary",
                 "status",
                 "issueType",
+                "security",
                 "project",
                 "priority",
                 "assignee",
@@ -1934,17 +1993,25 @@ def search_jira(
                 "updated",
             }
         }
-        for item in issues
-        if isinstance(item, dict)
-    ]
-    return {
-        "query": jql,
-        "limit": limit,
-        "requestedNext": cursor,
-        "next": str(response.get("nextPageToken") or ""),
-        "size": len(results),
-        "results": results,
-    }
+        results.append(
+            _with_jira_visibility(
+                normalized,
+                subcommand=subcommand,
+                locator=_issue_locator(str(normalized.get("key") or "")),
+            )
+        )
+    return _with_jira_visibility(
+        {
+            "query": jql,
+            "limit": limit,
+            "requestedNext": cursor,
+            "next": str(response.get("nextPageToken") or ""),
+            "size": len(results),
+            "results": results,
+        },
+        subcommand=subcommand,
+        locator=_search_locator(subcommand, jql),
+    )
 
 
 def default_field_metadata(field_id: str) -> dict[str, Any]:
@@ -2370,6 +2437,11 @@ def transition_issue(
 
 
 def markdown_issue(envelope: dict[str, Any]) -> str:
+    envelope = _with_jira_visibility(
+        envelope,
+        subcommand="get",
+        locator=_issue_locator(str(envelope.get("key") or "")),
+    )
     lines = [
         f"# {envelope.get('key')}: {envelope.get('summary')}",
         "",
@@ -2387,6 +2459,7 @@ def markdown_issue(envelope: dict[str, Any]) -> str:
         "## Description",
         "",
     ]
+    lines[12:12] = render_visibility_metadata_lines(envelope)
     description_adf = envelope.get("descriptionAdf")
     description_md = ""
     if isinstance(description_adf, dict):
@@ -2400,12 +2473,18 @@ def markdown_issue(envelope: dict[str, Any]) -> str:
 
 
 def render_search_markdown(payload: dict[str, Any]) -> str:
+    payload = _with_jira_visibility(
+        payload,
+        subcommand="search",
+        locator=_search_locator("search", str(payload.get("query") or "")),
+    )
     lines = [
         "# Jira Search",
         "",
         f"- Query: `{payload.get('query') or ''}`",
         f"- Results: {payload.get('size') or 0}",
     ]
+    lines.extend(render_visibility_metadata_lines(payload))
     lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
     next_token = str(payload.get("next") or "")
     if next_token:
@@ -2414,6 +2493,11 @@ def render_search_markdown(payload: dict[str, Any]) -> str:
     for item in payload.get("results", []):
         if not isinstance(item, dict):
             continue
+        item = _with_jira_visibility(
+            item,
+            subcommand="search",
+            locator=_issue_locator(str(item.get("key") or "")),
+        )
         lines.extend(
             [
                 f"## {item.get('key')}: {item.get('summary') or ''}",
@@ -2429,6 +2513,7 @@ def render_search_markdown(payload: dict[str, Any]) -> str:
                 "",
             ]
         )
+        lines[-1:-1] = render_visibility_metadata_lines(item)
     return "\n".join(lines)
 
 
@@ -2530,6 +2615,7 @@ def cmd_search(args: argparse.Namespace) -> int:
         limit=args.limit,
         cursor=args.next,
         fields=DEFAULT_SEARCH_FIELDS,
+        subcommand="search",
     )
     if args.output == "json":
         print_json(payload)
@@ -2545,6 +2631,7 @@ def cmd_jql(args: argparse.Namespace) -> int:
         limit=args.limit,
         cursor=args.next,
         fields=DEFAULT_SEARCH_FIELDS,
+        subcommand="jql",
     )
     if args.output == "json":
         print_json(payload)

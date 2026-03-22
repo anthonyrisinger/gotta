@@ -967,9 +967,124 @@ def test_jira_search_resolves_exact_issue_keys_directly(monkeypatch, capsys) -> 
 
     assert result == 0
     assert captured["issue_key"] == "PROJ-123"
-    payload = capsys.readouterr().out
-    assert '"size": 1' in payload
-    assert '"key": "PROJ-123"' in payload
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["size"] == 1
+    assert payload["results"][0]["key"] == "PROJ-123"
+    assert payload["visibility_level"] == "restricted"
+    assert payload["results"][0]["visibility_level"] == "restricted"
+
+    assert (
+        jira.main(
+            ["search", "proj-123", "--base-url", "https://example.atlassian.net"]
+        )
+        == 0
+    )
+    rendered = capsys.readouterr().out
+    assert "- Visibility: restricted (same_company, medium)" in rendered
+
+
+def test_jira_get_and_meta_include_visibility(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: jira.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    monkeypatch.setattr(
+        jira,
+        "api_json",
+        lambda method, url, token, payload=None: {
+            "id": "10001",
+            "key": "OPS-1",
+            "fields": {
+                "summary": "Permissions regression",
+                "status": {"name": "In Progress"},
+                "issuetype": {"name": "Bug"},
+                "security": {"name": "Engineering"},
+                "project": {"key": "OPS", "name": "Operations"},
+                "priority": {"name": "High"},
+                "assignee": {"displayName": "Alex"},
+                "reporter": {"displayName": "Morgan"},
+                "labels": ["visibility"],
+                "created": "2026-03-01T10:00:00Z",
+                "updated": "2026-03-02T12:00:00Z",
+                "description": None,
+            },
+        },
+    )
+
+    assert (
+        jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net", "--output", "json"])
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["visibility_level"] == "restricted"
+    assert payload["visibility_confidence"] == "high"
+
+    assert (
+        jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net", "--output", "meta"])
+        == 0
+    )
+    meta = json.loads(capsys.readouterr().out)
+    assert meta["visibility_level"] == "restricted"
+    assert meta["visibility_confidence"] == "high"
+
+    assert jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net"]) == 0
+    rendered = capsys.readouterr().out
+    assert "- Visibility: restricted (same_company, high)" in rendered
+
+
+def test_search_jira_attaches_visibility_to_payload_and_results(monkeypatch) -> None:
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: jira.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    monkeypatch.setattr(
+        jira,
+        "api_json",
+        lambda method, url, token, payload=None: {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "OPS-1",
+                    "fields": {
+                        "summary": "Permissions regression",
+                        "status": {"name": "In Progress"},
+                        "issuetype": {"name": "Bug"},
+                        "project": {"key": "OPS", "name": "Operations"},
+                        "priority": {"name": "High"},
+                        "assignee": {"displayName": "Alex"},
+                        "labels": ["visibility"],
+                        "updated": "2026-03-02T12:00:00Z",
+                    },
+                }
+            ],
+            "nextPageToken": "",
+        },
+    )
+
+    payload = jira.search_jira(
+        base_url="https://example.atlassian.net",
+        jql='project = OPS AND text ~ "visibility"',
+        limit=5,
+        cursor=None,
+        fields=jira.DEFAULT_SEARCH_FIELDS,
+        subcommand="jql",
+    )
+
+    assert payload["visibility_level"] == "restricted"
+    assert payload["visibility_boundary"] == "same_company"
+    assert payload["results"][0]["visibility_level"] == "restricted"
+    rendered = jira.render_search_markdown(payload)
+    assert "- Visibility: restricted (same_company, medium)" in rendered
 
 
 def test_confluence_markdown_projection_strips_wide_layout_artifacts() -> None:

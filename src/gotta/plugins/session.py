@@ -217,15 +217,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument(
         "--output",
-        choices=["mermaid", "json"],
-        default="mermaid",
-        help="render the analyzed session graph as Mermaid or structured JSON",
+        choices=["text", "mermaid", "json"],
+        default="text",
+        help="render an analysis overview, Mermaid graph, or structured JSON",
     )
     analyze.add_argument(
         "--mode",
         choices=["lineage", "semantic", "all"],
         default="all",
         help="write lineage content, semantic content, or both",
+    )
+    analyze.add_argument(
+        "--focus",
+        help="narrow the analysis view to one keyword, locator, artifact name, or checksum prefix",
+    )
+    analyze.add_argument(
+        "--limit",
+        type=int,
+        default=8,
+        help="maximum items to show per overview/focus section",
     )
     analyze.add_argument("--stdout", action="store_true")
     leads.add_argument("target", nargs="?")
@@ -563,6 +573,30 @@ def _visibility_summary(payload: dict[str, object] | dict[str, str]) -> str:
     )
 
 
+def _resolved_visibility_metadata(
+    payload: dict[str, object] | dict[str, str],
+    *,
+    provider: str = "",
+    plugin: str = "",
+    subcommand: str = "",
+    locator: str = "",
+) -> dict[str, object]:
+    existing = normalize_visibility_metadata(payload)
+    classification_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"visibility_level", "visibility_boundary", "visibility_confidence", "visibility_basis"}
+    }
+    classified = classify_visibility_metadata(
+        classification_payload,
+        provider=provider,
+        plugin=plugin,
+        subcommand=subcommand,
+        locator=locator,
+    )
+    return best_visibility_metadata(existing, classified)
+
+
 def _artifact_kind(raw: object) -> str:
     value = str(raw or "").strip().lower()
     return value if value in {"discovery", "evidence"} else ""
@@ -650,6 +684,13 @@ def _manifest_payload(
                 f"gotta read {sh_quote(_artifact_human_locator(str(entry.get('preferred_name', '')).strip() or 'data', str(entry.get('checksum', '')).strip()))}"
                 if str(entry.get("checksum", "")).strip()
                 else ""
+            ),
+            **_resolved_visibility_metadata(
+                entry,
+                provider=str(entry.get("plugin") or ""),
+                plugin=str(entry.get("plugin") or ""),
+                subcommand=str(entry.get("subcommand") or ""),
+                locator=str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
             ),
         }
         for entry in paged
@@ -951,7 +992,13 @@ def _timeline_payload(
                     "fetched_at": fetched_at,
                     "follow_command": _follow_command(locator, checksum=snapshot.digest),
                     "event_kind": "source",
-                    **normalize_visibility_metadata(snapshot.metadata),
+                    **_resolved_visibility_metadata(
+                        dict(snapshot.metadata),
+                        provider=str(snapshot.metadata.get("plugin") or ""),
+                        plugin=str(snapshot.metadata.get("plugin") or ""),
+                        subcommand=str(snapshot.metadata.get("subcommand") or ""),
+                        locator=locator,
+                    ),
                 }
             )
         if normalized_mode == "best-effort":
@@ -1010,7 +1057,13 @@ def _timeline_payload(
                 checksum=str(entry.get("checksum", "")).strip(),
             ),
             "event_kind": "source",
-            **normalize_visibility_metadata(entry),
+            **_resolved_visibility_metadata(
+                entry,
+                provider=str(entry.get("plugin") or ""),
+                plugin=str(entry.get("plugin") or ""),
+                subcommand=str(entry.get("subcommand") or ""),
+                locator=str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
+            ),
         }
         for entry in _manifest_entries(dirs)
     ]
@@ -1103,7 +1156,13 @@ def _graph_payload(dirs) -> dict[str, object]:
             source_artifact_kinds.setdefault(source, set()).add(kind)
         source_visibility[source] = best_visibility_metadata(
             source_visibility.get(source, {}),
-            entry,
+            _resolved_visibility_metadata(
+                entry,
+                provider=str(plugin),
+                plugin=str(plugin),
+                subcommand=str(entry.get("subcommand") or ""),
+                locator=str(source),
+            ),
         )
         snapshot = snapshot_by_digest.get(str(checksum))
         if snapshot is not None:
@@ -1145,7 +1204,13 @@ def _graph_payload(dirs) -> dict[str, object]:
             "sourceCount": len(locators),
             "collision": len(locators) > 1,
             **(
-                normalize_visibility_metadata(snapshot_by_digest.get(checksum).metadata)
+                _resolved_visibility_metadata(
+                    dict(snapshot_by_digest.get(checksum).metadata),
+                    provider=str(snapshot_by_digest.get(checksum).metadata.get("plugin") or ""),
+                    plugin=str(snapshot_by_digest.get(checksum).metadata.get("plugin") or ""),
+                    subcommand=str(snapshot_by_digest.get(checksum).metadata.get("subcommand") or ""),
+                    locator=str(next(iter(locators), "")),
+                )
                 if snapshot_by_digest.get(checksum) is not None
                 else {}
             ),
@@ -1431,7 +1496,13 @@ def _analysis_payload(dirs) -> dict[str, object]:
         source_state["entries"] = int(source_state["entries"]) + 1
         source_state["visibility"] = best_visibility_metadata(
             source_state.get("visibility", {}),
-            entry,
+            _resolved_visibility_metadata(
+                entry,
+                provider=str(plugin),
+                plugin=str(plugin),
+                subcommand=str(entry.get("subcommand") or ""),
+                locator=str(source),
+            ),
         )
         snapshot = snapshot_by_digest.get(str(checksum))
         if snapshot is not None:
@@ -1473,7 +1544,13 @@ def _analysis_payload(dirs) -> dict[str, object]:
             "providers": sorted(content_details.get(snapshot.digest, {}).get("providers", set())),
             "actors": sorted(content_details.get(snapshot.digest, {}).get("actors", set())),
             "resourceHints": sorted(content_details.get(snapshot.digest, {}).get("resource_hints", set())),
-            **normalize_visibility_metadata(snapshot.metadata),
+            **_resolved_visibility_metadata(
+                dict(snapshot.metadata),
+                provider=str(snapshot.metadata.get("plugin") or ""),
+                plugin=str(snapshot.metadata.get("plugin") or ""),
+                subcommand=str(snapshot.metadata.get("subcommand") or ""),
+                locator=str(snapshot_locator(snapshot)),
+            ),
         }
         for snapshot in snapshots
     ]
@@ -1702,7 +1779,13 @@ def _leads_payload(
                 "lastFetchedAt": snapshot_last_fetched_at(snapshot),
                 "leadCount": len(edges),
                 "leads": edges[: max(limit, 0)],
-                **normalize_visibility_metadata(snapshot.metadata),
+                **_resolved_visibility_metadata(
+                    dict(snapshot.metadata),
+                    provider=str(snapshot.metadata.get("plugin") or ""),
+                    plugin=str(snapshot.metadata.get("plugin") or ""),
+                    subcommand=str(snapshot.metadata.get("subcommand") or ""),
+                    locator=str(snapshot_locator(snapshot)),
+                ),
             }
         )
     materialized_count = sum(1 for source in lead_sources if bool(source["materialized"]))
@@ -1799,6 +1882,7 @@ def _semantic_payload(dirs) -> dict[str, object]:
             kind="content",
             group="content",
         )
+        nodes[content_id]["materialized"] = True
         nodes[content_id]["artifactKind"] = str(content.get("artifactKind") or "")
 
     for edge in lineage["sourceEdges"]:
@@ -2043,6 +2127,771 @@ def _render_analysis_mermaid(payload: dict[str, object]) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
+
+
+def _semantic_node_follow_command(
+    node: dict[str, object],
+    *,
+    lineage: dict[str, object],
+) -> str:
+    kind = str(node.get("kind") or "")
+    node_id = str(node.get("id") or "")
+    label = str(node.get("label") or "").strip()
+    if kind == "source" and label:
+        return _follow_command(label)
+    if kind == "content" and node_id.startswith("content:"):
+        checksum = node_id.split(":", 1)[1]
+        for content_item in lineage.get("content") or []:
+            if str(content_item.get("checksum") or "") == checksum:
+                return str(content_item.get("followCommand") or "").strip()
+    return ""
+
+
+def _analysis_focus_score(node: dict[str, object], query: str) -> tuple[int, int, int, str]:
+    query_lower = query.lower()
+    label = str(node.get("label") or "")
+    node_id = str(node.get("id") or "")
+    label_lower = label.lower()
+    node_id_lower = node_id.lower()
+    score = 0
+    if label_lower == query_lower or node_id_lower == query_lower:
+        score = 5
+    elif label_lower.startswith(query_lower) or node_id_lower.startswith(query_lower):
+        score = 4
+    elif f":{query_lower}" in node_id_lower:
+        score = 3
+    elif query_lower in label_lower or query_lower in node_id_lower:
+        score = 2
+    materialized = 1 if bool(node.get("materialized")) else 0
+    discovered = 1 if bool(node.get("discovered")) else 0
+    return (score, materialized, discovered, label_lower)
+
+
+def _neighbor_sort_key(
+    node: dict[str, object],
+    *,
+    relation_labels: list[str],
+) -> tuple[int, int, int, str, str]:
+    interesting_relations = sum(
+        1
+        for label in relation_labels
+        if label not in {"source", "resource", "resolved_by", "query", "drives"}
+    )
+    return (
+        interesting_relations,
+        1 if bool(node.get("materialized")) else 0,
+        1 if bool(node.get("discovered")) else 0,
+        str(node.get("kind") or ""),
+        str(node.get("label") or "").lower(),
+    )
+
+
+def _semantic_focus_payload(
+    lineage: dict[str, object],
+    semantic: dict[str, object],
+    *,
+    focus: str,
+    limit: int,
+) -> dict[str, object]:
+    query = focus.strip()
+    if not query:
+        return {
+            "sessionDir": semantic["sessionDir"],
+            "contentDir": semantic["contentDir"],
+            "focus": "",
+            "matched": False,
+            "empty": True,
+            "nextStep": "Provide a focus keyword, locator, artifact name, or checksum prefix.",
+            "nodeCount": 0,
+            "edgeCount": 0,
+            "nodes": [],
+            "edges": [],
+            "neighbors": [],
+        }
+    nodes = [dict(node) for node in semantic.get("nodes") or []]
+    node_index = {str(node["id"]): node for node in nodes}
+    matches = sorted(
+        (node for node in nodes if _analysis_focus_score(node, query)[0] > 0),
+        key=lambda node: _analysis_focus_score(node, query),
+        reverse=True,
+    )
+    if not matches:
+        return {
+            "sessionDir": semantic["sessionDir"],
+            "contentDir": semantic["contentDir"],
+            "focus": query,
+            "matched": False,
+            "empty": True,
+            "nextStep": (
+                f"No analyzed node matched `{query}`. Try a canonical locator, artifact name, "
+                "checksum prefix, or a tighter keyword from session leads or manifest."
+            ),
+            "nodeCount": 0,
+            "edgeCount": 0,
+            "nodes": [],
+            "edges": [],
+            "neighbors": [],
+        }
+
+    root = dict(matches[0])
+    root["followCommand"] = _semantic_node_follow_command(root, lineage=lineage)
+    root_id = str(root["id"])
+    structural_labels = {"source", "resource", "resolved_by", "query", "drives"}
+    incident_edges = [
+        dict(edge)
+        for edge in semantic.get("edges") or []
+        if str(edge.get("source") or "") == root_id or str(edge.get("target") or "") == root_id
+    ]
+    semantic_incident_edges = [
+        edge for edge in incident_edges if str(edge.get("label") or "") not in structural_labels
+    ]
+    selected_edges = semantic_incident_edges or incident_edges
+    selected_neighbor_ids: list[str] = []
+    relation_labels_by_neighbor: dict[str, list[str]] = {}
+    for edge in selected_edges:
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        neighbor_id = target if source == root_id else source
+        if not neighbor_id:
+            continue
+        if neighbor_id not in relation_labels_by_neighbor:
+            relation_labels_by_neighbor[neighbor_id] = []
+        relation_labels_by_neighbor[neighbor_id].append(str(edge.get("label") or ""))
+        if neighbor_id not in selected_neighbor_ids:
+            selected_neighbor_ids.append(neighbor_id)
+    if len(selected_neighbor_ids) < max(2, limit // 2):
+        for edge in incident_edges:
+            source = str(edge.get("source") or "")
+            target = str(edge.get("target") or "")
+            neighbor_id = target if source == root_id else source
+            if not neighbor_id:
+                continue
+            if neighbor_id not in relation_labels_by_neighbor:
+                relation_labels_by_neighbor[neighbor_id] = []
+            relation_labels_by_neighbor[neighbor_id].append(str(edge.get("label") or ""))
+            if neighbor_id not in selected_neighbor_ids:
+                selected_neighbor_ids.append(neighbor_id)
+    selected_neighbor_ids = [
+        neighbor_id
+        for neighbor_id in sorted(
+            selected_neighbor_ids,
+            key=lambda neighbor_id: _neighbor_sort_key(
+                node_index.get(neighbor_id, {}),
+                relation_labels=relation_labels_by_neighbor.get(neighbor_id, []),
+            ),
+            reverse=True,
+        )[: max(limit, 0)]
+        if neighbor_id in node_index
+    ]
+    selected_node_ids = {root_id, *selected_neighbor_ids}
+    focused_edges = [
+        edge
+        for edge in incident_edges
+        if (
+            str(edge.get("source") or "") in selected_node_ids
+            and str(edge.get("target") or "") in selected_node_ids
+        )
+    ]
+    neighbor_records = []
+    for neighbor_id in selected_neighbor_ids:
+        node = dict(node_index[neighbor_id])
+        node["followCommand"] = _semantic_node_follow_command(node, lineage=lineage)
+        relation_labels = relation_labels_by_neighbor.get(neighbor_id, [])
+        neighbor_records.append(
+            {
+                **node,
+                "relations": relation_labels,
+            }
+        )
+    focused_nodes = [root, *neighbor_records]
+    suppressed_count = max(len(incident_edges) - len(focused_edges), 0)
+    return {
+        "sessionDir": semantic["sessionDir"],
+        "contentDir": semantic["contentDir"],
+        "focus": query,
+        "matched": True,
+        "empty": False,
+        "nextStep": "",
+        "nodeCount": len(focused_nodes),
+        "edgeCount": len(focused_edges),
+        "root": root,
+        "neighbors": neighbor_records,
+        "nodes": focused_nodes,
+        "edges": focused_edges,
+        "suppressedStructuralEdgeCount": suppressed_count,
+    }
+
+
+def _lineage_focus_score(item: dict[str, object], query: str) -> tuple[int, int, str]:
+    query_lower = query.lower()
+    candidates = [
+        str(item.get("label") or ""),
+        str(item.get("locator") or ""),
+        str(item.get("artifactLocator") or ""),
+        str(item.get("contentLocator") or ""),
+        str(item.get("checksum") or ""),
+    ]
+    lowered = [candidate.lower() for candidate in candidates if candidate]
+    score = 0
+    if any(candidate == query_lower for candidate in lowered):
+        score = 5
+    elif any(candidate.startswith(query_lower) for candidate in lowered):
+        score = 4
+    elif any(f":{query_lower}" in candidate for candidate in lowered):
+        score = 3
+    elif any(query_lower in candidate for candidate in lowered):
+        score = 2
+    materialized = 1 if bool(item.get("materialized")) else 0
+    label = str(item.get("label") or item.get("locator") or "")
+    return (score, materialized, label.lower())
+
+
+def _lineage_focus_payload(
+    payload: dict[str, object],
+    *,
+    focus: str,
+    limit: int,
+) -> dict[str, object]:
+    query = focus.strip()
+    if not query:
+        return {
+            "sessionDir": payload["sessionDir"],
+            "contentDir": payload["contentDir"],
+            "focus": "",
+            "matched": False,
+            "empty": True,
+            "nextStep": "Provide a focus keyword, locator, artifact name, or checksum prefix.",
+            "root": {},
+            "neighbors": [],
+            "sources": [],
+            "content": [],
+            "sourceEdges": [],
+            "revisionEdges": [],
+            "leadSources": [],
+            "leadEdges": [],
+            "discoveryArtifactCount": 0,
+            "evidenceArtifactCount": 0,
+        }
+    sources = [dict(item) for item in payload.get("sources") or []]
+    content_items = [dict(item) for item in payload.get("content") or []]
+    lead_sources = [dict(item) for item in payload.get("leadSources") or []]
+    source_index = {str(item.get("locator") or ""): item for item in sources}
+    content_index = {str(item.get("checksum") or ""): item for item in content_items}
+    lead_index = {str(item.get("locator") or ""): item for item in lead_sources}
+    candidates = [
+        *(
+            {
+                "kind": "source",
+                "label": str(item.get("locator") or ""),
+                "locator": str(item.get("locator") or ""),
+                "artifactKind": str(item.get("artifactKind") or ""),
+                "materialized": True,
+                "followCommand": str(item.get("followCommand") or ""),
+            }
+            for item in sources
+        ),
+        *(
+            {
+                "kind": "content",
+                "label": str(item.get("preferredName") or ""),
+                "checksum": str(item.get("checksum") or ""),
+                "artifactLocator": str(item.get("artifactLocator") or ""),
+                "contentLocator": str(item.get("contentLocator") or ""),
+                "artifactKind": str(item.get("artifactKind") or ""),
+                "materialized": True,
+                "followCommand": str(item.get("followCommand") or ""),
+            }
+            for item in content_items
+        ),
+        *(
+            {
+                "kind": "lead",
+                "label": str(item.get("locator") or ""),
+                "locator": str(item.get("locator") or ""),
+                "artifactKind": str(item.get("artifactKind") or ""),
+                "materialized": bool(item.get("materialized")),
+                "followCommand": str(item.get("followCommand") or ""),
+            }
+            for item in lead_sources
+        ),
+    ]
+    matches = sorted(
+        (candidate for candidate in candidates if _lineage_focus_score(candidate, query)[0] > 0),
+        key=lambda candidate: _lineage_focus_score(candidate, query),
+        reverse=True,
+    )
+    if not matches:
+        return {
+            "sessionDir": payload["sessionDir"],
+            "contentDir": payload["contentDir"],
+            "focus": query,
+            "matched": False,
+            "empty": True,
+            "nextStep": (
+                f"No analyzed lineage anchor matched `{query}`. Try a canonical locator, artifact name, "
+                "checksum prefix, or a tighter target from session leads or manifest."
+            ),
+            "root": {},
+            "neighbors": [],
+            "sources": [],
+            "content": [],
+            "sourceEdges": [],
+            "revisionEdges": [],
+            "leadSources": [],
+            "leadEdges": [],
+            "discoveryArtifactCount": 0,
+            "evidenceArtifactCount": 0,
+        }
+    root = dict(matches[0])
+    selected_sources: set[str] = set()
+    selected_content: set[str] = set()
+    selected_leads: set[str] = set()
+    if root["kind"] == "source":
+        selected_sources.add(str(root.get("locator") or ""))
+    elif root["kind"] == "content":
+        selected_content.add(str(root.get("checksum") or ""))
+    else:
+        selected_leads.add(str(root.get("locator") or ""))
+
+    for edge in payload.get("sourceEdges") or []:
+        source = str(edge.get("source") or "")
+        checksum = str(edge.get("checksum") or "")
+        if source in selected_sources:
+            selected_content.add(checksum)
+        if checksum in selected_content:
+            selected_sources.add(source)
+    for edge in payload.get("revisionEdges") or []:
+        from_checksum = str(edge.get("from") or "")
+        to_checksum = str(edge.get("to") or "")
+        if from_checksum in selected_content:
+            selected_content.add(to_checksum)
+        if to_checksum in selected_content:
+            selected_content.add(from_checksum)
+    for edge in payload.get("leadEdges") or []:
+        source_checksum = str(edge.get("sourceChecksum") or "")
+        target_locator = str(edge.get("targetLocator") or "")
+        if source_checksum in selected_content:
+            selected_leads.add(target_locator)
+        if target_locator in selected_sources or target_locator in selected_leads:
+            selected_content.add(source_checksum)
+
+    neighbor_candidates: list[dict[str, object]] = []
+    for locator in sorted(selected_sources):
+        if root["kind"] == "source" and locator == str(root.get("locator") or ""):
+            continue
+        source_item = source_index.get(locator)
+        if source_item is None:
+            continue
+        neighbor_candidates.append(
+            {
+                "kind": "source",
+                "label": locator,
+                "relation": "materialized source",
+                "followCommand": str(source_item.get("followCommand") or ""),
+                "artifactKind": str(source_item.get("artifactKind") or ""),
+                "materialized": True,
+            }
+        )
+    for checksum in sorted(selected_content):
+        if root["kind"] == "content" and checksum == str(root.get("checksum") or ""):
+            continue
+        content_item = content_index.get(checksum)
+        if content_item is None:
+            continue
+        neighbor_candidates.append(
+            {
+                "kind": "content",
+                "label": str(content_item.get("preferredName") or checksum),
+                "relation": "stored artifact",
+                "followCommand": str(content_item.get("followCommand") or ""),
+                "artifactKind": str(content_item.get("artifactKind") or ""),
+                "materialized": True,
+            }
+        )
+    for locator in sorted(selected_leads):
+        if root["kind"] == "lead" and locator == str(root.get("locator") or ""):
+            continue
+        lead_item = lead_index.get(locator)
+        if lead_item is None:
+            continue
+        neighbor_candidates.append(
+            {
+                "kind": "lead",
+                "label": locator,
+                "relation": "followable lead",
+                "followCommand": str(lead_item.get("followCommand") or ""),
+                "artifactKind": str(lead_item.get("artifactKind") or ""),
+                "materialized": bool(lead_item.get("materialized")),
+            }
+        )
+    ordered_neighbors = sorted(
+        neighbor_candidates,
+        key=lambda item: (
+            1 if bool(item.get("materialized")) else 0,
+            1 if str(item.get("kind") or "") == "content" else 0,
+            str(item.get("label") or "").lower(),
+        ),
+        reverse=True,
+    )[: max(limit, 0)]
+
+    neighbor_source_labels = {
+        str(item.get("label") or "")
+        for item in ordered_neighbors
+        if str(item.get("kind") or "") == "source"
+    }
+    neighbor_content_labels = {
+        str(item.get("label") or "")
+        for item in ordered_neighbors
+        if str(item.get("kind") or "") == "content"
+    }
+    neighbor_content_checksums = {
+        checksum
+        for checksum, item in content_index.items()
+        if str(item.get("preferredName") or checksum) in neighbor_content_labels
+    }
+    neighbor_lead_labels = {
+        str(item.get("label") or "")
+        for item in ordered_neighbors
+        if str(item.get("kind") or "") == "lead"
+    }
+    selected_sources = {
+        locator
+        for locator in selected_sources
+        if locator == str(root.get("locator") or "") or locator in neighbor_source_labels
+    }
+    selected_content = {
+        checksum
+        for checksum in selected_content
+        if checksum == str(root.get("checksum") or "") or checksum in neighbor_content_checksums
+    }
+    selected_leads = {
+        locator
+        for locator in selected_leads
+        if locator == str(root.get("locator") or "") or locator in neighbor_lead_labels
+    }
+
+    selected_source_items = [item for item in sources if str(item.get("locator") or "") in selected_sources]
+    selected_content_items = [
+        item for item in content_items if str(item.get("checksum") or "") in selected_content
+    ]
+    selected_lead_items = [
+        item
+        for item in lead_sources
+        if str(item.get("locator") or "") in selected_leads
+        and str(item.get("locator") or "") not in selected_sources
+    ]
+    selected_source_edges = [
+        edge
+        for edge in payload.get("sourceEdges") or []
+        if str(edge.get("source") or "") in selected_sources
+        and str(edge.get("checksum") or "") in selected_content
+    ]
+    selected_revision_edges = [
+        edge
+        for edge in payload.get("revisionEdges") or []
+        if str(edge.get("from") or "") in selected_content
+        and str(edge.get("to") or "") in selected_content
+    ]
+    selected_lead_edges = [
+        edge
+        for edge in payload.get("leadEdges") or []
+        if str(edge.get("sourceChecksum") or "") in selected_content
+        and str(edge.get("targetLocator") or "") in selected_leads.union(selected_sources)
+    ]
+    discovery_count = sum(
+        1 for item in selected_content_items if str(item.get("artifactKind") or "") == "discovery"
+    )
+    evidence_count = sum(
+        1 for item in selected_content_items if str(item.get("artifactKind") or "") == "evidence"
+    )
+    return {
+        "sessionDir": payload["sessionDir"],
+        "contentDir": payload["contentDir"],
+        "manifestPath": payload["manifestPath"],
+        "focus": query,
+        "matched": True,
+        "empty": False,
+        "nextStep": "",
+        "root": root,
+        "neighbors": ordered_neighbors,
+        "sources": selected_source_items,
+        "content": selected_content_items,
+        "sourceEdges": selected_source_edges,
+        "revisionEdges": selected_revision_edges,
+        "leadSources": selected_lead_items,
+        "leadEdges": selected_lead_edges,
+        "discoveryArtifactCount": discovery_count,
+        "evidenceArtifactCount": evidence_count,
+        "contentCount": len(selected_content_items),
+        "sourceCount": len(selected_source_items),
+        "sourceEdgeCount": len(selected_source_edges),
+        "revisionEdgeCount": len(selected_revision_edges),
+        "leadSourceCount": len(selected_lead_items),
+        "leadEdgeCount": len(selected_lead_edges),
+        "collisionCount": 0,
+        "collisions": [],
+        "duplicateMaterializationCount": 0,
+        "duplicateMaterializations": [],
+        "variantCount": 0,
+        "variants": [],
+    }
+
+
+def _analysis_overview_payload(
+    lineage: dict[str, object],
+    semantic: dict[str, object],
+    *,
+    limit: int,
+) -> dict[str, object]:
+    node_groups = Counter(
+        str(node.get("group") or "")
+        for node in semantic.get("nodes") or []
+        if str(node.get("group") or "")
+    )
+    node_kinds = Counter(
+        str(node.get("kind") or "")
+        for node in semantic.get("nodes") or []
+        if str(node.get("kind") or "")
+    )
+    edge_labels = Counter(
+        str(edge.get("label") or "")
+        for edge in semantic.get("edges") or []
+        if str(edge.get("label") or "")
+    )
+    provider_clusters = [
+        {"provider": provider, "nodeCount": count}
+        for provider, count in node_groups.most_common(max(limit, 0))
+        if provider != "content"
+    ]
+    dominant_kinds = [
+        {"kind": kind, "nodeCount": count}
+        for kind, count in node_kinds.most_common(max(limit, 0))
+    ]
+    dominant_relations = [
+        {"label": label, "edgeCount": count}
+        for label, count in edge_labels.most_common(max(limit, 0))
+    ]
+    structural_edge_count = sum(
+        count
+        for label, count in edge_labels.items()
+        if label in {"source", "resource", "resolved_by", "query", "drives"}
+    )
+    source_node_count = sum(
+        count for kind, count in node_kinds.items() if kind in {"source", "query", "provider"}
+    )
+    anchors = sorted(
+        [dict(item) for item in lineage.get("content") or []],
+        key=lambda item: (
+            1 if str(item.get("artifactKind") or "") == "evidence" else 0,
+            int(item.get("fetchCount") or 0),
+            str(item.get("lastFetchedAt") or ""),
+            str(item.get("preferredName") or ""),
+        ),
+        reverse=True,
+    )[: max(limit, 0)]
+    queries = [
+        dict(node)
+        for node in semantic.get("nodes") or []
+        if str(node.get("kind") or "") == "query"
+    ][: max(limit, 0)]
+    lead_sources = [dict(item) for item in (lineage.get("leadSources") or [])[: max(limit, 0)]]
+    return {
+        "sessionDir": lineage["sessionDir"],
+        "contentDir": lineage["contentDir"],
+        "manifestPath": lineage["manifestPath"],
+        "contentCount": int(lineage.get("contentCount") or 0),
+        "sourceCount": int(lineage.get("sourceCount") or 0),
+        "leadSourceCount": int(lineage.get("leadSourceCount") or 0),
+        "leadEdgeCount": int(lineage.get("leadEdgeCount") or 0),
+        "semanticNodeCount": int(semantic.get("nodeCount") or 0),
+        "semanticEdgeCount": int(semantic.get("edgeCount") or 0),
+        "discoveryArtifactCount": int(lineage.get("discoveryArtifactCount") or 0),
+        "evidenceArtifactCount": int(lineage.get("evidenceArtifactCount") or 0),
+        "nextStep": str(lineage.get("nextStep") or semantic.get("nextStep") or ""),
+        "providerClusters": provider_clusters,
+        "dominantKinds": dominant_kinds,
+        "dominantRelations": dominant_relations,
+        "materializedAnchors": anchors,
+        "querySeeds": queries,
+        "bestLeads": lead_sources,
+        "sourceHeavy": source_node_count * 2 >= max(int(semantic.get("nodeCount") or 0), 1),
+        "structuralHeavy": structural_edge_count * 2 >= max(int(semantic.get("edgeCount") or 0), 1),
+        "sourceNodeCount": source_node_count,
+        "structuralEdgeCount": structural_edge_count,
+    }
+
+
+def _render_analysis_overview_text(payload: dict[str, object]) -> str:
+    lines = [
+        f"session: {payload['sessionDir']}",
+        f"content: {payload['contentDir']}",
+        (
+            "artifacts: "
+            f"{payload['contentCount']} "
+            f"(discovery {payload['discoveryArtifactCount']}, "
+            f"evidence {payload['evidenceArtifactCount']})"
+        ),
+        (
+            "graph: "
+            f"{payload['sourceCount']} sources, "
+            f"{payload['leadSourceCount']} lead sources, "
+            f"{payload['leadEdgeCount']} lead edges"
+        ),
+        (
+            "semantic: "
+            f"{payload['semanticNodeCount']} nodes, "
+            f"{payload['semanticEdgeCount']} edges"
+        ),
+    ]
+    shape_parts: list[str] = []
+    if bool(payload.get("sourceHeavy")):
+        shape_parts.append(
+            f"source-heavy ({int(payload['sourceNodeCount'])}/{int(payload['semanticNodeCount'])} source/query/provider nodes)"
+        )
+    if bool(payload.get("structuralHeavy")):
+        shape_parts.append(
+            f"structural-edge-heavy ({int(payload['structuralEdgeCount'])}/{int(payload['semanticEdgeCount'])} structural edges)"
+        )
+    if shape_parts:
+        lines.append("shape: " + "; ".join(shape_parts))
+    if payload.get("nextStep"):
+        lines.append(f"next: {payload['nextStep']}")
+    if payload["providerClusters"]:
+        lines.append("provider clusters:")
+        for cluster in payload["providerClusters"]:
+            lines.append(f"  - {cluster['provider']}: {cluster['nodeCount']} nodes")
+    if payload["dominantKinds"]:
+        lines.append("dominant node kinds:")
+        for item in payload["dominantKinds"]:
+            lines.append(f"  - {item['kind']}: {item['nodeCount']}")
+    if payload["dominantRelations"]:
+        lines.append("dominant relations:")
+        for item in payload["dominantRelations"]:
+            lines.append(f"  - {item['label']}: {item['edgeCount']}")
+    if payload["materializedAnchors"]:
+        lines.append("materialized anchors:")
+        for anchor in payload["materializedAnchors"]:
+            providers = ", ".join(str(value) for value in anchor.get("providers") or [])
+            visibility = _visibility_summary(anchor)
+            lines.append(
+                f"  - [{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']}"
+            )
+            if providers:
+                lines.append(f"    providers: {providers}")
+            if visibility:
+                lines.append(f"    visibility: {visibility}")
+            lines.append(f"    follow: `{anchor['followCommand']}`")
+    if payload["querySeeds"]:
+        lines.append("query seeds:")
+        for node in payload["querySeeds"]:
+            lines.append(f"  - {node['label']}")
+    if payload["bestLeads"]:
+        lines.append("best leads:")
+        for lead in payload["bestLeads"]:
+            relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+            lines.append(
+                f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
+                f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+            )
+            lines.append(f"    follow: `{lead['followCommand']}`")
+    lines.append(
+        "focus: use `gotta session analyze --focus <locator|keyword> --session <session> --stdout` "
+        "to inspect one local neighborhood instead of dumping the full graph."
+    )
+    return "\n".join(lines)
+
+
+def _render_analysis_focus_text(payload: dict[str, object]) -> str:
+    lines = [
+        f"session: {payload['sessionDir']}",
+        f"focus: {payload['focus'] or '(empty)'}",
+    ]
+    if not payload.get("matched"):
+        if payload.get("nextStep"):
+            lines.append(f"next: {payload['nextStep']}")
+        return "\n".join(lines)
+    root = payload["root"]
+    lines.append(
+        f"matched: {root['label']} ({root['kind']}, {root['group']})"
+    )
+    state_bits = []
+    if root.get("artifactKind"):
+        state_bits.append(f"artifact_kind={root['artifactKind']}")
+    if bool(root.get("materialized")):
+        state_bits.append("materialized")
+    if bool(root.get("discovered")) and not bool(root.get("materialized")):
+        state_bits.append("discovered-only")
+    if state_bits:
+        lines.append("state: " + ", ".join(state_bits))
+    if root.get("followCommand"):
+        lines.append(f"follow: `{root['followCommand']}`")
+    if int(payload.get("suppressedStructuralEdgeCount") or 0) > 0:
+        lines.append(
+            "signal: "
+            f"suppressed {payload['suppressedStructuralEdgeCount']} lower-signal structural edges "
+            "to keep this neighborhood readable"
+        )
+    if payload["neighbors"]:
+        lines.append("neighbors:")
+        for neighbor in payload["neighbors"]:
+            relation = ", ".join(str(value) for value in neighbor.get("relations") or [] if str(value))
+            lines.append(
+                f"  - {neighbor['label']} ({neighbor['kind']}, {neighbor['group']}; {relation or 'adjacent'})"
+            )
+            bits = []
+            if neighbor.get("artifactKind"):
+                bits.append(f"artifact_kind={neighbor['artifactKind']}")
+            if bool(neighbor.get("materialized")):
+                bits.append("materialized")
+            if bool(neighbor.get("discovered")) and not bool(neighbor.get("materialized")):
+                bits.append("discovered-only")
+            if bits:
+                lines.append("    state: " + ", ".join(bits))
+            if neighbor.get("followCommand"):
+                lines.append(f"    follow: `{neighbor['followCommand']}`")
+    else:
+        lines.append("neighbors: none")
+    return "\n".join(lines)
+
+
+def _render_lineage_focus_text(payload: dict[str, object]) -> str:
+    lines = [
+        f"session: {payload['sessionDir']}",
+        f"focus: {payload['focus'] or '(empty)'}",
+    ]
+    if not payload.get("matched"):
+        if payload.get("nextStep"):
+            lines.append(f"next: {payload['nextStep']}")
+        return "\n".join(lines)
+    root = payload["root"]
+    lines.append(f"matched: {root['label']} ({root['kind']})")
+    state_bits = []
+    if root.get("artifactKind"):
+        state_bits.append(f"artifact_kind={root['artifactKind']}")
+    if bool(root.get("materialized")):
+        state_bits.append("materialized")
+    else:
+        state_bits.append("discovered-only")
+    if state_bits:
+        lines.append("state: " + ", ".join(state_bits))
+    if root.get("followCommand"):
+        lines.append(f"follow: `{root['followCommand']}`")
+    if payload["neighbors"]:
+        lines.append("neighbors:")
+        for neighbor in payload["neighbors"]:
+            lines.append(
+                f"  - {neighbor['label']} ({neighbor['kind']}; {neighbor['relation']})"
+            )
+            bits = []
+            if neighbor.get("artifactKind"):
+                bits.append(f"artifact_kind={neighbor['artifactKind']}")
+            bits.append("materialized" if bool(neighbor.get("materialized")) else "discovered-only")
+            lines.append("    state: " + ", ".join(bits))
+            if neighbor.get("followCommand"):
+                lines.append(f"    follow: `{neighbor['followCommand']}`")
+    else:
+        lines.append("neighbors: none")
     return "\n".join(lines)
 
 
@@ -2444,18 +3293,70 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     write_text_atomic(summary_path, json.dumps(summary, indent=2, sort_keys=True) + "\n")
 
     if args.stdout:
+        focus_payload = None
+        if str(getattr(args, "focus", "") or "").strip():
+            focus_query = str(args.focus)
+            focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
+            if args.mode == "lineage":
+                focus_payload = _lineage_focus_payload(
+                    payload,
+                    focus=focus_query,
+                    limit=focus_limit,
+                )
+            else:
+                focus_payload = _semantic_focus_payload(
+                    payload,
+                    semantic_payload,
+                    focus=focus_query,
+                    limit=focus_limit,
+                )
+        if args.output == "text":
+            if focus_payload is not None:
+                if args.mode == "lineage":
+                    print(_render_lineage_focus_text(focus_payload))
+                else:
+                    print(_render_analysis_focus_text(focus_payload))
+                return 0
+            overview = _analysis_overview_payload(
+                payload,
+                semantic_payload,
+                limit=max(int(getattr(args, "limit", 8) or 0), 0),
+            )
+            print(_render_analysis_overview_text(overview))
+            return 0
         if args.mode == "semantic":
+            if args.output == "mermaid" and focus_payload is not None:
+                print(_render_semantic_mermaid(focus_payload))
+                return 0
             if args.output == "mermaid":
                 print(semantic_mermaid)
                 return 0
             if args.output == "json":
-                print(json.dumps(semantic_payload, indent=2, sort_keys=True))
+                print(
+                    json.dumps(
+                        focus_payload if focus_payload is not None else semantic_payload,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
                 return 0
+        if args.output == "mermaid" and focus_payload is not None:
+            if args.mode == "lineage":
+                print(_render_analysis_mermaid(focus_payload))
+            else:
+                print(_render_semantic_mermaid(focus_payload))
+            return 0
         if args.output == "mermaid":
             print(mermaid)
             return 0
         if args.output == "json":
-            print(json.dumps(payload, indent=2, sort_keys=True))
+            print(
+                json.dumps(
+                    focus_payload if focus_payload is not None else payload,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return 0
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

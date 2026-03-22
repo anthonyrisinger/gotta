@@ -1963,8 +1963,10 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         )
     elif derived_status in {"starting", "active"}:
         next_step = (
-            "actor is live, but NOTES.md is still empty. Append an initial durable heartbeat note now, "
-            "even before the first evidence wave, so the session has live narration from the actor."
+            "actor is live, but NOTES.md is still empty. Give the runtime a brief startup window to land "
+            "the first durable heartbeat note before treating this as a visibility failure. If NOTES.md "
+            "is still empty after one heartbeat interval or after the first materialized artifact, "
+            "intervene and recheck actor status."
             + request_note
             + runtime_note
         )

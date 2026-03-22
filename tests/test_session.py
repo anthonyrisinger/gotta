@@ -1100,7 +1100,8 @@ def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
 
     payload = sessionlib._actor_status_payload(root, claude)
     assert payload["notes_status"] == "empty"
-    assert "heartbeat note now" in payload["next_step"]
+    assert "brief startup window" in payload["next_step"]
+    assert "one heartbeat interval" in payload["next_step"]
 
 
 def test_actor_status_requires_durable_note_when_pending_actor_already_has_evidence(
@@ -1605,6 +1606,14 @@ def test_session_graph_prefers_canonical_locator_for_binding(tmp_path: Path) -> 
             "variant": False,
             "variantCount": 0,
             "variants": [],
+            "visibility_level": "restricted",
+            "visibility_boundary": "same_company",
+            "visibility_confidence": "medium",
+            "visibility_basis": [
+                "provider=jira",
+                "subcommand=default",
+                "classification=authenticated_jira_surface",
+            ],
         }
     ]
     assert payload["content"][0]["contentLocator"] == "content:abc123"
@@ -1632,7 +1641,7 @@ def test_session_empty_graph_and_analyze_make_empty_state_explicit(
     assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
     analyze_output = capsys.readouterr().out
     assert "No materialized artifacts yet." in analyze_output
-    assert "gotta read &lt;locator&gt;" in analyze_output
+    assert "gotta read <locator>" in analyze_output
 
 
 def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
@@ -1667,6 +1676,230 @@ def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
     assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
     analyze_output = capsys.readouterr().out
     assert "Discovery artifacts are present, but no evidence artifacts exist yet." in analyze_output
+    assert "focus: use `gotta session analyze --focus <locator|keyword>" in analyze_output
+
+
+def test_session_analyze_stdout_defaults_to_text_overview_with_middle_sections(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        (
+            "# ABC-1\n\n"
+            "Depends on ABC-2.\n"
+            "Design doc: confluence:12345\n"
+            "PR: https://github.com/acme/widgets/pull/7\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"# Search\n\nSee also jira:ABC-1\n",
+        dirs=dirs,
+        preferred_name="search.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "slack",
+            "locator": "search ABC-1",
+            "canonical_locator": "slack:search ABC-1",
+            "subcommand": "search",
+            "artifact_kind": "discovery",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
+
+    output = capsys.readouterr().out
+    assert "provider clusters:" in output
+    assert "dominant relations:" in output
+    assert "materialized anchors:" in output
+    assert "best leads:" in output
+    assert "focus: use `gotta session analyze --focus <locator|keyword>" in output
+
+
+def test_session_analyze_focus_surfaces_local_neighborhood(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    issue = content.materialize_bytes(
+        (
+            "# ABC-1\n\n"
+            "Depends on ABC-2.\n"
+            "PR: https://github.com/acme/widgets/pull/7\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"# ABC-2\n\nDone.\n",
+        dirs=dirs,
+        preferred_name="ABC-2.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-2",
+            "canonical_locator": "jira:ABC-2",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--stdout",
+                "--focus",
+                "ABC-1.md",
+            ]
+        )
+        == 0
+    )
+    text_output = capsys.readouterr().out
+    assert "matched: ABC-1.md (content, content)" in text_output
+    assert "neighbors:" in text_output
+    assert "ABC-2 (source, jira;" in text_output
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--stdout",
+                "--output",
+                "json",
+                "--focus",
+                issue.digest[:8],
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matched"] is True
+    assert payload["root"]["kind"] == "content"
+    assert payload["root"]["materialized"] is True
+    assert payload["root"]["followCommand"].startswith("gotta read 'artifact:ABC-1.md@")
+
+
+def test_session_analyze_focus_respects_lineage_mode(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        (
+            "# ABC-1\n\n"
+            "Depends on ABC-2.\n"
+            "PR: https://github.com/acme/widgets/pull/7\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"# ABC-2\n\nDone.\n",
+        dirs=dirs,
+        preferred_name="ABC-2.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-2",
+            "canonical_locator": "jira:ABC-2",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--stdout",
+                "--output",
+                "json",
+                "--mode",
+                "lineage",
+                "--focus",
+                "jira:ABC-1",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matched"] is True
+    assert payload["root"]["kind"] == "source"
+    assert payload["root"]["label"] == "jira:ABC-1"
+    assert "nodes" not in payload
+    assert "sources" in payload
+    assert any(item["locator"] == "jira:ABC-1" for item in payload["sources"])
+    assert any(item["preferredName"] == "ABC-1.md" for item in payload["content"])
+    assert any(item["visibility_level"] == "restricted" for item in payload["content"])
+    assert payload["leadSourceCount"] == len(payload["leadSources"])
+
+
+def test_session_manifest_falls_back_to_jira_visibility_when_snapshot_metadata_is_unknown(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"# OPS-1\n\nBody.\n",
+        dirs=dirs,
+        preferred_name="OPS-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "subcommand": "get",
+            "locator": "get OPS-1",
+            "canonical_locator": "jira:OPS-1",
+            "visibility_level": "unknown",
+            "visibility_boundary": "unknown",
+            "visibility_confidence": "low",
+            "visibility_basis": ["provider=jira", "classification=insufficient_evidence"],
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert session.main(["manifest", "--session", str(local_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entries"][0]["visibility_level"] == "restricted"
+    assert payload["entries"][0]["visibility_boundary"] == "same_company"
+    assert payload["entries"][0]["visibility_confidence"] == "medium"
 
 
 def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(

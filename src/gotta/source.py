@@ -414,6 +414,99 @@ def _classify_github_visibility(payload: Mapping[str, Any]) -> dict[str, Any]:
     return unknown_visibility(provider="github")
 
 
+def _jira_security_name(payload: Mapping[str, Any]) -> str:
+    for key in ("security", "securityLevel"):
+        value = payload.get(key)
+        if isinstance(value, Mapping):
+            name = str(value.get("name") or value.get("id") or "").strip()
+            if name:
+                return name
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _jira_issue_like_payload(payload: Mapping[str, Any]) -> bool:
+    if str(payload.get("issueUrl") or "").strip():
+        return True
+    if str(payload.get("siteUrl") or "").strip() and str(payload.get("key") or "").strip():
+        return True
+    project = payload.get("project")
+    if isinstance(project, Mapping) and str(project.get("key") or "").strip():
+        return True
+    return False
+
+
+def _classify_jira_visibility(
+    payload: Mapping[str, Any],
+    *,
+    subcommand: str,
+    locator: str,
+) -> dict[str, Any]:
+    security_name = _jira_security_name(payload)
+    if security_name:
+        return visibility_metadata(
+            level="restricted",
+            boundary="same_company",
+            confidence="high",
+            basis=[
+                "provider=jira",
+                f"issue.security={security_name}",
+            ],
+        )
+    results = payload.get("results")
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, Mapping):
+                continue
+            security_name = _jira_security_name(item)
+            if security_name:
+                return visibility_metadata(
+                    level="restricted",
+                    boundary="same_company",
+                    confidence="high",
+                    basis=[
+                        "provider=jira",
+                        f"search.result.security={security_name}",
+                    ],
+                )
+        if results:
+            return visibility_metadata(
+                level="restricted",
+                boundary="same_company",
+                confidence="medium",
+                basis=[
+                    "provider=jira",
+                    "search.results=present",
+                    "classification=authenticated_jira_surface",
+                ],
+            )
+    if _jira_issue_like_payload(payload):
+        return visibility_metadata(
+            level="restricted",
+            boundary="same_company",
+            confidence="medium",
+            basis=[
+                "provider=jira",
+                "issue.url=present",
+                "classification=authenticated_jira_surface",
+            ],
+        )
+    if subcommand in {"get", "search", "jql"} or locator.startswith("jira:"):
+        return visibility_metadata(
+            level="restricted",
+            boundary="same_company",
+            confidence="medium",
+            basis=[
+                "provider=jira",
+                f"subcommand={subcommand or 'default'}",
+                "classification=authenticated_jira_surface",
+            ],
+        )
+    return unknown_visibility(provider="jira")
+
+
 def classify_visibility_metadata(
     payload: Any,
     *,
@@ -445,6 +538,18 @@ def classify_visibility_metadata(
         return _classify_slack_visibility(payload)
     if normalized_provider == "github" and isinstance(payload, Mapping):
         return _classify_github_visibility(payload)
+    if normalized_provider == "jira" and isinstance(payload, Mapping):
+        return _classify_jira_visibility(
+            payload,
+            subcommand=normalized_subcommand,
+            locator=locator.strip(),
+        )
+    if normalized_provider == "jira":
+        return _classify_jira_visibility(
+            {},
+            subcommand=normalized_subcommand,
+            locator=locator.strip(),
+        )
     if normalized_provider == "web":
         return unknown_visibility(provider="web")
     if normalized_provider in {
