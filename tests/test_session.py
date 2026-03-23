@@ -11,7 +11,7 @@ from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
 from gotta import content, dispatch
 from gotta.friction import oops_records
 from gotta import leads
-from gotta.logs import log_records
+from gotta.logs import append_log_record, log_records
 from gotta import main as cli
 from gotta import topology
 from gotta.actor import SESSION_ACTOR_ENV
@@ -1237,6 +1237,78 @@ def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
     assert "one heartbeat interval" in payload["next_step"]
 
 
+def test_actor_status_reports_pulse_after_actor_log_before_note(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    actor_root = _actor_root(root, "claude")
+    sessionlib._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "started_at": sessionlib.datetime.now(tz=sessionlib.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+    append_log_record(
+        actor_root,
+        message="hydrated the thread root",
+        actor=claude,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = sessionlib._actor_status_payload(root, claude)
+
+    assert payload["notes_status"] == "empty"
+    assert payload["voice"] == "pulse"
+    assert "actor-authored pulse through logs, friction, or shared evidence" in payload["next_step"]
+    assert "first durable actor note has not landed yet" in payload["next_step"]
+
+
+def test_actor_status_reports_pulse_after_actor_evidence_before_note(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    actor_name = _actor_id(root, "claude")
+    sessionlib._write_actor_state(
+        root,
+        actor_name,
+        {
+            "status": "active",
+            "started_at": sessionlib.datetime.now(tz=sessionlib.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+    content.materialize_bytes(
+        b"# Evidence\n\nSomething landed.\n",
+        dirs=dirs,
+        preferred_name="evidence.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "read",
+            "locator": "https://example.com/evidence",
+            "canonical_locator": "https://example.com/evidence",
+            "actor": actor_name,
+        },
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = sessionlib._actor_status_payload(root, actor_name)
+
+    assert payload["status"] == "producing_evidence"
+    assert payload["notes_status"] == "empty"
+    assert payload["voice"] == "pulse"
+    assert "logs, friction, or shared evidence" in payload["next_step"]
+    assert "first durable actor note has not landed yet" in payload["next_step"]
+
+
 def test_actor_status_requires_durable_note_when_pending_actor_already_has_evidence(
     tmp_path: Path, capsys
 ) -> None:
@@ -1265,6 +1337,7 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
     assert payload["status"] == "pending"
     assert payload["artifact_count"] == 1
     assert payload["notes_status"] == "empty"
+    assert payload["voice"] == "pulse"
     assert "Land one actor-authored durable note now" in payload["next_step"]
 
 

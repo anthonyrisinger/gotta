@@ -1925,6 +1925,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             )
     voice_missing = voice == "missing"
     voice_setup = voice == "setup"
+    voice_pulse = voice == "pulse"
     if derived_status == "closing":
         if notes_ready:
             next_step = (
@@ -1932,6 +1933,17 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + (evidence_note + " " if evidence_note else "")
                 + "Let the actor finish the current wave, then wait for runtime exit before "
                 "treating the terminal disposition as authoritative."
+                + request_note
+                + runtime_note
+            )
+        elif voice_pulse:
+            next_step = (
+                "actor close-out is pending while the runtime is still live. Live actor pulse is "
+                "already landing through logs, friction, or shared evidence, but the final durable "
+                "actor note is still missing. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Land one final actor-authored durable note before runtime exit so the close-out "
+                "has durable voice, then recheck actor status."
                 + request_note
                 + runtime_note
             )
@@ -1965,6 +1977,17 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + request_note
                 + runtime_note
             )
+        elif voice_pulse:
+            next_step = (
+                "actor is still active and producing evidence artifacts. Live actor pulse is "
+                "already present in logs, friction, or shared evidence, but the first durable actor "
+                "note has not landed yet. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Let the current evidence wave finish, then append an actor-authored durable note "
+                "before requesting completion or sign-off."
+                + request_note
+                + runtime_note
+            )
         elif voice_setup:
             next_step = (
                 "actor is still active and producing evidence artifacts. Setup pulse is present, "
@@ -1990,6 +2013,15 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "actor is still active and actor voice is present. "
             "Use NOTES.md for live actor visibility; recheck `gotta actor status "
             f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
+            + request_note
+            + runtime_note
+        )
+    elif derived_status in {"starting", "active"} and voice_pulse:
+        next_step = (
+            "actor is live and already landing actor-authored pulse through logs, friction, or "
+            "shared evidence, but the first durable actor note has not landed yet. Give the runtime "
+            "a brief window to turn that pulse into a durable note before treating this as a "
+            "visibility failure."
             + request_note
             + runtime_note
         )
@@ -2039,6 +2071,12 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 "durable sign-off with "
                 f"`gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
             )
+        elif voice_pulse:
+            next_step = (
+                "actor run is complete and actor pulse landed in logs, friction, or shared "
+                "evidence, but the final durable note is still missing. Add one actor-authored "
+                "durable note now, then sign off intentionally."
+            )
         else:
             next_step = (
                 "actor run is complete and evidence landed, but actor voice is still missing. Wait "
@@ -2063,6 +2101,14 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             + "Keep landing notes as the session evolves; when this actor's contribution is "
             "materially complete, record the authoritative close-out intentionally with "
             f"`gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
+        )
+    elif derived_status in {"pending", "bound"} and voice_pulse:
+        next_step = (
+            "actor pulse is present in logs, friction, or shared evidence, but no durable actor "
+            "note has landed yet. "
+            + (evidence_note + " " if evidence_note else "")
+            + "Land one actor-authored durable note now so review, handoff, and session-wide "
+            "inspection surfaces have durable actor voice."
         )
     elif derived_status in {"pending", "bound"} and notes_ready:
         next_step = (
