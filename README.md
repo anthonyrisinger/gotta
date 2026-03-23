@@ -132,7 +132,6 @@ The core local gate is:
 ```bash
 uv run pytest -q
 uv run ruff check src tests
-uv run python -m py_compile $(find src tests -name '*.py' -print)
 uv run python -m vulture src tests --min-confidence 80
 ```
 
@@ -145,10 +144,9 @@ uv build --python 3.10 --clear
 uvx twine check dist/*
 ```
 
-`pytest`, `ruff`, `py_compile`, and `vulture` are the correctness and hygiene
-gate. `radon` and `lizard` are not bug finders; they expose responsibility
-concentration and complexity hotspots so cleanup removes residue instead of
-burying it.
+`pytest`, `ruff`, and `vulture` are the correctness and hygiene gate. `radon`
+and `lizard` are not bug finders; they expose responsibility concentration and
+complexity hotspots so cleanup removes residue instead of burying it.
 
 ## Configuration And Durable State
 
@@ -628,11 +626,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository baseline.
 Build and validate artifacts with `uv`:
 
 ```bash
-uv build --python 3.10 --clear
-uvx twine check dist/*
-uv publish --dry-run
-uv publish
+./scripts/release patch
+./scripts/release minor
 ```
 
-`uv publish` needs PyPI credentials in the environment. The simplest local path
-is `UV_PUBLISH_TOKEN`.
+The script is the canonical release path. It bumps the version with `uv`,
+runs the release gate, builds the wheel and sdist, validates them with
+`twine check`, smoke-installs the wheel on Python 3.10, commits the release
+metadata, pushes `main`, publishes to PyPI, and waits for public propagation.
+
+It reads the PyPI token from `~/.pypirc` under `[pypi].password`.

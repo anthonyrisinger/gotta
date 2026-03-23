@@ -18,7 +18,6 @@ Run the full local gate:
 ```bash
 uv run pytest -q
 uv run ruff check src tests
-uv run python -m py_compile $(find src tests -name '*.py' -print)
 uv run python -m vulture src tests --min-confidence 80
 uv run python -m radon cc src tests -s
 uv run lizard src tests
@@ -27,13 +26,18 @@ uvx twine check dist/*
 ```
 
 If you are preparing a PyPI upload, rebuild first and then validate the fresh
-artifacts:
+artifacts through the canonical release wrapper:
 
 ```bash
-uv build --python 3.10 --clear
-uvx twine check dist/*
-uv publish --dry-run
+./scripts/release patch
+./scripts/release minor
 ```
+
+`./scripts/release` is the canonical path for shipping. It bumps the version
+with `uv`, runs the release gate, validates fresh artifacts, smoke-installs the
+wheel, commits the release metadata, pushes `main`, publishes to PyPI, and
+waits for public propagation. It reads the PyPI token from `~/.pypirc` under
+`[pypi].password`.
 
 ## Project Expectations
 

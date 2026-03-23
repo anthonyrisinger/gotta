@@ -1,0 +1,123 @@
+#!/usr/bin/env sh
+
+set -eu
+
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/release [patch|minor]
+
+Bump the package version, run the release gate, commit the release metadata,
+push main, and publish the validated artifacts to PyPI.
+EOF
+}
+
+read_pypi_token() {
+  python3 - <<'PY'
+import configparser
+from pathlib import Path
+
+path = Path.home() / ".pypirc"
+config = configparser.RawConfigParser()
+if not config.read(path):
+    raise SystemExit(f"missing {path}")
+if not config.has_section("pypi"):
+    raise SystemExit(f"{path} is missing [pypi]")
+
+token = config.get("pypi", "password", fallback="").strip()
+if not token.startswith("pypi-"):
+    raise SystemExit("expected a PyPI token in ~/.pypirc [pypi].password")
+
+print(token)
+PY
+}
+
+wait_for_pypi() {
+  target="$1"
+
+  TARGET_VERSION="$target" python3 - <<'PY'
+import json
+import os
+import time
+import urllib.request
+
+target = os.environ["TARGET_VERSION"]
+url = "https://pypi.org/pypi/gotta/json"
+
+for _ in range(20):
+    with urllib.request.urlopen(url, timeout=20) as response:
+        version = json.load(response)["info"]["version"]
+    print(f"PyPI reports {version}")
+    if version == target:
+        raise SystemExit(0)
+    time.sleep(3)
+
+raise SystemExit(f"PyPI never reported {target}")
+PY
+}
+
+if [ "$#" -ne 1 ]; then
+  usage
+  exit 64
+fi
+
+case "$1" in
+  patch|minor)
+    bump="$1"
+    ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+branch="$(git branch --show-current)"
+[ "$branch" = "main" ] || die "refusing to release from $branch"
+
+status="$(git status --porcelain)"
+[ -z "$status" ] || die "refusing to release with a dirty worktree"
+
+token="$(read_pypi_token)"
+
+git pull --ff-only origin main
+
+version="$(uv version --bump "$bump" --no-sync --short)"
+sdist="dist/gotta-${version}.tar.gz"
+wheel="dist/gotta-${version}-py3-none-any.whl"
+
+uv lock --check
+uv run pytest -q
+uv run ruff check src tests
+uv run python -m vulture src tests --min-confidence 80
+uv build --python 3.10 --clear
+uvx twine check "$sdist" "$wheel"
+
+tmpdir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmpdir"
+}
+trap cleanup EXIT INT TERM
+
+uv venv --python 3.10 "$tmpdir/venv"
+uv pip install --python "$tmpdir/venv/bin/python" "$wheel"
+"$tmpdir/venv/bin/gotta" --help >/dev/null
+"$tmpdir/venv/bin/gotta" session --help >/dev/null
+"$tmpdir/venv/bin/gotta" read --help >/dev/null
+
+git add pyproject.toml uv.lock
+git commit -m "release: bump to ${version}"
+git push origin main
+
+export UV_PUBLISH_TOKEN="$token"
+uv publish --dry-run "$sdist" "$wheel"
+uv publish "$sdist" "$wheel"
+
+wait_for_pypi "$version"
+git status --short --branch
