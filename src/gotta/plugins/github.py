@@ -1992,6 +1992,47 @@ def _object_capture_payload(
     }
 
 
+def _canonicalize_capture_url(target: str) -> str:
+    if not target.startswith(("http://", "https://")):
+        return target
+    try:
+        parsed = urllib.parse.urlsplit(target)
+    except ValueError:
+        return target
+    host = parsed.netloc.strip().lower()
+    if host in {"raw.githubusercontent.com", "raw.github.com"} or host.endswith(
+        ".githubusercontent.com"
+    ):
+        filtered = [
+            (key, value)
+            for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            if key.casefold() != "token"
+        ]
+        return urllib.parse.urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                urllib.parse.urlencode(filtered, doseq=True),
+                parsed.fragment,
+            )
+        )
+    return target
+
+
+def _canonicalize_capture_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _canonicalize_capture_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_canonicalize_capture_value(item) for item in value]
+    if isinstance(value, str):
+        return _canonicalize_capture_url(value)
+    return value
+
+
 def capture(argv: list[str], _options: Any) -> Capture:
     parsed = parse_args(argv, emit_help=False)
     if parsed.command == "search":
@@ -2026,6 +2067,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
                 search_type=parsed.search_type,
                 global_search=parsed.global_search,
             )
+        payload = _canonicalize_capture_value(payload)
         return Capture(
             data=json_bytes(payload),
             name=preferred_name(argv, object()),
@@ -2055,6 +2097,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
                 raise RuntimeError(str(exc)) from exc
             path, blob = readme
             payload = _blob_json_payload(path, blob, owner=owner, repo=repo, ref=ref)
+        payload = _canonicalize_capture_value(payload)
         return Capture(
             data=blob,
             name=Path(path).name or "github.bin",
@@ -2077,7 +2120,8 @@ def capture(argv: list[str], _options: Any) -> Capture:
         entries = list_directory_entries(gh, owner=owner, repo=repo, ref=ref, path=path)
         if len(entries) == 1 and str(entries[0].get("type") or "") == "file":
             file_path = str(entries[0].get("path") or path)
-            blob = decode_content_blob(entries[0])
+            payload = _canonicalize_capture_value(entries[0])
+            blob = decode_content_blob(payload)
             return Capture(
                 data=blob,
                 name=Path(file_path).name or "github.bin",
@@ -2090,7 +2134,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
                     "github_ref": ref,
                     "github_path": file_path,
                 },
-                view={"payload": entries[0]},
+                view={"payload": payload},
             )
         readme_path, readme_summary = readme_rollup(
             gh,
@@ -2123,6 +2167,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
             readme_path=readme_path,
             readme_summary=readme_summary,
         )
+        payload = _canonicalize_capture_value(payload)
         return Capture(
             data=json_bytes(payload),
             name=_preferred_render_name(parsed, "json"),
@@ -2152,6 +2197,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
             ],
         )
         payload = with_visibility_metadata(payload, provider="github", locator=url)
+        payload = _canonicalize_capture_value(payload)
         return Capture(
             data=json_bytes(_object_capture_payload("pr", payload, owner=owner, repo=repo)),
             name=_preferred_render_name(parsed, "json"),
@@ -2180,6 +2226,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
             ],
         )
         payload = with_visibility_metadata(payload, provider="github", locator=url)
+        payload = _canonicalize_capture_value(payload)
         return Capture(
             data=json_bytes(_object_capture_payload("issue", payload, owner=owner, repo=repo)),
             name=_preferred_render_name(parsed, "json"),
@@ -2197,6 +2244,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
         owner, repo, sha, _ = match.groups()
         payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/commits/{sha}"])
         payload = with_visibility_metadata(payload, provider="github", locator=url)
+        payload = _canonicalize_capture_value(payload)
         commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
         author = commit.get("author") if isinstance(commit, dict) else {}
         return Capture(
@@ -2230,6 +2278,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
             api_target += f"&path={urllib.parse.quote(path, safe='/')}"
         raw_payload = gh_json_value(gh, ["api", api_target])
         payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        payload = _canonicalize_capture_value(payload)
         authored_dates = [
             str(item.get("commit", {}).get("author", {}).get("date") or "")
             for item in payload
@@ -2254,6 +2303,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
         owner, repo, tag, _ = match.groups()
         payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/releases/tags/{tag}"])
         payload = with_visibility_metadata(payload, provider="github", locator=url)
+        payload = _canonicalize_capture_value(payload)
         published = str(payload.get("published_at") or payload.get("created_at") or "")
         return Capture(
             data=json_bytes(_object_capture_payload("release", payload, owner=owner, repo=repo)),
@@ -2272,6 +2322,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
         owner, repo = match.groups()
         raw_payload = gh_json_value(gh, ["api", f"repos/{owner}/{repo}/releases?per_page=20"])
         payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        payload = _canonicalize_capture_value(payload)
         published = [str(item.get("published_at") or item.get("created_at") or "") for item in payload]
         return Capture(
             data=json_bytes(_object_capture_payload("releases", payload, owner=owner, repo=repo)),
@@ -2299,6 +2350,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
             ],
         )
         payload = with_visibility_metadata(payload, provider="github", locator=url)
+        payload = _canonicalize_capture_value(payload)
         default_branch_ref = payload.get("defaultBranchRef")
         default_branch = str(default_branch_ref.get("name") or "") if isinstance(default_branch_ref, dict) else ""
         entries: list[dict[str, object]] = []

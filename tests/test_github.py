@@ -43,6 +43,22 @@ def test_github_canonical_locator_and_preferred_name_ignore_flag_order() -> None
     assert github.preferred_name(argv, options) == "widgets.json"
 
 
+def test_github_capture_canonicalizes_volatile_download_tokens() -> None:
+    payload = {
+        "download_url": "https://raw.githubusercontent.com/acme/widgets/main/README.md?token=secret",
+        "html_url": "https://github.com/acme/widgets/blob/main/README.md",
+        "nested": [
+            "https://raw.githubusercontent.com/acme/widgets/main/app.py?token=another",
+        ],
+    }
+
+    canonical = github._canonicalize_capture_value(payload)
+
+    assert canonical["download_url"] == "https://raw.githubusercontent.com/acme/widgets/main/README.md"
+    assert canonical["html_url"] == "https://github.com/acme/widgets/blob/main/README.md"
+    assert canonical["nested"] == ["https://raw.githubusercontent.com/acme/widgets/main/app.py"]
+
+
 def test_parse_args_supports_search_surface() -> None:
     assert github.parse_args(["search", "relay"]) == github.ParsedArgs(
         command="search",

@@ -3093,6 +3093,38 @@ def test_materialize_bytes_eagerly_writes_lead_cache(tmp_path: Path, monkeypatch
     }
 
 
+def test_materialize_bytes_eagerly_mines_projected_display_for_leads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dirs = initialize_session(tmp_path / "local")
+    monkeypatch.setattr(
+        read_plugin,
+        "stored_display",
+        lambda _path: (
+            b"Design doc: https://docs.google.com/document/d/doc-123/edit\n",
+            "markdown",
+        ),
+    )
+
+    result = content.materialize_bytes(
+        b'<h1>Example Heading</h1><p><a href="https://www.google.com/url?q=https://docs.google.com/document/d/doc-123/edit&amp;ust=1&amp;usg=2">Design</a></p>',
+        dirs=dirs,
+        preferred_name="40404.html",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "locator": "get 40404",
+            "canonical_locator": "confluence:40404",
+            "content_type": "text/html",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    payload = json.loads((result.content_dir / "leads.json").read_text(encoding="utf-8"))
+
+    assert {entry["canonical_locator"] for entry in payload["entries"]} == {"gdocs:doc-123"}
+
+
 def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None:
     dirs = initialize_session(tmp_path / "local")
     result = content.materialize_bytes(

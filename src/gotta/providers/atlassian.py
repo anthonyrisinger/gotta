@@ -76,18 +76,31 @@ def decode_confluence_tiny_page_id(token: str) -> str | None:
     normalized = token.strip()
     if not normalized:
         return None
-    if len(normalized) > 6:
+    if len(normalized) < 5 or len(normalized) > 11:
         return None
-    # Confluence tiny links drop trailing "A" bytes from the 6-character payload
-    # and use "-" / "_" substitutions in their URL form.
-    normalized = normalized.replace("-", "/").replace("_", "+").ljust(6, "A")
-    try:
-        raw = base64.b64decode(normalized + "==", validate=True)
-    except (ValueError, binascii.Error):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized):
         return None
-    if len(raw) != 4:
+    if set(normalized) == {"A"}:
         return None
-    return str(int.from_bytes(raw, "little", signed=False))
+    # Confluence tiny links use URL-safe base64 over a little-endian page id. The
+    # service may trim trailing "A" bytes from the encoded token, but arbitrary
+    # short base64 fragments are not valid page refs. Require a plausible token
+    # shape and a round-trip encoding that matches the supplied token plus only
+    # trimmed trailing "A" bytes.
+    encoded = normalized.replace("-", "/").replace("_", "+")
+    for extra_as in range(4):
+        candidate = encoded + ("A" * extra_as)
+        padded = candidate + ("=" * ((4 - len(candidate) % 4) % 4))
+        try:
+            raw = base64.b64decode(padded, validate=True)
+        except (ValueError, binascii.Error):
+            continue
+        if 4 <= len(raw) <= 8:
+            roundtrip = base64.b64encode(raw).decode().rstrip("=")
+            if roundtrip != candidate:
+                continue
+            return str(int.from_bytes(raw, "little", signed=False))
+    return None
 
 
 def extract_confluence_page_id(raw: str) -> str | None:

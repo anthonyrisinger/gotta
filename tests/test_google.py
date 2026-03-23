@@ -170,6 +170,64 @@ def test_gdrive_capture_name_uses_truthful_suffixes_for_binary_content() -> None
     )
 
 
+def test_gdocs_capture_normalizes_google_redirect_wrappers(monkeypatch) -> None:
+    monkeypatch.setattr(gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"})
+    monkeypatch.setattr(
+        gdocs,
+        "document_meta",
+        lambda _token, _doc_id: {
+            "title": "Doc",
+            "url": "https://docs.google.com/document/d/doc-123/edit",
+        },
+    )
+    monkeypatch.setattr(gdocs, "document_json", lambda _token, _doc_id: {"documentId": "doc-123"})
+    monkeypatch.setattr(
+        gdocs,
+        "drive_export",
+        lambda _token, _doc_id, _mime: (
+            b'<a href="https://www.google.com/url?q=https://drive.google.com/file/d/file-123/view?ts%3D123'
+            b'&amp;sa=D&amp;source=editors&amp;ust=999&amp;usg=abc">Diagram</a>'
+        ),
+    )
+
+    capture = gdocs.capture(["get", "doc-123"], object())
+
+    text = capture.data.decode("utf-8")
+    assert "https://drive.google.com/file/d/file-123/view?ts=123" in text
+    assert "https://www.google.com/url?" not in text
+    assert "ust=" not in text
+    assert "usg=" not in text
+
+
+def test_gdocs_capture_normalizes_google_redirect_wrappers_without_www(monkeypatch) -> None:
+    monkeypatch.setattr(gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"})
+    monkeypatch.setattr(
+        gdocs,
+        "document_meta",
+        lambda _token, _doc_id: {
+            "title": "Doc",
+            "url": "https://docs.google.com/document/d/doc-123/edit",
+        },
+    )
+    monkeypatch.setattr(gdocs, "document_json", lambda _token, _doc_id: {"documentId": "doc-123"})
+    monkeypatch.setattr(
+        gdocs,
+        "drive_export",
+        lambda _token, _doc_id, _mime: (
+            b'<a href="https://google.com/url?q=https://drive.google.com/file/d/file-123/view?ts%3D123'
+            b'&amp;sa=D&amp;source=editors&amp;ust=999&amp;usg=abc">Diagram</a>'
+        ),
+    )
+
+    capture = gdocs.capture(["get", "doc-123"], object())
+
+    text = capture.data.decode("utf-8")
+    assert "https://drive.google.com/file/d/file-123/view?ts=123" in text
+    assert "https://google.com/url?" not in text
+    assert "ust=" not in text
+    assert "usg=" not in text
+
+
 def test_google_status_defaults_to_summary() -> None:
     assert gdocs.build_parser().parse_args(["status"]).output == "summary"
     assert gdocs.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"

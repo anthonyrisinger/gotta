@@ -42,7 +42,8 @@ CANONICAL_LOCATOR_RE = re.compile(
 )
 _TRAILING_PUNCTUATION = ".,;:!?)>]}`'\"`"
 LEADS_CACHE_NAME = "leads.json"
-LEADS_CACHE_VERSION = 5
+LEADS_CACHE_VERSION = 6
+MAX_SNIPPET_CHARS = 240
 SLACK_PERMALINK_RE = re.compile(
     r"https://[^/.]+\.slack\.com/archives/(?P<channel>[A-Z0-9]+)(?:/p(?P<pnum>[0-9]{16}))?"
 )
@@ -190,6 +191,52 @@ def _trim_candidate(raw: str) -> str:
     return cleaned
 
 
+def _decode_text_bytes(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("utf-8", errors="ignore")
+
+
+def _clip_snippet(raw_line: str, needle: str = "") -> str:
+    line = " ".join(raw_line.split()).strip()
+    if len(line) <= MAX_SNIPPET_CHARS:
+        return line
+    candidate = needle.strip()
+    if candidate:
+        index = line.casefold().find(candidate.casefold())
+        if index >= 0:
+            half = max((MAX_SNIPPET_CHARS - 6) // 2, 1)
+            start = max(index - half, 0)
+            end = min(index + len(candidate) + half, len(line))
+            excerpt = line[start:end].strip()
+            if start > 0:
+                excerpt = f"... {excerpt}"
+            if end < len(line):
+                excerpt = f"{excerpt} ..."
+            return excerpt
+    return f"{line[: max(MAX_SNIPPET_CHARS - 4, 1)].rstrip()} ..."
+
+
+def _lead_text_for_path(path: Path, *, raw_data: bytes | None = None) -> str:
+    try:
+        from gotta.plugins import read as read_plugin
+
+        display, _language = read_plugin.stored_display(path)
+    except Exception:
+        if raw_data is None:
+            try:
+                raw_data = path.read_bytes()
+            except OSError:
+                return ""
+        if b"\x00" in raw_data:
+            return ""
+        return _decode_text_bytes(raw_data)
+    if display.startswith(b"# Binary Content\n"):
+        return ""
+    return display.decode("utf-8", errors="ignore")
+
+
 def _provider_for_url(target: str) -> str:
     try:
         host = urllib.parse.urlparse(target).netloc.strip().lower()
@@ -281,6 +328,27 @@ def _canonicalize_url(target: str) -> str | None:
     host = parsed.netloc.strip().lower()
     path = parsed.path
     query = parsed.query
+    if host in {"www.google.com", "google.com"} and path == "/url":
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        for key in ("q", "url"):
+            redirect = str((params.get(key) or [""])[0] or "").strip()
+            if redirect:
+                resolved = _canonicalize_url(redirect)
+                return resolved if resolved is not None else redirect
+        filtered = [
+            (key, value)
+            for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True)
+            if key not in {"ust", "usg"}
+        ]
+        return urllib.parse.urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                urllib.parse.urlencode(filtered, doseq=True),
+                parsed.fragment,
+            )
+        )
     if _is_low_signal_web_url(target, host=host, path=path):
         return None
     if ".slack.com" in host:
@@ -679,7 +747,7 @@ def extract_semantic_search_leads(
                 provider=provider,
                 relation="suggests_search",
                 follow_command=f"gotta read {sh_quote(locator)}",
-                snippet=snippet.strip(),
+                snippet=_clip_snippet(snippet, normalized_query),
                 ordinal=len(candidates) + 1,
             )
         )
@@ -744,12 +812,9 @@ def maybe_write_lead_cache(content_dir: Path, *, data: bytes) -> Path | None:
     payload = _load_lead_cache_payload(path)
     if payload is not None and int(payload.get("version") or 0) == LEADS_CACHE_VERSION:
         return path
-    if b"\x00" in data:
+    text = _lead_text_for_path(content_dir / "data", raw_data=data)
+    if not text.strip():
         return None
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        text = data.decode("utf-8", errors="ignore")
     mentions = extract_explicit_leads(text)
     provider = _provider_for_content_dir(content_dir)
     source_locator = ""
@@ -776,9 +841,8 @@ def lead_mentions_for_snapshot(snapshot: ContentSnapshot) -> list[LeadMention]:
     cached = _read_lead_cache(snapshot)
     if cached is not None:
         return cached
-    try:
-        text = snapshot.data_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
+    text = _lead_text_for_path(snapshot.data_path)
+    if not text.strip():
         return []
     mentions = extract_explicit_leads(text)
     if not _effective_explicit_mentions(snapshot, mentions):
@@ -866,7 +930,7 @@ def extract_explicit_leads(text: str) -> list[LeadMention]:
                     provider=normalized.provider,
                     relation=relation,
                     follow_command=normalized.follow_command,
-                    snippet=line,
+                    snippet=_clip_snippet(raw_line, raw),
                     ordinal=ordinal,
                 )
             )

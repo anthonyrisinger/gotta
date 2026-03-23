@@ -637,7 +637,14 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
     except RuntimeError as exc:
         return die(str(exc), code=1)
 
-    resolved = resolve_invocation(plugin, cleaned, options)
+    try:
+        resolved = resolve_invocation(plugin, cleaned, options)
+    except SystemExit as exc:
+        return system_exit_status(exc)
+    except ContentError as exc:
+        return die(str(exc))
+    except RuntimeError as exc:
+        return die(str(exc), code=1)
     access = session_access_mode(plugin, cleaned)
     spec = plugin_spec(plugin)
     if not resolved.should_materialize:

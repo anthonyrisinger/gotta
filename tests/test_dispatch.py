@@ -436,6 +436,13 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
     )
     assert (
         dispatch.canonical_locator(
+            "confluence",
+            ["get", "https://example.atlassian.net/wiki/x/GoD9AgE"],
+        )
+        == "confluence:4345135130"
+    )
+    assert (
+        dispatch.canonical_locator(
             "slack",
             [
                 "get",
@@ -944,6 +951,15 @@ def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty
 
     assert captured.out == ""
     assert "invalid scan pattern:" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_run_plugin_read_invalid_confluence_shortlink_returns_clean_error(capsys) -> None:
+    assert dispatch.run_plugin("read", ["https://example.atlassian.net/wiki/x/!!!!!"]) == 1
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert "could not parse Confluence page ID from input" in captured.err
     assert "Traceback" not in captured.err
 
 

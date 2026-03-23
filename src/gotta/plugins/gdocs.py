@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import shlex
@@ -37,6 +38,7 @@ from gotta.providers.google import (
 
 
 DEFAULT_SEARCH_LIMIT = 10
+GOOGLE_REDIRECT_URL_RE = re.compile(r"https://(?:www\.)?google\.com/url\?[^\"'<>]+")
 
 
 def die(message: str, code: int = 2) -> int:
@@ -202,6 +204,48 @@ def _capture_meta(doc_id: str, meta: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _canonicalize_google_redirect_url(target: str) -> str:
+    unescaped = html.unescape(target)
+    try:
+        parsed = urllib.parse.urlsplit(unescaped)
+    except ValueError:
+        return target
+    if parsed.netloc.lower() not in {"www.google.com", "google.com"} or parsed.path != "/url":
+        return target
+    params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    for key in ("q", "url"):
+        redirect = str((params.get(key) or [""])[0] or "").strip()
+        if redirect:
+            return html.escape(redirect, quote=True)
+    filtered = [
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in {"ust", "usg"}
+    ]
+    stable = urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urllib.parse.urlencode(filtered, doseq=True),
+            parsed.fragment,
+        )
+    )
+    return html.escape(stable, quote=True)
+
+
+def _canonicalize_export_html(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    canonical = GOOGLE_REDIRECT_URL_RE.sub(
+        lambda match: _canonicalize_google_redirect_url(match.group(0)),
+        text,
+    )
+    return canonical.encode("utf-8")
+
+
 def capture(argv: list[str], _options: object) -> Capture:
     args = _parse_cli(argv)
     if args.command != "get":
@@ -230,7 +274,7 @@ def capture(argv: list[str], _options: object) -> Capture:
     doc_id, _ = parse_doc_ref(args.ref)
     meta = document_meta(access_token, doc_id)
     document = document_json(access_token, doc_id)
-    html = drive_export(access_token, doc_id, "text/html")
+    html = _canonicalize_export_html(drive_export(access_token, doc_id, "text/html"))
     return Capture(
         data=html,
         name=f"{doc_id}.html",

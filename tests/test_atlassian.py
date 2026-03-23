@@ -157,6 +157,7 @@ def test_confluence_page_ref_accepts_bare_and_prefixed_page_ids(monkeypatch) -> 
         "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=20202"
     )
     short_url = confluence.parse_page_ref("https://example.atlassian.net/wiki/x/1J0AAA")
+    long_short_url = confluence.parse_page_ref("https://example.atlassian.net/wiki/x/GoD9AgE")
 
     assert bare.page_id == "10101"
     assert bare.base_url == ""
@@ -164,6 +165,7 @@ def test_confluence_page_ref_accepts_bare_and_prefixed_page_ids(monkeypatch) -> 
     assert prefixed.base_url == ""
     assert query_url.page_id == "20202"
     assert short_url.page_id == "40404"
+    assert long_short_url.page_id == "4345135130"
 
 
 def test_confluence_page_ref_rejects_blogpost_urls(monkeypatch) -> None:
@@ -197,6 +199,11 @@ def test_confluence_page_ref_accepts_trimmed_shortlinks(monkeypatch) -> None:
     short_url = confluence.parse_page_ref("https://example.atlassian.net/wiki/x/AoA12")
 
     assert short_url.page_id == "3627384834"
+
+
+@pytest.mark.parametrize("token", ["AAAAA", "abc"])
+def test_decode_confluence_tiny_page_id_rejects_implausible_tokens(token: str) -> None:
+    assert atlassian.decode_confluence_tiny_page_id(token) is None
 
 
 def test_confluence_get_trimmed_shortlink_resolves_to_page(monkeypatch, capsys) -> None:
