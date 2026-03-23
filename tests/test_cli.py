@@ -12,6 +12,7 @@ from gotta import builtin
 from gotta import content
 from gotta import main as cli
 from gotta import session as sessionlib
+from gotta.capture import Capture
 from gotta.plugins import github
 from gotta.plugins import jira
 
@@ -214,11 +215,22 @@ def test_main_ambient_provider_get_honors_explicit_actor_attribution(
     assert cli.main(["actor", "bind", "Claude"]) == 0
     capsys.readouterr()
 
-    def fake_github_main(argv: list[str]) -> int:
-        print("# Repo\n\nmain body\n")
-        return 0
+    canonical = b'{"kind":"repo","name":"widgets"}'
 
-    monkeypatch.setattr(github, "main", fake_github_main)
+    def fake_github_capture(argv: list[str], _options: object) -> Capture:
+        return Capture(
+            data=canonical,
+            name="widgets.json",
+            type="application/json",
+            meta={"projector": "github", "github_kind": "repo"},
+        )
+
+    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+        assert capture.data == canonical
+        return b"# Repo\n\nmain body\n"
+
+    monkeypatch.setattr(github, "capture", fake_github_capture)
+    monkeypatch.setattr(github, "project", fake_github_project)
 
     assert (
         cli.main(
@@ -262,11 +274,22 @@ def test_main_rejects_foreign_actor_attributed_materialization(
     capsys.readouterr()
     monkeypatch.setenv(ACTOR_SPEAKER_ENV, "foreign-123")
 
-    def fake_github_main(argv: list[str]) -> int:
-        print("# Repo\n\nmain body\n")
-        return 0
+    canonical = b'{"kind":"repo","name":"widgets"}'
 
-    monkeypatch.setattr(github, "main", fake_github_main)
+    def fake_github_capture(argv: list[str], _options: object) -> Capture:
+        return Capture(
+            data=canonical,
+            name="widgets.json",
+            type="application/json",
+            meta={"projector": "github", "github_kind": "repo"},
+        )
+
+    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+        assert capture.data == canonical
+        return b"# Repo\n\nmain body\n"
+
+    monkeypatch.setattr(github, "capture", fake_github_capture)
+    monkeypatch.setattr(github, "project", fake_github_project)
 
     assert (
         cli.main(

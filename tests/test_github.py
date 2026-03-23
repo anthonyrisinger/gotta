@@ -40,7 +40,7 @@ def test_github_canonical_locator_and_preferred_name_ignore_flag_order() -> None
     options = SimpleNamespace(save_as="")
 
     assert github.canonical_locator(argv) == "https://github.com/acme/widgets"
-    assert github.preferred_name(argv, options) == "widgets.summary"
+    assert github.preferred_name(argv, options) == "widgets.json"
 
 
 def test_parse_args_supports_search_surface() -> None:
@@ -119,11 +119,11 @@ def test_github_search_canonical_locator_and_preferred_name() -> None:
     argv = ["search", "--type", "pr", "--repo", "acme/widgets", "ABC", "proxy"]
 
     assert github.canonical_locator(argv) == "github:search --type pr --repo acme/widgets ABC proxy"
-    assert github.preferred_name(argv, options) == "github-search-prs-acme-widgets-abc-proxy.md"
+    assert github.preferred_name(argv, options) == "github-search-prs-acme-widgets-abc-proxy.json"
     assert github.canonical_locator(["search", "--global", "ABC"]) == "github:search --global ABC"
     assert (
         github.preferred_name(["search", "--global", "ABC"], options)
-        == "github-search-repos-global-abc.md"
+        == "github-search-repos-global-abc.json"
     )
     code_argv = [
         "search",
@@ -141,7 +141,7 @@ def test_github_search_canonical_locator_and_preferred_name() -> None:
     )
     assert (
         github.preferred_name(code_argv, options)
-        == "github-search-code-acme-widgets-file-package.json-lint.md"
+        == "github-search-code-acme-widgets-file-package.json-lint.json"
     )
 
 
@@ -150,26 +150,26 @@ def test_github_preferred_name_is_specific_for_rendered_object_urls() -> None:
 
     assert (
         github.preferred_name(["https://github.com/acme/widgets/pull/19"], options)
-        == "widgets-pr-19.md"
+        == "widgets-pr-19.json"
     )
     assert (
         github.preferred_name(["https://github.com/acme/widgets/issues/19"], options)
-        == "widgets-issue-19.md"
+        == "widgets-issue-19.json"
     )
     assert (
         github.preferred_name(["https://github.com/acme/widgets/commits/main"], options)
-        == "widgets-commits-main.md"
+        == "widgets-commits-main.json"
     )
     assert (
         github.preferred_name(["https://github.com/acme/widgets/commits"], options)
-        == "widgets-commits.md"
+        == "widgets-commits.json"
     )
     assert (
         github.preferred_name(
             ["https://github.com/acme/widgets/blob/main/docs/quickstart.md"],
             options,
         )
-        == "widgets-blob-main-docs-quickstart.md"
+        == "widgets-blob-main-docs-quickstart.md.json"
     )
 
 

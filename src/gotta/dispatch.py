@@ -11,6 +11,7 @@ import re
 import sys
 from typing import Any
 
+from gotta.capture import Capture
 from gotta.content import (
     ACTOR_ID_ENV,
     CONTENT_ENV,
@@ -451,6 +452,7 @@ def _materialize_invocation(
     argv_or_data: list[str] | bytes,
     options: CommonOptions | None = None,
     data: bytes | None = None,
+    capture: Capture | None = None,
     *,
     dirs: ResolvedDirs,
 ) -> Materialization | None:
@@ -494,7 +496,7 @@ def _materialize_invocation(
         "locator": invocation_locator(materialize_plugin, materialize_argv),
         "canonical_locator": resolved.canonical_locator,
         "source_kind": "stdin" if resolved.entry_plugin == "read" and resolved.entry_argv == ["-"] else "render",
-        "content_type": resolved.content_type,
+        "content_type": capture.type if capture is not None and capture.type else resolved.content_type,
         "session_dir": str(dirs.session_dir),
         "content_dir": str(dirs.content_dir),
         "actor": actor,
@@ -518,10 +520,15 @@ def _materialize_invocation(
             provider=resolved.provider,
         )
     )
+    if capture is not None:
+        metadata.update(capture.meta)
+    preferred_name = resolved.preferred_name
+    if capture is not None and capture.name and not (options and options.save_as):
+        preferred_name = capture.name
     return materialize_bytes(
         payload,
         dirs=dirs,
-        preferred_name=resolved.preferred_name,
+        preferred_name=preferred_name,
         metadata=metadata,
     )
 
@@ -544,6 +551,19 @@ def _emit_materialization_receipt(result: Materialization | None) -> None:
 
 def _run_callable(func: Callable[[list[str]], int], argv: list[str]) -> int:
     return int(func(argv))
+
+
+def _captured_execution(
+    plugin: str,
+    argv: list[str],
+    options: CommonOptions,
+) -> tuple[Capture, bytes]:
+    spec = plugin_spec(plugin)
+    if spec is None or spec.capture is None or spec.project is None:
+        raise RuntimeError(f"plugin `{plugin}` does not support canonical capture")
+    capture = spec.capture(argv, options)
+    display = spec.project(argv, capture)
+    return capture, display
 
 
 def require_operational_session(dirs: ResolvedDirs) -> None:
@@ -602,6 +622,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
 
     resolved = resolve_invocation(plugin, cleaned, options)
     access = session_access_mode(plugin, cleaned)
+    spec = plugin_spec(plugin)
     if not resolved.should_materialize:
         if access != "none" and (options.session_dir or options.content_dir or options.actor):
             try:
@@ -623,22 +644,36 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
     except ContentError as exc:
         return die(str(exc))
 
-    if plugin == "read":
-        from gotta.plugins import read as read_plugin
-
+    if (
+        spec
+        and spec.capture is not None
+        and spec.project is not None
+        and resolved.artifact_intent in {"evidence", "discovery"}
+    ):
         try:
             with scoped_runtime_env(dirs):
-                outcome = read_plugin.execute_materializing_read(cleaned)
-        except RuntimeError as exc:
+                capture, display = _captured_execution(plugin, cleaned, options)
+        except NotImplementedError:
+            capture = None
+            display = None
+        except SystemExit as exc:
+            return int(exc.code or 0)
+        except (ContentError, RuntimeError) as exc:
             return die(str(exc), code=1)
-        if outcome.code == 0:
+        if capture is not None and display is not None:
             try:
-                result = _materialize_invocation(resolved, outcome.canonical_bytes, dirs=dirs)
+                result = _materialize_invocation(
+                    resolved,
+                    capture.data,
+                    options=options,
+                    capture=capture,
+                    dirs=dirs,
+                )
             except ContentError as exc:
                 return die(str(exc), code=1)
             _emit_materialization_receipt(result)
-        _emit_captured(outcome.display_bytes)
-        return outcome.code
+            _emit_captured(display)
+            return 0
 
     with scoped_runtime_env(dirs):
         with capture_stdout() as capture:
@@ -646,7 +681,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
     data = capture.getvalue()
     if code == 0:
         try:
-            result = _materialize_invocation(resolved, data, dirs=dirs)
+            result = _materialize_invocation(resolved, data, options=options, dirs=dirs)
         except ContentError as exc:
             return die(str(exc), code=1)
         _emit_materialization_receipt(result)

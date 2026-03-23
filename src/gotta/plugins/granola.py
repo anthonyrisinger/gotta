@@ -21,7 +21,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import pretty_json
 from gotta.routing import split_locator_tail
 from gotta.source import render_source_metadata_lines
 
@@ -118,7 +120,7 @@ def preferred_name(argv: list[str], options: object) -> str:
     if args.command == "get":
         selector = args.selector.strip()
         base = selector if _is_document_id(selector) else _slug(selector, fallback="granola")
-        return f"{base}.{_output_extension(args.output)}"
+        return f"{base}.json"
     if args.command == "transcript":
         selector = args.selector.strip()
         base = (
@@ -126,27 +128,20 @@ def preferred_name(argv: list[str], options: object) -> str:
             if _is_document_id(selector)
             else _slug(f"{selector}-transcript", fallback="granola-transcript")
         )
-        query = str(getattr(args, "query", "") or "").strip()
-        if query:
-            base += f"-query-{_slug(query, fallback='match')}"
-        return f"{base}.{_output_extension(args.output)}"
+        if args.query:
+            base = f"{base}-query-{_slug(args.query, fallback='query')}"
+        return f"{base}.json"
     if args.command == "search":
         suffix: list[str] = []
         if args.mode != "auto":
             suffix.append(args.mode)
         suffix.extend(_window_name_parts(args, default_time_range=DEFAULT_NOTE_TIME_RANGE))
         suffix_text = f"-{'-'.join(suffix)}" if suffix else ""
-        return (
-            f"granola-search-{_slug(args.query, fallback='granola')}{suffix_text}."
-            f"{_output_extension(args.output)}"
-        )
+        return f"granola-search-{_slug(args.query, fallback='granola')}{suffix_text}.json"
     if args.command == "search-transcript":
         suffix = _window_name_parts(args, default_time_range=DEFAULT_TRANSCRIPT_SEARCH_TIME_RANGE)
         suffix_text = f"-{'-'.join(suffix)}" if suffix else ""
-        return (
-            f"granola-transcript-search-{_slug(args.query, fallback='granola')}{suffix_text}."
-            f"{_output_extension(args.output)}"
-        )
+        return f"granola-transcript-search-{_slug(args.query, fallback='granola')}{suffix_text}.json"
     if args.command == "list":
         suffix = _window_name_parts(args, default_time_range=DEFAULT_NOTE_TIME_RANGE)
         if args.sort != "updated":
@@ -156,7 +151,7 @@ def preferred_name(argv: list[str], options: object) -> str:
         if args.offset:
             suffix.append(f"offset-{args.offset}")
         suffix_text = f"-{'-'.join(suffix)}" if suffix else ""
-        return f"granola-list{suffix_text}.{_output_extension(args.output)}"
+        return f"granola-list{suffix_text}.json"
     if args.command == "status":
         return f"granola.{_output_extension(args.output)}"
     return "granola.txt"
@@ -1349,6 +1344,155 @@ def cmd_get(args: argparse.Namespace) -> int:
     note = best_note_body(document)
     sys.stdout.write(format_markdown_document(document, note))
     return 0
+
+
+def _capture_meta(document: dict[str, Any]) -> dict[str, object]:
+    return {
+        "projector": "granola",
+        "source_created_at": str(document.get("created_at") or ""),
+        "source_updated_at": str(document.get("updated_at") or ""),
+    }
+
+
+def capture(argv: list[str], _options: object) -> Capture:
+    args = _parse_cli(argv)
+    if args.command == "get":
+        documents = _load_recent_documents(args, limit=None)
+        document = select_document(documents, args.selector)
+        selector = args.selector.strip()
+        base = selector if _is_document_id(selector) else _slug(selector, fallback="granola")
+        return Capture(
+            data=json_bytes(document),
+            name=f"{base}.json",
+            type="application/json",
+            meta=_capture_meta(document),
+        )
+    if args.command == "transcript":
+        token = load_access_token(args.supabase)
+        documents = fetch_documents(args.api_url, token, limit=None)
+        document = select_document(documents, args.selector)
+        segments = fetch_transcript(args.transcript_api_url, token, str(document.get("id") or ""))
+        filtered_segments = filter_transcript_segments(segments, args.query)
+        payload = transcript_payload(document, filtered_segments)
+        if args.query:
+            payload["query"] = args.query
+            payload["totalSegmentCount"] = len(segments)
+            payload["source"] = "direct live Granola transcript retrieval with local in-note query filter"
+        else:
+            payload["source"] = "direct live Granola transcript retrieval"
+        selector = args.selector.strip()
+        base = (
+            f"{selector}-transcript"
+            if _is_document_id(selector)
+            else _slug(f"{selector}-transcript", fallback="granola-transcript")
+        )
+        if args.query:
+            base = f"{base}-query-{_slug(args.query, fallback='query')}"
+        return Capture(
+            data=json_bytes(payload),
+            name=f"{base}.json",
+            type="application/json",
+            meta=_capture_meta(document),
+        )
+    if args.command in {"search", "list", "search-transcript"}:
+        runner = {
+            "search": cmd_search,
+            "list": cmd_list,
+            "search-transcript": cmd_search_transcript,
+        }[args.command]
+        payload = capture_json_command(
+            args,
+            runner,
+            detail=f"granola {args.command} capture failed",
+        )
+        return Capture(
+            data=payload,
+            name=preferred_name(argv, object()),
+            type="application/json",
+            meta={
+                "projector": "granola",
+                "granola_kind": args.command,
+            },
+        )
+    raise NotImplementedError("granola capture does not support this command")
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("granola_kind") or "").strip()
+    if kind in {"search", "list", "search-transcript"}:
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            if kind == "list":
+                return render_list_markdown(payload).encode("utf-8")
+            if kind == "search-transcript":
+                return render_transcript_search_markdown(payload).encode("utf-8")
+            return render_search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != kind:
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        if kind == "list":
+            if args.output == "summary":
+                lines: list[str] = []
+                results = payload.get("results") if isinstance(payload, dict) else []
+                if not isinstance(results, list):
+                    results = []
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
+                    primary_time = (
+                        item.get("createdAt")
+                        if getattr(args, "sort", "updated") == "created"
+                        else item.get("updatedAt") or item.get("createdAt")
+                    )
+                    lines.append(
+                        f"{primary_time or ''}\t{item.get('id') or ''}\t{item.get('title') or 'Untitled'}"
+                    )
+                return ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
+            return render_list_markdown(payload).encode("utf-8")
+        if kind == "search-transcript":
+            return render_transcript_search_markdown(payload).encode("utf-8")
+        return render_search_markdown(payload).encode("utf-8")
+    payload = json.loads(capture.data.decode("utf-8"))
+    if not argv:
+        if "segmentCount" in payload:
+            document = payload.get("document")
+            segments = payload.get("segments")
+            if isinstance(document, dict) and isinstance(segments, list):
+                return format_transcript_markdown(document, segments).encode("utf-8")
+        if isinstance(payload, dict):
+            note = best_note_body(payload)
+            return format_markdown_document(payload, note).encode("utf-8")
+        return capture.data
+    args = _parse_cli(argv)
+    if args.command == "get":
+        if args.output == "json":
+            return pretty_json(capture.data)
+        if args.output == "meta":
+            if isinstance(payload, dict):
+                return json_bytes(document_meta_payload(payload))
+            return capture.data
+        if isinstance(payload, dict):
+            return format_markdown_document(payload, best_note_body(payload)).encode("utf-8")
+        return capture.data
+    if args.command == "transcript":
+        if args.output == "json":
+            return pretty_json(capture.data)
+        if args.output == "summary":
+            document = payload.get("document") if isinstance(payload, dict) else {}
+            if not isinstance(document, dict):
+                document = {}
+            line = (
+                f"{document.get('id') or ''}\t{payload.get('segmentCount') or 0}\t"
+                f"{document.get('title') or 'Untitled'}\n"
+            )
+            return line.encode("utf-8")
+        document = payload.get("document") if isinstance(payload, dict) else {}
+        segments = payload.get("segments") if isinstance(payload, dict) else []
+        if isinstance(document, dict) and isinstance(segments, list):
+            return format_transcript_markdown(document, segments).encode("utf-8")
+    return capture.data
 
 
 def cmd_transcript(args: argparse.Namespace) -> int:

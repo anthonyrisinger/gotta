@@ -14,7 +14,9 @@ import sys
 from typing import Any
 import urllib.parse
 
+from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
 from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
 from gotta.providers.google import (
@@ -85,9 +87,9 @@ def preferred_name(argv: list[str], options: object) -> str:
     args = _parse_cli(argv)
     if args.command == "get":
         spreadsheet_id, _ = parse_sheet_ref(args.ref)
-        return f"{spreadsheet_id}.{_output_extension(args.output)}"
+        return f"{spreadsheet_id}.json"
     if args.command == "search":
-        return f"gsheets-search-{_slug(args.query, fallback='gsheets')}.{_output_extension(args.output)}"
+        return f"gsheets-search-{_slug(args.query, fallback='gsheets')}.json"
     if args.command == "status":
         return f"gsheets.{_output_extension(args.output)}"
     return "gsheets.txt"
@@ -227,6 +229,102 @@ def spreadsheet_summary(meta: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def _capture_meta(spreadsheet_id: str, bundle: dict[str, object]) -> dict[str, object]:
+    meta = bundle.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    return {
+        "projector": "gsheets",
+        "spreadsheet_id": spreadsheet_id,
+        "source_title": str(meta.get("properties", {}).get("title") or ""),
+        "source_url": str(meta.get("url") or ""),
+        "source_created_at": str(meta.get("createdTime") or ""),
+        "source_updated_at": str(meta.get("modifiedTime") or ""),
+    }
+
+
+def capture(argv: list[str], _options: object) -> Capture:
+    args = _parse_cli(argv)
+    if args.command != "get":
+        if args.command == "search":
+            payload = capture_json_command(
+                args,
+                cmd_search,
+                detail="gsheets search capture failed",
+            )
+            return Capture(
+                data=payload,
+                name=preferred_name(argv, object()),
+                type="application/json",
+                meta={
+                    "projector": "gsheets",
+                    "gsheets_kind": "search",
+                },
+            )
+        raise NotImplementedError("gsheets capture does not support this command")
+    oauth_state = ensure_google_session(
+        allow_bootstrap=True,
+        interactive_ok=is_interactive(),
+        auth_command="gsheets",
+    )
+    access_token = str(oauth_state.get("access_token") or "").strip()
+    spreadsheet_id, _ = parse_sheet_ref(args.ref)
+    bundle = build_preview_bundle(
+        access_token,
+        spreadsheet_id,
+        sheet_name=args.sheet,
+        a1_range=args.range,
+        rows=args.rows,
+        cols=args.cols,
+    )
+    return Capture(
+        data=json_bytes(bundle),
+        name=f"{spreadsheet_id}.json",
+        type="application/json",
+        meta=_capture_meta(spreadsheet_id, bundle),
+    )
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("gsheets_kind") or "get").strip()
+    if kind == "search":
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            return render_search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != "search":
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        return render_search_markdown(payload).encode("utf-8")
+    bundle = json.loads(capture.data.decode("utf-8"))
+    meta = bundle.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    previews = bundle.get("previews")
+    if not isinstance(previews, list):
+        previews = []
+    if not argv:
+        return render_previews_markdown(meta, previews).encode("utf-8")
+    args = _parse_cli(argv)
+    if args.command != "get":
+        return capture.data
+    if args.output == "meta":
+        return json_bytes(meta)
+    if args.output == "json":
+        return pretty_json(capture.data)
+    if args.output == "csv":
+        if len(previews) != 1:
+            raise RuntimeError(
+                "`--output csv` requires `--sheet` or `--range` to select exactly one sheet view"
+            )
+        values = previews[0].get("values")
+        if not isinstance(values, list):
+            values = []
+        return _csv_text(values).encode("utf-8")
+    return render_previews_markdown(meta, previews).encode("utf-8")
 
 
 def normalize_search_result(item: dict[str, object], *, matched_by: set[str]) -> dict[str, object]:

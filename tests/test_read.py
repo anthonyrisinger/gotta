@@ -2,6 +2,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 import socket
+from types import SimpleNamespace
 import urllib.error
 
 import pytest
@@ -503,25 +504,37 @@ def test_execute_materializing_read_keeps_full_routed_bytes_under_bounded_view(
             routed_plugin="github",
             routed_argv=["fake"],
             canonical_locator="https://github.com/acme/widgets",
-            preferred_name="widgets.md",
+            preferred_name="widgets.json",
             should_materialize=True,
         ),
     )
 
-    def fake_delegate(plugin: str, argv: list[str]) -> int:
-        print("# Title")
-        print("")
-        print("line 1")
-        print("line 2")
-        return 0
+    canonical = b'{"kind":"repo","title":"Title","lines":["line 1","line 2"]}'
 
-    monkeypatch.setattr(read, "delegate", fake_delegate)
+    def fake_capture(argv: list[str], _options: object):
+        return read.Capture(
+            data=canonical,
+            name="widgets.json",
+            type="application/json",
+        )
+
+    def fake_project(argv: list[str], capture):
+        assert capture.data == canonical
+        return b"# Title\n\nline 1\nline 2\n"
+
+    monkeypatch.setattr(
+        read,
+        "get_plugin",
+        lambda name: SimpleNamespace(capture=fake_capture, project=fake_project)
+        if name == "github"
+        else None,
+    )
 
     outcome = read.execute_materializing_read(["https://github.com/acme/widgets", "--head", "3"])
 
     assert outcome.code == 0
     assert outcome.display_bytes.decode("utf-8") == "# Title\n\nline 1\n"
-    assert outcome.canonical_bytes.decode("utf-8") == "# Title\n\nline 1\nline 2\n"
+    assert outcome.canonical_bytes == canonical
 
 
 def test_execute_materializing_read_keeps_full_remote_bytes_under_bounded_view(

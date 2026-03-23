@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 import json
+import mimetypes
 import os
 from pathlib import Path
 import re
@@ -17,7 +18,9 @@ import tempfile
 from typing import Any
 import urllib.parse
 
+from gotta.capture import Capture, json_bytes
 from gotta.helptext import is_long_help_request
+from gotta.project import pretty_json
 from gotta.routing import query_route, split_locator_tail, strip_http_url_fragment
 from gotta.source import (
     derive_source_metadata_from_payload,
@@ -1875,11 +1878,6 @@ def preferred_name(argv: list[str], options: Any) -> str:
     if not parsed.command or parsed.command == "status":
         extension = "json" if parsed.output == "json" else "summary"
         return f"github.{extension}"
-    extension = {
-        "json": "json",
-        "markdown": "md",
-        "summary": "summary",
-    }.get(parsed.output, "md")
     if parsed.command == "search":
         search_type = {
             "repo": "repos",
@@ -1902,8 +1900,632 @@ def preferred_name(argv: list[str], options: Any) -> str:
         if parsed.match:
             filter_parts.append(f"match-{_slug(parsed.match)}")
         filter_suffix = ("-" + "-".join(filter_parts)) if filter_parts else ""
-        return f"github-search-{search_type}{scope}{filter_suffix}-{_slug(parsed.query)}.{extension}"
+        return f"github-search-{search_type}{scope}{filter_suffix}-{_slug(parsed.query)}.json"
+    extension = {
+        "json": "json",
+        "markdown": "md",
+        "summary": "summary",
+    }.get(parsed.output, "md")
+    if parsed.command == "render":
+        return _preferred_render_name(parsed, "json")
     return _preferred_render_name(parsed, extension)
+
+
+def _blob_content_type(path: str, data: bytes) -> str:
+    guessed, _encoding = mimetypes.guess_type(path)
+    if guessed:
+        return guessed
+    return "text/plain" if looks_text(data) else "application/octet-stream"
+
+
+def _blob_json_payload(path: str, data: bytes, *, owner: str, repo: str, ref: str) -> dict[str, object]:
+    return {
+        "path": path,
+        "type": "file",
+        "encoding": "base64",
+        "content": base64.b64encode(data).decode("ascii"),
+        "size": len(data),
+        "url": github_blob_url(owner, repo, ref, path),
+    }
+
+
+def _repo_capture_payload(
+    payload: dict[str, object],
+    *,
+    owner: str,
+    repo: str,
+    ref: str,
+    entries: list[dict[str, object]],
+    readme_path: str = "",
+    readme_summary: str = "",
+) -> dict[str, object]:
+    return {
+        "kind": "repo",
+        "owner": owner,
+        "repo": repo,
+        "ref": ref,
+        "payload": payload,
+        "entries": entries,
+        "readmePath": readme_path,
+        "readmeSummary": readme_summary,
+    }
+
+
+def _tree_capture_payload(
+    *,
+    owner: str,
+    repo: str,
+    ref: str,
+    path: str,
+    entries: list[dict[str, object]],
+    readme_path: str = "",
+    readme_summary: str = "",
+) -> dict[str, object]:
+    return {
+        "kind": "tree",
+        "owner": owner,
+        "repo": repo,
+        "ref": ref,
+        "path": path,
+        "entries": entries,
+        "readmePath": readme_path,
+        "readmeSummary": readme_summary,
+    }
+
+
+def _object_capture_payload(
+    kind: str,
+    payload: object,
+    *,
+    owner: str,
+    repo: str,
+    ref: str = "",
+    path: str = "",
+) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "owner": owner,
+        "repo": repo,
+        "ref": ref,
+        "path": path,
+        "payload": payload,
+    }
+
+
+def capture(argv: list[str], _options: Any) -> Capture:
+    parsed = parse_args(argv, emit_help=False)
+    if parsed.command == "search":
+        gh = ensure_gh()
+        ensure_gh_auth(gh)
+        if parsed.search_type == "repo":
+            payload = search_repositories_payload(
+                gh,
+                query=parsed.query,
+                repo=parsed.repo,
+                limit=parsed.limit,
+                global_search=parsed.global_search,
+            )
+        elif parsed.search_type == "code":
+            payload = search_code_payload(
+                gh,
+                query=parsed.query,
+                repo=parsed.repo,
+                limit=parsed.limit,
+                global_search=parsed.global_search,
+                filename=parsed.filename,
+                extension=parsed.extension,
+                language=parsed.language,
+                match=parsed.match,
+            )
+        else:
+            payload = search_issueish_payload(
+                gh,
+                query=parsed.query,
+                repo=parsed.repo,
+                limit=parsed.limit,
+                search_type=parsed.search_type,
+                global_search=parsed.global_search,
+            )
+        return Capture(
+            data=json_bytes(payload),
+            name=preferred_name(argv, object()),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "search",
+            },
+        )
+    if parsed.command != "render":
+        raise NotImplementedError("github capture does not support this command")
+    gh = ensure_gh()
+    ensure_gh_auth(gh)
+    url, fragment = split_render_url(parsed.url)
+    if match := BLOB_RE.match(url):
+        owner, repo, ref, path = match.groups()
+        path = normalize_ref_path(path)
+        try:
+            payload = fetch_content_file(gh, owner=owner, repo=repo, ref=ref, path=path)
+            blob = decode_content_blob(payload)
+        except RuntimeError as exc:
+            if not is_readme_path(path):
+                raise RuntimeError(str(exc)) from exc
+            parent_path = str(Path(path).parent).replace("\\", "/").strip(".")
+            readme = load_directory_readme(gh, owner=owner, repo=repo, ref=ref, path=parent_path)
+            if readme is None:
+                raise RuntimeError(str(exc)) from exc
+            path, blob = readme
+            payload = _blob_json_payload(path, blob, owner=owner, repo=repo, ref=ref)
+        return Capture(
+            data=blob,
+            name=Path(path).name or "github.bin",
+            type=_blob_content_type(path, blob),
+            meta={
+                "projector": "github",
+                "github_kind": "blob",
+                "github_owner": owner,
+                "github_repo": repo,
+                "github_ref": ref,
+                "github_path": path,
+                "source_created_at": "",
+                "source_updated_at": "",
+            },
+            view={"payload": payload},
+        )
+    if match := TREE_RE.match(url):
+        owner, repo, ref, path = match.groups()
+        path = normalize_ref_path(path)
+        entries = list_directory_entries(gh, owner=owner, repo=repo, ref=ref, path=path)
+        if len(entries) == 1 and str(entries[0].get("type") or "") == "file":
+            file_path = str(entries[0].get("path") or path)
+            blob = decode_content_blob(entries[0])
+            return Capture(
+                data=blob,
+                name=Path(file_path).name or "github.bin",
+                type=_blob_content_type(file_path, blob),
+                meta={
+                    "projector": "github",
+                    "github_kind": "blob",
+                    "github_owner": owner,
+                    "github_repo": repo,
+                    "github_ref": ref,
+                    "github_path": file_path,
+                },
+                view={"payload": entries[0]},
+            )
+        readme_path, readme_summary = readme_rollup(
+            gh,
+            owner=owner,
+            repo=repo,
+            ref=ref,
+            entries=entries,
+            path=path,
+        )
+        view: dict[str, object] = {}
+        if fragment:
+            hinted = load_directory_fragment_file(
+                gh,
+                owner=owner,
+                repo=repo,
+                ref=ref,
+                entries=entries,
+                fragment=fragment,
+            )
+            if hinted is not None:
+                hinted_path, blob = hinted
+                view["hinted_path"] = hinted_path
+                view["hinted_blob"] = blob
+        payload = _tree_capture_payload(
+            owner=owner,
+            repo=repo,
+            ref=ref,
+            path=path,
+            entries=entries,
+            readme_path=readme_path,
+            readme_summary=readme_summary,
+        )
+        return Capture(
+            data=json_bytes(payload),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "tree",
+                "github_owner": owner,
+                "github_repo": repo,
+                "github_ref": ref,
+                "github_path": path,
+            },
+            view=view,
+        )
+    if match := PULL_RE.match(url):
+        owner, repo, number, _ = match.groups()
+        payload = gh_json_object(
+            gh,
+            [
+                "pr",
+                "view",
+                number,
+                "--repo",
+                f"{owner}/{repo}",
+                "--json",
+                "title,number,url,state,author,createdAt,updatedAt,body,labels",
+            ],
+        )
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
+        return Capture(
+            data=json_bytes(_object_capture_payload("pr", payload, owner=owner, repo=repo)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "pr",
+                "github_owner": owner,
+                "github_repo": repo,
+                "source_created_at": str(payload.get("createdAt") or ""),
+                "source_updated_at": str(payload.get("updatedAt") or ""),
+            },
+        )
+    if match := ISSUE_RE.match(url):
+        owner, repo, number, _ = match.groups()
+        payload = gh_json_object(
+            gh,
+            [
+                "issue",
+                "view",
+                number,
+                "--repo",
+                f"{owner}/{repo}",
+                "--json",
+                "title,number,url,state,author,createdAt,updatedAt,body,labels",
+            ],
+        )
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
+        return Capture(
+            data=json_bytes(_object_capture_payload("issue", payload, owner=owner, repo=repo)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "issue",
+                "github_owner": owner,
+                "github_repo": repo,
+                "source_created_at": str(payload.get("createdAt") or ""),
+                "source_updated_at": str(payload.get("updatedAt") or ""),
+            },
+        )
+    if match := COMMIT_RE.match(url):
+        owner, repo, sha, _ = match.groups()
+        payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/commits/{sha}"])
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
+        commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
+        author = commit.get("author") if isinstance(commit, dict) else {}
+        return Capture(
+            data=json_bytes(_object_capture_payload("commit", payload, owner=owner, repo=repo)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "commit",
+                "github_owner": owner,
+                "github_repo": repo,
+                "source_created_at": str(author.get("date") or ""),
+                "source_updated_at": str(author.get("date") or ""),
+            },
+        )
+    if match := COMMITS_ROOT_RE.match(url):
+        owner, repo = match.groups()
+        ref = default_branch_name(gh, owner=owner, repo=repo)
+        if not ref:
+            raise RuntimeError(f"could not determine default branch for {owner}/{repo}")
+        url = f"https://github.com/{owner}/{repo}/commits/{ref}"
+    if match := COMMITS_RE.match(url):
+        owner, repo, ref, extra = match.groups()
+        path = normalize_ref_path(extra)
+        limit = max(1, min(parsed.limit or 20, 100))
+        api_target = (
+            f"repos/{owner}/{repo}/commits?sha={urllib.parse.quote(ref, safe='')}"
+            f"&per_page={limit}"
+        )
+        if path:
+            api_target += f"&path={urllib.parse.quote(path, safe='/')}"
+        raw_payload = gh_json_value(gh, ["api", api_target])
+        payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        authored_dates = [
+            str(item.get("commit", {}).get("author", {}).get("date") or "")
+            for item in payload
+            if isinstance(item, dict)
+        ]
+        return Capture(
+            data=json_bytes(_object_capture_payload("commits", payload, owner=owner, repo=repo, ref=ref, path=path)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "commits",
+                "github_owner": owner,
+                "github_repo": repo,
+                "github_ref": ref,
+                "github_path": path,
+                "source_created_at": min((value for value in authored_dates if value), default=""),
+                "source_updated_at": max((value for value in authored_dates if value), default=""),
+            },
+        )
+    if match := RELEASE_TAG_RE.match(url):
+        owner, repo, tag, _ = match.groups()
+        payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/releases/tags/{tag}"])
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
+        published = str(payload.get("published_at") or payload.get("created_at") or "")
+        return Capture(
+            data=json_bytes(_object_capture_payload("release", payload, owner=owner, repo=repo)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "release",
+                "github_owner": owner,
+                "github_repo": repo,
+                "source_created_at": published,
+                "source_updated_at": published,
+            },
+        )
+    if match := RELEASES_RE.match(url):
+        owner, repo = match.groups()
+        raw_payload = gh_json_value(gh, ["api", f"repos/{owner}/{repo}/releases?per_page=20"])
+        payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        published = [str(item.get("published_at") or item.get("created_at") or "") for item in payload]
+        return Capture(
+            data=json_bytes(_object_capture_payload("releases", payload, owner=owner, repo=repo)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "releases",
+                "github_owner": owner,
+                "github_repo": repo,
+                "source_created_at": min((value for value in published if value), default=""),
+                "source_updated_at": max((value for value in published if value), default=""),
+            },
+        )
+    if match := REPO_RE.match(url):
+        owner, repo = match.groups()
+        payload = gh_json_object(
+            gh,
+            [
+                "repo",
+                "view",
+                f"{owner}/{repo}",
+                "--json",
+                "name,visibility,defaultBranchRef,url,createdAt,updatedAt,pushedAt",
+            ],
+        )
+        payload = with_visibility_metadata(payload, provider="github", locator=url)
+        default_branch_ref = payload.get("defaultBranchRef")
+        default_branch = str(default_branch_ref.get("name") or "") if isinstance(default_branch_ref, dict) else ""
+        entries: list[dict[str, object]] = []
+        readme_path = ""
+        readme_summary = ""
+        view = {}
+        if default_branch:
+            entries = list_directory_entries(gh, owner=owner, repo=repo, ref=default_branch, path="")
+            readme_path, readme_summary = readme_rollup(
+                gh,
+                owner=owner,
+                repo=repo,
+                ref=default_branch,
+                entries=entries,
+                path="",
+            )
+            if fragment:
+                hinted = load_directory_fragment_file(
+                    gh,
+                    owner=owner,
+                    repo=repo,
+                    ref=default_branch,
+                    entries=entries,
+                    fragment=fragment,
+                )
+                if hinted is not None:
+                    hinted_path, blob = hinted
+                    view["hinted_path"] = hinted_path
+                    view["hinted_blob"] = blob
+        capture_payload = _repo_capture_payload(
+            payload,
+            owner=owner,
+            repo=repo,
+            ref=default_branch,
+            entries=entries,
+            readme_path=readme_path,
+            readme_summary=readme_summary,
+        )
+        return Capture(
+            data=json_bytes(capture_payload),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "repo",
+                "github_owner": owner,
+                "github_repo": repo,
+                "github_ref": default_branch,
+                "source_created_at": str(payload.get("createdAt") or ""),
+                "source_updated_at": str(payload.get("updatedAt") or payload.get("pushedAt") or ""),
+            },
+            view=view,
+        )
+    raise RuntimeError(f"unsupported GitHub URL format: {url}")
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("github_kind") or "").strip()
+    if kind == "search":
+        payload = json.loads(capture.data.decode("utf-8"))
+        parsed = parse_args(argv, emit_help=False) if argv else ParsedArgs(command="search", output="markdown")
+        if parsed.output == "json":
+            return pretty_json(capture.data)
+        return markdown_search(payload, include_details=(parsed.output != "summary")).encode("utf-8")
+    owner = str(capture.meta.get("github_owner") or "").strip()
+    repo = str(capture.meta.get("github_repo") or "").strip()
+    ref = str(capture.meta.get("github_ref") or "").strip()
+    path = str(capture.meta.get("github_path") or "").strip()
+    if kind == "blob":
+        if not argv:
+            if looks_text(capture.data):
+                return capture.data
+            return markdown_binary_blob(owner=owner, repo=repo, ref=ref, path=path).encode("utf-8")
+        parsed = parse_args(argv, emit_help=False)
+        if parsed.output == "json":
+            payload = capture.view.get("payload")
+            if isinstance(payload, dict):
+                return json_bytes(payload)
+            return json_bytes(_blob_json_payload(path, capture.data, owner=owner, repo=repo, ref=ref))
+        if parsed.output == "summary":
+            return markdown_text_blob_summary(
+                owner=owner,
+                repo=repo,
+                ref=ref,
+                path=path,
+                payload={"size": len(capture.data)},
+            ).encode("utf-8")
+        if looks_text(capture.data):
+            return capture.data
+        return markdown_binary_blob(owner=owner, repo=repo, ref=ref, path=path).encode("utf-8")
+    payload = json.loads(capture.data.decode("utf-8"))
+    if kind == "tree":
+        entries = payload.get("entries") if isinstance(payload, dict) else []
+        if not isinstance(entries, list):
+            entries = []
+        if not argv:
+            return markdown_directory(
+                owner=owner,
+                repo=repo,
+                ref=str(payload.get("ref") or ref),
+                path=str(payload.get("path") or ""),
+                entries=entries,
+                readme_path=str(payload.get("readmePath") or ""),
+                readme_summary=str(payload.get("readmeSummary") or ""),
+            ).encode("utf-8")
+        parsed = parse_args(argv, emit_help=False)
+        if parsed.output == "json":
+            return pretty_json(capture.data)
+        if parsed.output == "summary":
+            return markdown_directory(
+                owner=owner,
+                repo=repo,
+                ref=str(payload.get("ref") or ref),
+                path=str(payload.get("path") or ""),
+                entries=entries,
+            ).encode("utf-8")
+        hinted_path = capture.view.get("hinted_path")
+        hinted_blob = capture.view.get("hinted_blob")
+        if isinstance(hinted_path, str) and isinstance(hinted_blob, bytes):
+            if looks_text(hinted_blob):
+                return hinted_blob
+            return markdown_binary_blob(
+                owner=owner,
+                repo=repo,
+                ref=str(payload.get("ref") or ref),
+                path=hinted_path,
+            ).encode("utf-8")
+        return markdown_directory(
+            owner=owner,
+            repo=repo,
+            ref=str(payload.get("ref") or ref),
+            path=str(payload.get("path") or ""),
+            entries=entries,
+            readme_path=str(payload.get("readmePath") or ""),
+            readme_summary=str(payload.get("readmeSummary") or ""),
+        ).encode("utf-8")
+    if kind == "repo":
+        repo_payload = payload.get("payload") if isinstance(payload, dict) else {}
+        if not isinstance(repo_payload, dict):
+            repo_payload = {}
+        entries = payload.get("entries") if isinstance(payload, dict) else []
+        if not isinstance(entries, list):
+            entries = []
+        if not argv:
+            if capture.view.get("hinted_path") and capture.view.get("hinted_blob"):
+                hinted_path = str(capture.view["hinted_path"])
+                hinted_blob = capture.view["hinted_blob"]
+                if isinstance(hinted_blob, bytes) and looks_text(hinted_blob):
+                    return hinted_blob
+                return markdown_binary_blob(owner=owner, repo=repo, ref=str(payload.get("ref") or ref), path=hinted_path).encode("utf-8")
+            if entries:
+                return markdown_repo_directory(
+                    repo_payload,
+                    owner=owner,
+                    repo=repo,
+                    ref=str(payload.get("ref") or ref),
+                    entries=entries,
+                    readme_path=str(payload.get("readmePath") or ""),
+                    readme_summary=str(payload.get("readmeSummary") or ""),
+                ).encode("utf-8")
+            return markdown_repo(repo_payload).encode("utf-8")
+        parsed = parse_args(argv, emit_help=False)
+        if parsed.output == "json":
+            return pretty_json(capture.data)
+        if parsed.output == "summary":
+            return markdown_repo(repo_payload).encode("utf-8")
+        if capture.view.get("hinted_path") and capture.view.get("hinted_blob"):
+            hinted_path = str(capture.view["hinted_path"])
+            hinted_blob = capture.view["hinted_blob"]
+            if isinstance(hinted_blob, bytes) and looks_text(hinted_blob):
+                return hinted_blob
+            return markdown_binary_blob(owner=owner, repo=repo, ref=str(payload.get("ref") or ref), path=hinted_path).encode("utf-8")
+        if entries:
+            return markdown_repo_directory(
+                repo_payload,
+                owner=owner,
+                repo=repo,
+                ref=str(payload.get("ref") or ref),
+                entries=entries,
+                readme_path=str(payload.get("readmePath") or ""),
+                readme_summary=str(payload.get("readmeSummary") or ""),
+            ).encode("utf-8")
+        return markdown_repo(repo_payload).encode("utf-8")
+    if kind in {"issue", "pr", "commit", "commits", "release", "releases"}:
+        parsed = parse_args(argv, emit_help=False) if argv else ParsedArgs(command="render", output="markdown")
+        object_payload = payload.get("payload") if isinstance(payload, dict) else payload
+        if parsed.output == "json":
+            return pretty_json(capture.data)
+        if kind == "issue":
+            return markdown_issue_or_pr(
+                object_payload if isinstance(object_payload, dict) else {},
+                "issue",
+                include_body=parsed.output == "markdown",
+            ).encode("utf-8")
+        if kind == "pr":
+            return markdown_issue_or_pr(
+                object_payload if isinstance(object_payload, dict) else {},
+                "pull request",
+                include_body=parsed.output == "markdown",
+            ).encode("utf-8")
+        if kind == "commit":
+            return markdown_commit(
+                object_payload if isinstance(object_payload, dict) else {},
+                owner=owner,
+                repo=repo,
+                include_patch=parsed.output == "markdown",
+            ).encode("utf-8")
+        if kind == "commits":
+            commits = object_payload if isinstance(object_payload, list) else []
+            return markdown_commit_list(
+                commits,
+                owner=owner,
+                repo=repo,
+                ref=str(payload.get("ref") or ref),
+                path=str(payload.get("path") or ""),
+            ).encode("utf-8")
+        if kind == "release":
+            return markdown_release(
+                object_payload if isinstance(object_payload, dict) else {},
+                owner=owner,
+                repo=repo,
+            ).encode("utf-8")
+        releases = object_payload if isinstance(object_payload, list) else []
+        if parsed.output == "summary":
+            releases = releases[:10]
+        return markdown_release_list(owner=owner, repo=repo, payload=releases).encode("utf-8")
+    return capture.data
 
 
 def main(argv: list[str]) -> int:

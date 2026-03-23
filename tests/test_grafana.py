@@ -459,14 +459,14 @@ def test_grafana_route_and_locator_contract() -> None:
     )
     assert (
         grafana.preferred_name(["search", "--type", "dash-db"], None)
-        == "grafana-search-dash-db.md"
+        == "grafana-search-dash-db.json"
     )
     assert (
         grafana.preferred_name(["search", "production"], None)
-        == "grafana-search-production.md"
+        == "grafana-search-production.json"
     )
     assert (
         grafana.preferred_name(["query", "--dashboard", "demo-dashboard-uid", "sum(agent_up)"], None)
         == "grafana-query-sum-agent_up.summary"
     )
-    assert grafana.preferred_name(["get", "demo-dashboard-uid"], None) == "demo-dashboard-uid.md"
+    assert grafana.preferred_name(["get", "demo-dashboard-uid"], None) == "demo-dashboard-uid.json"

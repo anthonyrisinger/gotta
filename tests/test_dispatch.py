@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from gotta import builtin as plugin_api
 from gotta import main as cli
 from gotta import content, dispatch
 from gotta.actor import ACTOR_ID_ENV
+from gotta.capture import Capture
 from gotta.plugins import read as read_plugin
 from gotta.plugins import session as session_plugin
 
@@ -128,19 +130,19 @@ def test_read_resolve_invocation_preserves_routed_provider_artifact_intent(
 def test_derive_preferred_name_for_delegated_read_targets() -> None:
     options = content.CommonOptions()
     cases = {
-        "https://github.com/acme/widgets#readme": "widgets.md",
-        "https://github.com/acme/widgets/commits/main": "widgets-commits-main.md",
-        "https://github.com/acme/widgets/pull/19": "widgets-pr-19.md",
-        "granola:11111111-1111-1111-1111-111111111111": "11111111-1111-1111-1111-111111111111.md",
-        "github:search --type pr --repo acme/widgets ABC": "github-search-prs-acme-widgets-abc.md",
-        "https://example.atlassian.net/wiki/spaces/ENG/pages/10101/Platform+Architecture+Overview": "10101.md",
-        "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=20202": "20202.md",
-        "https://example.atlassian.net/wiki/x/1J0AAA": "40404.md",
-        "https://example.atlassian.net/browse/PROJ-3960": "PROJ-3960.md",
-        "https://drive.google.com/file/d/drive-file-123/view?usp=sharing": "drive-file-123.md",
-        "https://docs.google.com/document/d/1GYOXLzRlO-YmFBgtgU9xmaWsC8AQjydvUthyFnM3VqA/edit?usp=drivesdk": "1GYOXLzRlO-YmFBgtgU9xmaWsC8AQjydvUthyFnM3VqA.md",
-        "https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0": "sheet-123.md",
-        "https://example.slack.com/archives/C07QR8V024X/p1773085070240949": "p1773085070240949.md",
+        "https://github.com/acme/widgets#readme": "widgets.json",
+        "https://github.com/acme/widgets/commits/main": "widgets-commits-main.json",
+        "https://github.com/acme/widgets/pull/19": "widgets-pr-19.json",
+        "granola:11111111-1111-1111-1111-111111111111": "11111111-1111-1111-1111-111111111111.json",
+        "github:search --type pr --repo acme/widgets ABC": "github-search-prs-acme-widgets-abc.json",
+        "https://example.atlassian.net/wiki/spaces/ENG/pages/10101/Platform+Architecture+Overview": "10101.html",
+        "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=20202": "20202.html",
+        "https://example.atlassian.net/wiki/x/1J0AAA": "40404.html",
+        "https://example.atlassian.net/browse/PROJ-3960": "PROJ-3960.json",
+        "https://drive.google.com/file/d/drive-file-123/view?usp=sharing": "drive-file-123.bin",
+        "https://docs.google.com/document/d/doc-123/edit?usp=drivesdk": "doc-123.html",
+        "https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0": "sheet-123.json",
+        "https://example.slack.com/archives/C12345678/p1773085070240949": "p1773085070240949.json",
         "slack:example-workspace": "slack-workspace-example-workspace.summary",
     }
 
@@ -153,19 +155,19 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
 
     assert (
         dispatch.derive_preferred_name("confluence", ["search", "ABC"], options)
-        == "confluence-search-abc.md"
+        == "confluence-search-abc.json"
     )
     assert (
         dispatch.derive_preferred_name("gdocs", ["search", "ABC"], options)
-        == "gdocs-search-abc.md"
+        == "gdocs-search-abc.json"
     )
     assert (
         dispatch.derive_preferred_name("gdrive", ["search", "ABC"], options)
-        == "gdrive-search-abc.md"
+        == "gdrive-search-abc.json"
     )
     assert (
         dispatch.derive_preferred_name("granola", ["search", "ABC"], options)
-        == "granola-search-abc.md"
+        == "granola-search-abc.json"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -173,11 +175,11 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
             ["list", "--sort", "created", "--order", "asc", "--offset", "10"],
             options,
         )
-        == "granola-list-created-asc-offset-10.md"
+        == "granola-list-created-asc-offset-10.json"
     )
     assert (
         dispatch.derive_preferred_name("gsheets", ["search", "ABC"], options)
-        == "gsheets-search-abc.md"
+        == "gsheets-search-abc.json"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -185,7 +187,7 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
             ["search", "--limit", "25", "--output", "markdown", "ABCC OR ABCS"],
             options,
         )
-        == "jira-search-abcc-or-abcs.md"
+        == "jira-search-abcc-or-abcs.json"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -193,7 +195,7 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
             ["search", "--workspace", "example-workspace", "--source", "archive", "ABC"],
             options,
         )
-        == "slack-search-example-workspace-abc.md"
+        == "slack-search-example-workspace-abc.json"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -209,7 +211,7 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
             ["search", "--type", "dash-db", "prod"],
             options,
         )
-        == "grafana-search-dash-db-prod.md"
+        == "grafana-search-dash-db-prod.json"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -217,7 +219,7 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
             ["search", "Production Overview"],
             options,
         )
-        == "grafana-search-production-overview.md"
+        == "grafana-search-production-overview.json"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -238,7 +240,7 @@ def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
             ["get", "--output", "markdown", "10101"],
             options,
         )
-        == "10101.md"
+        == "10101.html"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -246,7 +248,7 @@ def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
             ["get", "--output", "markdown", "PROJ-3960"],
             options,
         )
-        == "PROJ-3960.md"
+        == "PROJ-3960.json"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -254,7 +256,15 @@ def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
             ["get", "--output", "markdown", "https://docs.google.com/document/d/doc-123/edit"],
             options,
         )
-        == "doc-123.md"
+        == "doc-123.html"
+    )
+    assert (
+        dispatch.derive_preferred_name(
+            "gdrive",
+            ["get", "--output", "markdown", "file-123"],
+            options,
+        )
+        == "file-123.bin"
     )
     assert (
         dispatch.derive_preferred_name(
@@ -265,11 +275,11 @@ def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
                 "example-workspace",
                 "--output",
                 "markdown",
-                "https://example.slack.com/archives/C07QR8V024X/p1773085070240949",
+                "https://example.slack.com/archives/C12345678/p1773085070240949",
             ],
             options,
         )
-        == "p1773085070240949.md"
+        == "p1773085070240949.json"
     )
 
 
@@ -433,17 +443,17 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
                 "example-workspace",
                 "--output",
                 "markdown",
-                "https://example.slack.com/archives/C07QR8V024X/p1773085070240949",
+                "https://example.slack.com/archives/C12345678/p1773085070240949",
             ],
         )
-        == "slack:thread:C07QR8V024X:1773085070240949"
+        == "slack:thread:C12345678:1773085070240949"
     )
     assert (
         dispatch.canonical_locator(
             "slack",
-            ["get", "https://example.slack.com/archives/C07QR8V024X/p1773085070240949"],
+            ["get", "https://example.slack.com/archives/C12345678/p1773085070240949"],
         )
-        == "slack:thread:C07QR8V024X:1773085070240949"
+        == "slack:thread:C12345678:1773085070240949"
     )
     assert (
         dispatch.canonical_locator(
@@ -1224,14 +1234,26 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
     assert session_plugin.main(["init", "--session", str(local_root)]) == 0
     capsys.readouterr()
 
-    def fake_delegate(plugin: str, argv: list[str]) -> int:
-        print("# Title")
-        print("")
-        print("line 1")
-        print("line 2")
-        return 0
+    canonical = b'{"kind":"repo","title":"Title","lines":["line 1","line 2"]}'
 
-    monkeypatch.setattr(read_plugin, "delegate", fake_delegate)
+    def fake_capture(argv: list[str], _options: object) -> Capture:
+        return Capture(
+            data=canonical,
+            name="widgets.json",
+            type="application/json",
+        )
+
+    def fake_project(argv: list[str], capture: Capture) -> bytes:
+        assert capture.data == canonical
+        return b"# Title\n\nline 1\nline 2\n"
+
+    monkeypatch.setattr(
+        read_plugin,
+        "get_plugin",
+        lambda name: SimpleNamespace(capture=fake_capture, project=fake_project)
+        if name == "github"
+        else plugin_api.get_plugin(name),
+    )
 
     assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--head", "3", "--session", str(local_root)]) == 0
     captured = capsys.readouterr()
@@ -1241,7 +1263,8 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
     assert len(snapshots) == 1
     snapshot = snapshots[0]
     assert snapshot.metadata["canonical_locator"] == "https://github.com/acme/widgets"
-    assert snapshot.data_path.read_text(encoding="utf-8") == "# Title\n\nline 1\nline 2\n"
+    assert snapshot.metadata["content_type"] == "application/json"
+    assert snapshot.data_path.read_bytes() == canonical
 
 
 def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
@@ -1251,14 +1274,26 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
     assert session_plugin.main(["init", "--session", str(local_root)]) == 0
     capsys.readouterr()
 
-    def fake_delegate(plugin: str, argv: list[str]) -> int:
-        print("# Title")
-        print("")
-        print("line 1")
-        print("line 2")
-        return 0
+    canonical = b'{"kind":"repo","title":"Title","lines":["line 1","line 2"]}'
 
-    monkeypatch.setattr(read_plugin, "delegate", fake_delegate)
+    def fake_capture(argv: list[str], _options: object) -> Capture:
+        return Capture(
+            data=canonical,
+            name="widgets.json",
+            type="application/json",
+        )
+
+    def fake_project(argv: list[str], capture: Capture) -> bytes:
+        assert capture.data == canonical
+        return b"# Title\n\nline 1\nline 2\n"
+
+    monkeypatch.setattr(
+        read_plugin,
+        "get_plugin",
+        lambda name: SimpleNamespace(capture=fake_capture, project=fake_project)
+        if name == "github"
+        else plugin_api.get_plugin(name),
+    )
 
     assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--head", "3", "--session", str(local_root)]) == 0
     capsys.readouterr()
@@ -1464,11 +1499,11 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
         is None
     )
     assert plugin_api.get_plugin("slack").route_target(
-        "https://example.slack.com/archives/C07QR8V024X/p1773085070240949"
+        "https://example.slack.com/archives/C12345678/p1773085070240949"
         "?thread_ts=1773085070.240949#replies"
     ) == [
         "get",
-        "https://example.slack.com/archives/C07QR8V024X/p1773085070240949"
+        "https://example.slack.com/archives/C12345678/p1773085070240949"
         "?thread_ts=1773085070.240949",
     ]
     assert plugin_api.get_plugin("gdrive").route_target("gdrive:file-123") == ["get", "file-123"]
@@ -1477,8 +1512,8 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
         "Architecture",
     ]
     assert plugin_api.get_plugin("slack").route_target(
-        "slack:thread:C07QR8V024X:1773085070240949"
-    ) == ["get", "C07QR8V024X:1773085070.240949"]
+        "slack:thread:C12345678:1773085070240949"
+    ) == ["get", "C12345678:1773085070.240949"]
     assert plugin_api.get_plugin("slack").route_target("slack:search Architecture") == [
         "search",
         "Architecture",

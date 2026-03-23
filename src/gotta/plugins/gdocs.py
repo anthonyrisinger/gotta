@@ -13,7 +13,9 @@ import subprocess
 import sys
 import urllib.parse
 
+from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import html_markdown, html_text, pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
 from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
 from gotta.providers.google import (
@@ -83,9 +85,9 @@ def preferred_name(argv: list[str], options: object) -> str:
     args = _parse_cli(argv)
     if args.command == "get":
         doc_id, _ = parse_doc_ref(args.ref)
-        return f"{doc_id}.{_output_extension(args.output)}"
+        return f"{doc_id}.html"
     if args.command == "search":
-        return f"gdocs-search-{_slug(args.query, fallback='gdocs')}.{_output_extension(args.output)}"
+        return f"gdocs-search-{_slug(args.query, fallback='gdocs')}.json"
     if args.command == "status":
         return f"gdocs.{_output_extension(args.output)}"
     return "gdocs.txt"
@@ -155,6 +157,133 @@ def html_to_markdown(data: bytes) -> bytes:
         detail = proc.stderr.decode("utf-8", errors="replace").strip()
         raise GoogleError(detail or "pandoc failed to convert Google Docs HTML")
     return proc.stdout
+
+
+def _owners_line(meta: dict[str, object]) -> str:
+    owners = meta.get("owners")
+    if not isinstance(owners, list):
+        return ""
+    owner_names = [
+        str(owner.get("displayName") or "").strip()
+        for owner in owners
+        if isinstance(owner, dict) and str(owner.get("displayName") or "").strip()
+    ]
+    return ", ".join(owner_names)
+
+
+def _markdown_prelude(doc_id: str, meta: dict[str, object]) -> bytes:
+    header_lines = [
+        f"- URL: {meta.get('url') or ''}",
+        f"- Document ID: {doc_id}",
+    ]
+    if meta.get("createdTime"):
+        header_lines.append(f"- Created: {meta.get('createdTime')}")
+    if meta.get("modifiedTime"):
+        header_lines.append(f"- Updated: {meta.get('modifiedTime')}")
+    if meta.get("revisionId"):
+        header_lines.append(f"- Revision: {meta.get('revisionId')}")
+    owners = _owners_line(meta)
+    if owners:
+        header_lines.append(f"- Owners: {owners}")
+    return ("\n".join(header_lines) + "\n\n---\n\n").encode("utf-8")
+
+
+def _capture_meta(doc_id: str, meta: dict[str, object]) -> dict[str, object]:
+    owners = meta.get("owners")
+    return {
+        "projector": "gdocs",
+        "source_title": str(meta.get("title") or ""),
+        "source_url": str(meta.get("url") or ""),
+        "source_revision": str(meta.get("revisionId") or ""),
+        "source_owners": owners if isinstance(owners, list) else [],
+        "source_created_at": str(meta.get("createdTime") or ""),
+        "source_updated_at": str(meta.get("modifiedTime") or ""),
+        "doc_id": doc_id,
+    }
+
+
+def capture(argv: list[str], _options: object) -> Capture:
+    args = _parse_cli(argv)
+    if args.command != "get":
+        if args.command == "search":
+            payload = capture_json_command(
+                args,
+                cmd_search,
+                detail="gdocs search capture failed",
+            )
+            return Capture(
+                data=payload,
+                name=preferred_name(argv, object()),
+                type="application/json",
+                meta={
+                    "projector": "gdocs",
+                    "gdocs_kind": "search",
+                },
+            )
+        raise NotImplementedError("gdocs capture does not support this command")
+    oauth_state = ensure_google_session(
+        allow_bootstrap=True,
+        interactive_ok=is_interactive(),
+        auth_command="gdocs",
+    )
+    access_token = str(oauth_state.get("access_token") or "").strip()
+    doc_id, _ = parse_doc_ref(args.ref)
+    meta = document_meta(access_token, doc_id)
+    document = document_json(access_token, doc_id)
+    html = drive_export(access_token, doc_id, "text/html")
+    return Capture(
+        data=html,
+        name=f"{doc_id}.html",
+        type="text/html",
+        meta=_capture_meta(doc_id, meta),
+        view={"meta": meta, "document": document},
+    )
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("gdocs_kind") or "get").strip()
+    if kind == "search":
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            return render_search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != "search":
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        return render_search_markdown(payload).encode("utf-8")
+    meta = capture.view.get("meta")
+    if not isinstance(meta, dict):
+        meta = {
+            "title": capture.meta.get("source_title") or "",
+            "url": capture.meta.get("source_url") or "",
+            "revisionId": capture.meta.get("source_revision") or "",
+            "owners": capture.meta.get("source_owners") or [],
+            "createdTime": capture.meta.get("source_created_at") or "",
+            "modifiedTime": capture.meta.get("source_updated_at") or "",
+        }
+    doc_id = str(capture.meta.get("doc_id") or "").strip()
+    if not argv:
+        rendered = html_markdown(capture.data)
+        body = rendered if rendered is not None else html_text(capture.data)
+        return _markdown_prelude(doc_id, meta) + body
+    args = _parse_cli(argv)
+    if args.command != "get":
+        return capture.data
+    if args.output == "html":
+        return capture.data
+    if args.output == "json":
+        document = capture.view.get("document")
+        if isinstance(document, dict):
+            return json_bytes(document)
+        return json_bytes(meta)
+    if args.output == "meta":
+        return json_bytes(meta)
+    if args.output == "text":
+        return html_text(capture.data)
+    rendered = html_markdown(capture.data)
+    body = rendered if rendered is not None else html_text(capture.data)
+    return _markdown_prelude(doc_id, meta) + body
 
 
 def normalize_search_result(item: dict[str, object], *, matched_by: set[str]) -> dict[str, object]:

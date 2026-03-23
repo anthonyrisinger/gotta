@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -17,8 +18,11 @@ from html import unescape
 import urllib.error
 import urllib.request
 
+from gotta.builtin import get_plugin
+from gotta.capture import Capture
 from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV, capture_stdout, run_plugin
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import html_markdown, looks_text, pretty_json
 from gotta.target import build_parser, parse_args, resolve_read_target
 
 
@@ -64,6 +68,18 @@ class ReadExecution:
     code: int
     canonical_bytes: bytes
     display_bytes: bytes
+
+
+_REMOTE_EXTENSION_BY_TYPE = {
+    "text/html": ".html",
+    "text/plain": ".txt",
+    "text/markdown": ".md",
+    "application/json": ".json",
+    "text/json": ".json",
+    "text/csv": ".csv",
+    "application/xml": ".xml",
+    "text/xml": ".xml",
+}
 
 
 def die(message: str, code: int = 2) -> int:
@@ -361,53 +377,157 @@ def _view_bytes(data: bytes, *, head: int, tail: int, section: str) -> bytes:
 
 
 def _remote_canonical_bytes(target: str) -> bytes:
-    data, content_type, truncated = fetch_url(target)
+    data, _content_type, truncated = fetch_url(target)
     if truncated:
         _emit_truncation_note()
-    if content_type.split(";", 1)[0].strip().lower() == "text/html":
-        markdown = html_as_markdown_bytes(data)
-        if markdown is not None:
-            return markdown
     return data
 
 
-def execute_materializing_read(argv: list[str]) -> ReadExecution:
+def _remote_content_type(value: str) -> str:
+    return value.split(";", 1)[0].strip().lower()
+
+
+def _remote_extension(content_type: str) -> str:
+    return _REMOTE_EXTENSION_BY_TYPE.get(_remote_content_type(content_type), "")
+
+
+def _canonical_remote_name(target: str, content_type: str) -> str:
+    parsed = urllib.parse.urlparse(target)
+    raw_name = Path(parsed.path.rstrip("/")).name or parsed.netloc or "read"
+    expected = _remote_extension(content_type)
+    current = Path(raw_name).suffix.lower()
+    if expected:
+        if not current:
+            return f"{raw_name}{expected}"
+        if current != expected:
+            return f"{Path(raw_name).stem}{expected}"
+    if current:
+        return raw_name
+    return f"{raw_name}.bin"
+
+
+def _project_html(data: bytes) -> bytes:
+    try:
+        markdown = html_markdown(data)
+    except RuntimeError:
+        markdown = None
+    return markdown if markdown is not None else data
+
+
+def _project_canonical(capture: Capture) -> bytes:
+    content_type = capture.type.split(";", 1)[0].strip().lower()
+    if content_type == "text/html":
+        return _project_html(capture.data)
+    if content_type in {"application/json", "text/json"}:
+        return pretty_json(capture.data)
+    if content_type.startswith("text/") or looks_text(capture.data):
+        return capture.data
+    lines = [
+        "# Binary Content",
+        "",
+        f"- Content Type: `{capture.type or 'application/octet-stream'}`",
+        f"- Bytes: {len(capture.data)}",
+        "",
+        "Use the provider-native surface or a raw file tool if you need the uninterpreted bytes.",
+        "",
+    ]
+    return "\n".join(lines).encode("utf-8")
+
+
+def _display_projection(capture: Capture) -> bytes:
+    stored_projector = str(capture.meta.get("projector") or "").strip()
+    if stored_projector:
+        spec = get_plugin(stored_projector)
+        if spec and spec.project is not None:
+            try:
+                return spec.project([], capture)
+            except RuntimeError:
+                pass
+    return _project_canonical(capture)
+
+
+def _stored_capture(path: Path) -> Capture:
+    meta_path = path.parent / "meta.json"
+    meta: dict[str, object] = {}
+    if meta_path.exists():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            meta = payload
+    return Capture(
+        data=path.read_bytes(),
+        name=str(meta.get("original_name") or meta.get("preferred_name") or path.name or ""),
+        type=str(meta.get("content_type") or ""),
+        meta=dict(meta),
+    )
+
+
+def _has_stored_metadata(path: Path) -> bool:
+    return (path.parent / "meta.json").exists()
+
+
+def capture(argv: list[str], options: object) -> Capture:
     request = parse_args(argv)
     target = request.target
+    try:
+        resolved = resolve_read_target(argv, options)
+    except TypeError:
+        resolved = resolve_read_target(argv)
+    if resolved.kind == "routed":
+        assert resolved.routed_plugin is not None
+        spec = get_plugin(resolved.routed_plugin)
+        if spec and spec.capture is not None:
+            return spec.capture(resolved.routed_argv, options)
+        with capture_stdout() as captured:
+            code = delegate(resolved.routed_plugin, resolved.routed_argv)
+        if code != 0:
+            detail = captured.getvalue().decode("utf-8", errors="replace").strip()
+            raise RuntimeError(detail or f"`{resolved.routed_plugin}` capture failed")
+        return Capture(data=captured.getvalue())
+    if resolved.kind == "remote_url":
+        assert target is not None
+        data, content_type, truncated = fetch_url(target)
+        if truncated:
+            _emit_truncation_note()
+        return Capture(
+            data=data,
+            name=_canonical_remote_name(target, content_type),
+            type=content_type or "application/octet-stream",
+        )
+    raise RuntimeError(f"read target kind `{resolved.kind}` does not support canonical acquisition")
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    request = parse_args(argv)
     resolved = resolve_read_target(argv)
     if resolved.kind == "routed":
         assert resolved.routed_plugin is not None
-        with capture_stdout() as capture:
-            code = delegate(resolved.routed_plugin, resolved.routed_argv)
-        canonical = capture.getvalue()
-        if code != 0:
-            return ReadExecution(code=code, canonical_bytes=b"", display_bytes=canonical)
-        display = (
-            _view_bytes(
-                canonical,
-                head=max(0, request.head),
-                tail=max(0, request.tail),
-                section=request.section,
-            )
-            if request.head > 0 or request.tail > 0 or request.section
-            else canonical
+        spec = get_plugin(resolved.routed_plugin)
+        if spec and spec.project is not None:
+            projected = spec.project(resolved.routed_argv, capture)
+        else:
+            projected = capture.data
+    else:
+        projected = _project_canonical(capture)
+    if request.head > 0 or request.tail > 0 or request.section:
+        return _view_bytes(
+            projected,
+            head=max(0, request.head),
+            tail=max(0, request.tail),
+            section=request.section,
         )
-        return ReadExecution(code=code, canonical_bytes=canonical, display_bytes=display)
-    if resolved.kind == "remote_url":
-        assert target is not None
-        canonical = _remote_canonical_bytes(target)
-        display = (
-            _view_bytes(
-                canonical,
-                head=max(0, request.head),
-                tail=max(0, request.tail),
-                section=request.section,
-            )
-            if request.head > 0 or request.tail > 0 or request.section
-            else canonical
-        )
-        return ReadExecution(code=0, canonical_bytes=canonical, display_bytes=display)
-    raise RuntimeError(f"read target kind `{resolved.kind}` does not support canonical acquisition")
+    return projected
+
+
+def execute_materializing_read(argv: list[str]) -> ReadExecution:
+    captured = capture(argv, object())
+    return ReadExecution(
+        code=0,
+        canonical_bytes=captured.data,
+        display_bytes=project(argv, captured),
+    )
 
 
 def _delegate_with_view(
@@ -497,50 +617,58 @@ def main(argv: list[str]) -> int:
             return die(str(exc), code=1)
         if truncated:
             _emit_truncation_note()
-        if content_type.split(";", 1)[0].strip().lower() == "text/html":
-            try:
-                markdown = html_as_markdown_bytes(data)
-                if markdown is not None:
-                    if request.head > 0 or request.tail > 0 or request.section:
-                        _render_viewed_bytes(
-                            markdown,
-                            language="markdown",
-                            head=max(0, request.head),
-                            tail=max(0, request.tail),
-                            section=request.section,
-                        )
-                        return 0
-                    render_bytes(markdown, "markdown")
-                    return 0
-            except RuntimeError as exc:
-                return die(str(exc), code=1)
+        display = _display_projection(
+            Capture(data=data, type=content_type or "application/octet-stream")
+        )
         language = guess_lang_from_content_type(content_type) or guess_lang_from_path(
             target.split("?", 1)[0]
         )
+        if _remote_content_type(content_type) == "text/html" and display != data:
+            language = "markdown"
         if request.head > 0 or request.tail > 0 or request.section:
             _render_viewed_bytes(
-                data,
+                display,
                 language=language or "txt",
                 head=max(0, request.head),
                 tail=max(0, request.tail),
                 section=request.section,
             )
             return 0
-        render_bytes(data, language or "txt")
+        render_bytes(display, language or "txt")
         return 0
 
     path = resolved.path
     if path is not None and path.is_file():
+        if not _has_stored_metadata(path):
+            if request.head > 0 or request.tail > 0 or request.section:
+                _render_viewed_bytes(
+                    path.read_bytes(),
+                    language=guess_lang_from_path(path.name or target),
+                    head=max(0, request.head),
+                    tail=max(0, request.tail),
+                    section=request.section,
+                )
+                return 0
+            render_file(path, guess_lang_from_path(path.name or target))
+            return 0
+        stored = _stored_capture(path)
+        display = _display_projection(stored)
+        language = (
+            "markdown"
+            if stored.type.split(";", 1)[0].strip().lower() == "text/html" and display != stored.data
+            else guess_lang_from_content_type(stored.type)
+            or guess_lang_from_path(path.name or target)
+        )
         if request.head > 0 or request.tail > 0 or request.section:
             _render_viewed_bytes(
-                path.read_bytes(),
-                language=guess_lang_from_path(path.name or target),
+                display,
+                language=language,
                 head=max(0, request.head),
                 tail=max(0, request.tail),
                 section=request.section,
             )
             return 0
-        render_file(path, guess_lang_from_path(path.name or target))
+        render_bytes(display, language)
         return 0
     if path is not None and path.is_dir():
         if request.head > 0 or request.tail > 0 or request.section:

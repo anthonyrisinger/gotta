@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.config import set_provider_env_values
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
 from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
 from gotta.providers import atlassian as atl
@@ -137,20 +139,14 @@ def preferred_name(argv: list[str], options: object) -> str:
         content_ref = parse_content_ref(args.page)
         content_id = content_ref.comment_id or content_ref.requested_id or ""
         if content_id:
-            return f"{content_id}.{_output_extension(args.output)}"
+            return f"{content_id}.html"
         parsed = urllib.parse.urlparse(args.page)
         page_name = Path(parsed.path.rstrip("/")).name if parsed.scheme else args.page
-        return f"{_slug(page_name, fallback='confluence')}.{_output_extension(args.output)}"
+        return f"{_slug(page_name, fallback='confluence')}.html"
     if args.command == "search":
-        return (
-            f"confluence-search-{_slug(args.query, fallback='confluence')}"
-            f".{_output_extension(args.output)}"
-        )
+        return f"confluence-search-{_slug(args.query, fallback='confluence')}.json"
     if args.command == "cql":
-        return (
-            f"confluence-cql-{_slug(args.query, fallback='confluence')}"
-            f".{_output_extension('markdown')}"
-        )
+        return f"confluence-cql-{_slug(args.query, fallback='confluence')}.json"
     if args.command == "status":
         return f"confluence.{_output_extension(args.output)}"
     return "confluence.txt"
@@ -1306,6 +1302,177 @@ def render_comment_markdown(comment: dict[str, Any], session: Session) -> str:
         lines.append(f"- Version: {version.get('number')}")
     lines.extend(["", "---", "", body.rstrip(), ""])
     return "\n".join(lines)
+
+
+def _content_capture_meta(
+    session: Session,
+    kind: str,
+    content: dict[str, Any],
+) -> dict[str, object]:
+    version = content.get("version")
+    if not isinstance(version, dict):
+        version = {}
+    content_id = str(content.get("id") or "")
+    page_id = str(content.get("pageId") or "")
+    if kind == "comment":
+        url = (
+            f"{session.base_url.rstrip('/')}/wiki/pages/viewpage.action?"
+            f"pageId={page_id}&focusedCommentId={content_id}"
+            if session.base_url and page_id and content_id
+            else ""
+        )
+    else:
+        url = (
+            f"{session.base_url.rstrip('/')}/wiki/pages/viewpage.action?pageId={content_id}"
+            if session.base_url and content_id
+            else ""
+        )
+    return {
+        "projector": "confluence",
+        "content_kind": kind,
+        "content_id": content_id,
+        "page_id": page_id,
+        "source_title": str(content.get("title") or ""),
+        "source_url": url,
+        "source_space_id": str(content.get("spaceId") or ""),
+        "source_created_at": str(content.get("createdAt") or ""),
+        "source_updated_at": str(version.get("createdAt") or ""),
+        "source_version": str(version.get("number") or ""),
+    }
+
+
+def _content_capture_name(kind: str, content: dict[str, Any], fallback: str) -> str:
+    content_id = str(content.get("id") or "").strip()
+    if content_id:
+        return f"{content_id}.html"
+    if fallback:
+        return f"{fallback}.html"
+    return f"{kind}.html"
+
+
+def _markdown_from_capture(capture: Capture) -> bytes:
+    kind = str(capture.meta.get("content_kind") or "page")
+    body = render_storage_to_markdown(capture.data.decode("utf-8", errors="replace"))
+    title = str(capture.meta.get("source_title") or ("Confluence Comment" if kind == "comment" else "(untitled)"))
+    lines = [f"# {title}", ""]
+    url = str(capture.meta.get("source_url") or "")
+    content_id = str(capture.meta.get("content_id") or "")
+    page_id = str(capture.meta.get("page_id") or "")
+    if url:
+        lines.append(f"- URL: {url}")
+    if kind == "comment":
+        if content_id:
+            lines.append(f"- Comment ID: {content_id}")
+        if page_id:
+            lines.append(f"- Page ID: {page_id}")
+    else:
+        if content_id:
+            lines.append(f"- Page ID: {content_id}")
+        if capture.meta.get("source_space_id"):
+            lines.append(f"- Space ID: {capture.meta.get('source_space_id')}")
+    if capture.meta.get("source_created_at"):
+        lines.append(f"- Created: {capture.meta.get('source_created_at')}")
+    if capture.meta.get("source_updated_at"):
+        lines.append(f"- Updated: {capture.meta.get('source_updated_at')}")
+    if capture.meta.get("source_version"):
+        lines.append(f"- Version: {capture.meta.get('source_version')}")
+    if _projection_is_lossy(body):
+        lines.append(
+            f"- Projection: approximate markdown; use `gotta confluence get {content_id or page_id} --output body` "
+            "for canonical Confluence storage HTML when page layout, embedded diagrams, tables, "
+            "or macros matter"
+        )
+    lines.extend(["", "---", "", body.rstrip(), ""])
+    return "\n".join(lines).encode("utf-8")
+
+
+def capture(argv: list[str], _options: object) -> Capture:
+    args = _parse_cli(argv)
+    if args.command != "get":
+        if args.command in {"search", "cql"}:
+            payload = capture_json_command(
+                args,
+                cmd_search if args.command == "search" else cmd_cql,
+                detail=f"confluence {args.command} capture failed",
+            )
+            return Capture(
+                data=payload,
+                name=preferred_name(argv, object()),
+                type="application/json",
+                meta={
+                    "projector": "confluence",
+                    "confluence_kind": args.command,
+                },
+            )
+        raise NotImplementedError("confluence capture does not support this command")
+    session, content_kind, content = fetch_read_target(parse_content_ref(args.page))
+    body = comment_storage_value(content) if content_kind == "comment" else storage_value(content)
+    fallback = _slug(Path(urllib.parse.urlparse(args.page).path.rstrip("/")).name or args.page, fallback="confluence")
+    return Capture(
+        data=body.encode("utf-8"),
+        name=_content_capture_name(content_kind, content, fallback),
+        type="text/html",
+        meta=_content_capture_meta(session, content_kind, content),
+        view={"content": content, "content_kind": content_kind},
+    )
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("confluence_kind") or "get").strip()
+    if kind in {"search", "cql"}:
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            return render_search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != kind:
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        return render_search_markdown(payload).encode("utf-8")
+    if not argv:
+        return _markdown_from_capture(capture)
+    args = _parse_cli(argv)
+    if args.command != "get":
+        return capture.data
+    if args.output == "body":
+        return capture.data
+    if args.output == "markdown":
+        return _markdown_from_capture(capture)
+    content = capture.view.get("content")
+    if args.output == "meta":
+        if isinstance(content, dict):
+            kind = str(capture.meta.get("content_kind") or "page")
+            if kind == "comment":
+                return json_bytes(
+                    {
+                        "id": content.get("id"),
+                        "type": "comment",
+                        "pageId": content.get("pageId"),
+                        "version": content.get("version"),
+                        "status": content.get("status"),
+                    }
+                )
+            return json_bytes(
+                {
+                    "id": content.get("id"),
+                    "type": kind,
+                    "title": content.get("title"),
+                    "version": content.get("version"),
+                    "status": content.get("status"),
+                    "spaceId": content.get("spaceId"),
+                }
+            )
+        return json_bytes(capture.meta)
+    if isinstance(content, dict):
+        return json_bytes(content)
+    return json_bytes(
+        {
+            "id": capture.meta.get("content_id") or capture.meta.get("page_id") or "",
+            "type": capture.meta.get("content_kind") or "page",
+            "title": capture.meta.get("source_title") or "",
+            "body": {"storage": {"value": capture.data.decode("utf-8", errors="replace")}},
+        }
+    )
 
 
 def format_resolve_page_payload(

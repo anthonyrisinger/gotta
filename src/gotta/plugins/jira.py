@@ -16,8 +16,10 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
+from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.config import set_provider_env_values
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
 from gotta.source import (
     derive_source_metadata_from_payload,
@@ -392,7 +394,7 @@ def preferred_name(argv: list[str], options: object) -> str:
     args = _parse_cli(argv)
     if args.command == "get":
         issue_key = _issue_key_for_locator(args.issue)
-        return f"{issue_key}.{_output_extension(args.output)}"
+        return f"{issue_key}.json"
     if args.command == "projects":
         suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
         return f"jira-projects{suffix}.{_output_extension(args.output)}"
@@ -428,10 +430,7 @@ def preferred_name(argv: list[str], options: object) -> str:
         issue_key = _issue_key_for_locator(args.issue)
         return f"{issue_key}-{args.command}.{_output_extension(args.output)}"
     if args.command in {"search", "jql"}:
-        return (
-            f"jira-{args.command}-{_slug(args.query, fallback='jira')}"
-            f".{_output_extension(args.output)}"
-        )
+        return f"jira-{args.command}-{_slug(args.query, fallback='jira')}.json"
     if args.command == "status":
         return f"jira.{_output_extension(args.output)}"
     return "jira.txt"
@@ -2589,6 +2588,66 @@ def cmd_get(args: argparse.Namespace) -> int:
         return 0
     sys.stdout.write(markdown_issue(envelope))
     return 0
+
+
+def capture(argv: list[str], _options: object) -> Capture:
+    args = _parse_cli(argv)
+    if args.command != "get":
+        if args.command in {"search", "jql"}:
+            payload = capture_json_command(
+                args,
+                cmd_search if args.command == "search" else cmd_jql,
+                detail=f"jira {args.command} capture failed",
+            )
+            return Capture(
+                data=payload,
+                name=preferred_name(argv, object()),
+                type="application/json",
+                meta={
+                    "projector": "jira",
+                    "jira_kind": args.command,
+                },
+            )
+        raise NotImplementedError("jira capture does not support this command")
+    issue_ref = parse_issue_ref(args.issue, base_url_override=args.base_url)
+    envelope = fetch_issue(issue_ref, fields=DEFAULT_GET_FIELDS)
+    return Capture(
+        data=json_bytes(envelope),
+        name=f"{_issue_key_for_locator(args.issue)}.json",
+        type="application/json",
+        meta={
+            "projector": "jira",
+            "source_created_at": str(envelope.get("createdAt") or ""),
+            "source_updated_at": str(envelope.get("updatedAt") or ""),
+        },
+    )
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("jira_kind") or "get").strip()
+    if kind in {"search", "jql"}:
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            return render_search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != kind:
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        return render_search_markdown(payload).encode("utf-8")
+    envelope = json.loads(capture.data.decode("utf-8"))
+    if not argv:
+        return markdown_issue(envelope).encode("utf-8")
+    args = _parse_cli(argv)
+    if args.command != "get":
+        return capture.data
+    if args.output == "json":
+        return pretty_json(capture.data)
+    if args.output == "meta":
+        return json_bytes(meta_issue(envelope))
+    if args.output == "adf":
+        return json_bytes(envelope.get("descriptionAdf"))
+    return markdown_issue(envelope).encode("utf-8")
 
 
 def cmd_search(args: argparse.Namespace) -> int:

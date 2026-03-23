@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
+from pathlib import Path
 import re
 import shlex
 import shutil
@@ -13,7 +15,9 @@ import subprocess
 import sys
 import urllib.parse
 
+from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import html_markdown, html_text, pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
 from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
 from gotta.providers.google import (
@@ -94,12 +98,190 @@ def preferred_name(argv: list[str], options: object) -> str:
     args = _parse_cli(argv)
     if args.command == "get":
         file_id, _ = parse_drive_ref(args.ref)
-        return f"{file_id}.{_output_extension(args.output)}"
+        return f"{file_id}{_canonical_suffix('application/octet-stream')}"
     if args.command == "search":
-        return f"gdrive-search-{_slug(args.query, fallback='gdrive')}.{_output_extension(args.output)}"
+        return f"gdrive-search-{_slug(args.query, fallback='gdrive')}.json"
     if args.command == "status":
         return f"gdrive.{_output_extension(args.output)}"
     return "gdrive.txt"
+
+
+def _owner_names(meta: dict[str, object]) -> list[str]:
+    owners = meta.get("owners")
+    if not isinstance(owners, list):
+        return []
+    names: list[str] = []
+    for owner in owners:
+        if not isinstance(owner, dict):
+            continue
+        display_name = str(owner.get("displayName") or "").strip()
+        if display_name:
+            names.append(display_name)
+    return names
+
+
+def _capture_meta(file_id: str, meta: dict[str, object]) -> dict[str, object]:
+    return {
+        "projector": "gdrive",
+        "file_id": file_id,
+        "source_title": str(meta.get("name") or ""),
+        "source_url": str(meta.get("webViewLink") or ""),
+        "source_mime": str(meta.get("mimeType") or ""),
+        "source_size": str(meta.get("size") or ""),
+        "source_owners": _owner_names(meta),
+        "source_created_at": str(meta.get("createdTime") or ""),
+        "source_updated_at": str(meta.get("modifiedTime") or ""),
+    }
+
+
+def _canonical_suffix(canonical_type: str) -> str:
+    normalized = canonical_type.split(";", 1)[0].strip().lower()
+    if normalized == "text/html":
+        return ".html"
+    if normalized == "application/json":
+        return ".json"
+    if normalized == "text/plain":
+        return ".txt"
+    if normalized == "application/octet-stream":
+        return ".bin"
+    guessed = mimetypes.guess_extension(normalized, strict=False)
+    if guessed:
+        return guessed
+    if normalized.startswith("text/"):
+        return ".txt"
+    return ".bin"
+
+
+def _capture_name(file_id: str, meta: dict[str, object], canonical_type: str) -> str:
+    title = str(meta.get("name") or "").strip()
+    suffix = _canonical_suffix(canonical_type)
+    if title:
+        if "." in Path(title).name:
+            return title
+        return f"{title}{suffix}"
+    return f"{file_id}{suffix}"
+
+
+def capture(argv: list[str], _options: object) -> Capture:
+    args = _parse_cli(argv)
+    if args.command != "get":
+        if args.command == "search":
+            payload = capture_json_command(
+                args,
+                cmd_search,
+                detail="gdrive search capture failed",
+            )
+            return Capture(
+                data=payload,
+                name=preferred_name(argv, object()),
+                type="application/json",
+                meta={
+                    "projector": "gdrive",
+                    "gdrive_kind": "search",
+                },
+            )
+        raise NotImplementedError("gdrive capture does not support this command")
+    oauth_state = ensure_google_session(
+        allow_bootstrap=True,
+        interactive_ok=is_interactive(),
+        auth_command="gdrive",
+    )
+    access_token = str(oauth_state.get("access_token") or "").strip()
+    file_id, canonical_url = parse_drive_ref(args.ref)
+    meta = drive_file_meta(access_token, file_id, fields=DEFAULT_DRIVE_FIELDS)
+    meta.setdefault("webViewLink", canonical_url)
+    mime_type = str(meta.get("mimeType") or "")
+    if mime_type == GOOGLE_DOC_MIME:
+        data = export_document(access_token, file_id, "html")
+        canonical_type = "text/html"
+    else:
+        data = drive_download_bytes(access_token, file_id)
+        canonical_type = mime_type or "application/octet-stream"
+    return Capture(
+        data=data,
+        name=_capture_name(file_id, meta, canonical_type),
+        type=canonical_type,
+        meta=_capture_meta(file_id, meta),
+        view={"meta": meta},
+    )
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("gdrive_kind") or "get").strip()
+    if kind == "search":
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            return render_search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != "search":
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        return render_search_markdown(payload).encode("utf-8")
+    meta = capture.view.get("meta")
+    if not isinstance(meta, dict):
+        meta = {
+            "id": capture.meta.get("file_id") or "",
+            "name": capture.meta.get("source_title") or "",
+            "webViewLink": capture.meta.get("source_url") or "",
+            "mimeType": capture.meta.get("source_mime") or "",
+            "size": capture.meta.get("source_size") or "",
+            "createdTime": capture.meta.get("source_created_at") or "",
+            "modifiedTime": capture.meta.get("source_updated_at") or "",
+            "owners": [
+                {"displayName": item}
+                for item in capture.meta.get("source_owners") or []
+                if isinstance(item, str)
+            ],
+        }
+    source_mime = str(capture.meta.get("source_mime") or meta.get("mimeType") or "")
+    canonical_type = capture.type.split(";", 1)[0].strip().lower()
+    if not argv:
+        if source_mime == GOOGLE_DOC_MIME or canonical_type == "text/html":
+            rendered = html_markdown(capture.data)
+            return rendered if rendered is not None else html_text(capture.data)
+        if is_textlike_mime_type(source_mime) or canonical_type.startswith("text/"):
+            return capture.data
+        return drive_file_summary(meta).encode("utf-8")
+    args = _parse_cli(argv)
+    if args.command != "get":
+        return capture.data
+    if args.output in {"json", "meta"}:
+        return json_bytes(meta)
+    if args.output == "raw":
+        if source_mime == GOOGLE_DOC_MIME:
+            raise RuntimeError(
+                "raw download is not available for native Google Docs; use "
+                "--output markdown, text, html, meta, or json"
+            )
+        return capture.data
+    if source_mime == GOOGLE_DOC_MIME:
+        if args.output == "html":
+            return capture.data
+        if args.output == "text":
+            return html_text(capture.data)
+        rendered = html_markdown(capture.data)
+        return rendered if rendered is not None else html_text(capture.data)
+    if args.output == "html":
+        if canonical_type == "text/html":
+            return capture.data
+        raise RuntimeError(
+            f"{source_mime or 'this file'} is not exportable as html; "
+            "use --output raw, meta, json, or markdown"
+        )
+    if args.output in {"markdown", "text"} and (
+        is_textlike_mime_type(source_mime) or canonical_type.startswith("text/")
+    ):
+        if args.output == "markdown" and canonical_type == "text/html":
+            rendered = html_markdown(capture.data)
+            return rendered if rendered is not None else html_text(capture.data)
+        return capture.data
+    if args.output == "text":
+        raise RuntimeError(
+            f"{source_mime or 'this file'} is not directly readable as text; "
+            "use --output raw, meta, json, or markdown"
+        )
+    return drive_file_summary(meta).encode("utf-8")
 
 
 def route_target(target: str) -> list[str] | None:

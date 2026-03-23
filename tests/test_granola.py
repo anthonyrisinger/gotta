@@ -532,7 +532,7 @@ def test_granola_transcript_query_preferred_name_is_distinct() -> None:
             ["transcript", "11111111-1111-1111-1111-111111111111", "--query", "latency"],
             options,
         )
-        == "11111111-1111-1111-1111-111111111111-transcript-query-latency.md"
+        == "11111111-1111-1111-1111-111111111111-transcript-query-latency.json"
     )
 
 

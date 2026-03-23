@@ -22,7 +22,10 @@ import urllib.error
 from dataclasses import dataclass
 from typing import Any
 
+from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.dispatch import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
 from gotta.source import (
     derive_source_metadata_from_payload,
@@ -289,14 +292,14 @@ def preferred_name(argv: list[str], options: object) -> str:
     if args.command == "get":
         ref = resolve_slack_ref(args.ref, workspace=args.workspace)
         if ref.kind == "thread" and ref.thread_ts:
-            return f"p{ref.thread_ts.replace('.', '')}.{_output_extension(args.output)}"
-        return f"{ref.channel_id}.{_output_extension(args.output)}"
+            return f"p{ref.thread_ts.replace('.', '')}.json"
+        return f"{ref.channel_id}.json"
     if args.command == "search":
         prefix = "slack-search"
         workspace = str(args.workspace or "").strip()
         if workspace:
             prefix = f"{prefix}-{_slug(workspace, fallback='slack')}"
-        return f"{prefix}-{_slug(args.query, fallback='slack')}.{_output_extension(args.output)}"
+        return f"{prefix}-{_slug(args.query, fallback='slack')}.json"
     return f"slack.{_output_extension(getattr(args, 'output', 'text'))}"
 
 
@@ -3652,6 +3655,84 @@ def cmd_get(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(render_text(envelope))
     return 0
+
+
+def capture(argv: list[str], _options: object) -> Capture:
+    args = _parse_cli(argv)
+    if args.command != "get":
+        if args.command == "search":
+            payload = capture_json_command(
+                args,
+                cmd_search,
+                detail="slack search capture failed",
+            )
+            return Capture(
+                data=payload,
+                name=preferred_name(argv, object()),
+                type="application/json",
+                meta={
+                    "projector": "slack",
+                    "slack_kind": "search",
+                },
+            )
+        raise NotImplementedError("slack capture does not support this command")
+    captured_args = argparse.Namespace(**vars(args))
+    captured_args.output = "json"
+    with capture_stdout() as captured:
+        code = cmd_get(captured_args)
+    if code != 0:
+        detail = captured.getvalue().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(detail or "slack get capture failed")
+    ref = resolve_slack_ref(args.ref, workspace=args.workspace)
+    name = (
+        f"p{ref.thread_ts.replace('.', '')}.json"
+        if ref.kind == "thread" and ref.thread_ts
+        else f"{ref.channel_id}.json"
+    )
+    envelope = json.loads(captured.getvalue().decode("utf-8"))
+    return Capture(
+        data=captured.getvalue(),
+        name=name,
+        type="application/json",
+        meta={
+            "projector": "slack",
+            "source_created_at": str(envelope.get("firstTsIso") or envelope.get("firstTs") or ""),
+            "source_updated_at": str(envelope.get("lastTsIso") or envelope.get("lastTs") or ""),
+        },
+    )
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("slack_kind") or "get").strip()
+    if kind == "search":
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            return render_search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != "search":
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        if args.output == "titles":
+            return render_search_titles(payload).encode("utf-8")
+        if args.output == "links":
+            return render_search_links(payload).encode("utf-8")
+        return render_search_markdown(payload).encode("utf-8")
+    envelope = json.loads(capture.data.decode("utf-8"))
+    if not argv:
+        return render_markdown(envelope).encode("utf-8")
+    args = _parse_cli(argv)
+    if args.command != "get":
+        return capture.data
+    if args.output == "json":
+        return pretty_json(capture.data)
+    if args.output == "meta":
+        return json_bytes(envelope_meta(envelope))
+    if args.output == "messages":
+        return json_bytes(envelope.get("messages"))
+    if args.output == "markdown":
+        return render_markdown(envelope).encode("utf-8")
+    return render_text(envelope).encode("utf-8")
 
 
 def cmd_search(args: argparse.Namespace) -> int:

@@ -153,6 +153,23 @@ def test_google_doc_and_drive_get_default_to_markdown() -> None:
     assert gsheets.build_parser().parse_args(["get", "sheet-123"]).output == "markdown"
 
 
+def test_gdrive_preferred_name_for_get_is_canonical_not_projection_shaped() -> None:
+    options = type("Options", (), {"save_as": ""})()
+
+    assert gdrive.preferred_name(["get", "--output", "markdown", "file-123"], options) == "file-123.bin"
+
+
+def test_gdrive_capture_name_uses_truthful_suffixes_for_binary_content() -> None:
+    assert (
+        gdrive._capture_name("file-123", {"name": "Quarterly Deck"}, "application/pdf")
+        == "Quarterly Deck.pdf"
+    )
+    assert (
+        gdrive._capture_name("file-123", {"name": "Quarterly Deck.pdf"}, "application/pdf")
+        == "Quarterly Deck.pdf"
+    )
+
+
 def test_google_status_defaults_to_summary() -> None:
     assert gdocs.build_parser().parse_args(["status"]).output == "summary"
     assert gdocs.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"

@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.config import (
     extract_provider_env,
     load_config,
@@ -23,6 +24,7 @@ from gotta.config import (
     write_config,
 )
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.project import pretty_json
 from gotta.routing import query_route, split_locator_tail, strip_http_url_fragment
 from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
 
@@ -1145,19 +1147,17 @@ def preferred_name(argv: list[str], _options: Any) -> str:
             return f"grafana-datasources{suffix}.{extension}"
         return f"grafana.{extension}"
     if args.command == "search":
-        extension = {"markdown": "md", "summary": "summary", "json": "json"}[args.output]
         suffix_parts: list[str] = []
         if args.type:
             suffix_parts.append(args.type)
         if args.query:
             suffix_parts.append(_slug(args.query, fallback="all"))
         suffix = "-".join(part for part in suffix_parts if part) or "all"
-        return f"grafana-search-{suffix}.{extension}"
+        return f"grafana-search-{suffix}.json"
     if args.command == "query":
         extension = {"markdown": "md", "summary": "summary", "json": "json"}[args.output]
         return f"grafana-query-{_slug(args.expr, fallback='grafana')}.{extension}"
-    extension = {"markdown": "md", "summary": "summary", "json": "json"}[args.output]
-    return f"{_dashboard_uid_from_ref(args.ref) or 'grafana-dashboard'}.{extension}"
+    return f"{_dashboard_uid_from_ref(args.ref) or 'grafana-dashboard'}.json"
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
@@ -1241,6 +1241,65 @@ def cmd_get(args: argparse.Namespace) -> int:
         return 0
     print(_dashboard_markdown(payload), end="")
     return 0
+
+
+def capture(argv: list[str], _options: Any) -> Capture:
+    args = _parse_cli(argv)
+    if args.command != "get":
+        if args.command == "search":
+            payload = capture_json_command(
+                args,
+                cmd_search,
+                detail="grafana search capture failed",
+            )
+            return Capture(
+                data=payload,
+                name=preferred_name(argv, object()),
+                type="application/json",
+                meta={
+                    "projector": "grafana",
+                    "grafana_kind": "search",
+                },
+            )
+        raise NotImplementedError("grafana capture does not support this command")
+    payload = _dashboard_payload(args)
+    return Capture(
+        data=json_bytes(payload),
+        name=f"{_dashboard_uid_from_ref(args.ref) or 'grafana-dashboard'}.json",
+        type="application/json",
+        meta={
+            "projector": "grafana",
+            "source_created_at": str(payload.get("createdAt") or ""),
+            "source_updated_at": str(payload.get("updatedAt") or ""),
+        },
+    )
+
+
+def project(argv: list[str], capture: Capture) -> bytes:
+    kind = str(capture.meta.get("grafana_kind") or "get").strip()
+    if kind == "search":
+        payload = json.loads(capture.data.decode("utf-8"))
+        if not argv:
+            return _search_markdown(payload).encode("utf-8")
+        args = _parse_cli(argv)
+        if args.command != "search":
+            return capture.data
+        if args.output == "json":
+            return pretty_json(capture.data)
+        if args.output == "summary":
+            return (_search_summary(payload) + "\n").encode("utf-8")
+        return _search_markdown(payload).encode("utf-8")
+    payload = json.loads(capture.data.decode("utf-8"))
+    if not argv:
+        return _dashboard_markdown(payload).encode("utf-8")
+    args = _parse_cli(argv)
+    if args.command != "get":
+        return capture.data
+    if args.output == "json":
+        return pretty_json(capture.data)
+    if args.output == "summary":
+        return (_dashboard_summary(payload) + "\n").encode("utf-8")
+    return _dashboard_markdown(payload).encode("utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
