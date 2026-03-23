@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from gotta.actor import session_actor, writer_role
 from gotta.compat import UTC, datetime
 from gotta.content import (
     SESSION_REPO_ENV,
@@ -28,8 +29,20 @@ def log_records(work_dir: Path) -> list[dict[str, object]]:
     return read_jsonl_records(logs_state_path(work_dir))
 
 
+def visible_log_records(work_dir: Path) -> list[dict[str, object]]:
+    target_actor = session_actor(work_dir) if work_dir.resolve().parent.name == "actors" else ""
+    records = log_records(work_dir)
+    if not target_actor:
+        return records
+    return [
+        record
+        for record in records
+        if writer_role(work_dir, target_actor, writer=str(record.get("actor") or "")) != "foreign"
+    ]
+
+
 def logs_payload(work_dir: Path, *, limit: int = 0) -> dict[str, object]:
-    records = sorted(log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
+    records = sorted(visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
     entries = records[-limit:] if limit > 0 else records
     return {
         "logs": str(logs_surface_path(work_dir)),
@@ -84,7 +97,7 @@ def render_log_record_markdown(record: dict[str, object]) -> str:
 def sync_logs_projection(work_dir: Path) -> None:
     write_text_atomic(
         logs_surface_path(work_dir),
-        render_logs_markdown(work_dir, log_records(work_dir)),
+        render_logs_markdown(work_dir, visible_log_records(work_dir)),
     )
 
 
@@ -112,7 +125,7 @@ def append_log_record(
 
 
 def recent_log_lines(work_dir: Path, *, limit: int) -> list[str]:
-    records = sorted(log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
+    records = sorted(visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
     entries: list[str] = []
     for record in records[-limit:]:
         timestamp = str(record.get("timestamp") or "unknown-time")

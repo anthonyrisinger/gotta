@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+from gotta.actor import session_actor, writer_role
 from gotta.compat import UTC, datetime
 from gotta.content import append_activity_event, current_actor, session_identity, write_text_atomic
 from gotta.projection import append_chunk, append_jsonl, read_jsonl_records
@@ -57,6 +58,23 @@ def channel_surface_path(session_dir: Path, channel: FrictionChannel) -> Path:
 
 def channel_records(session_dir: Path, channel: FrictionChannel) -> list[dict[str, object]]:
     return read_jsonl_records(channel_log_path(session_dir, channel))
+
+
+def visible_channel_records(
+    session_dir: Path,
+    channel: FrictionChannel,
+) -> list[dict[str, object]]:
+    target_actor = (
+        session_actor(session_dir) if session_dir.resolve().parent.name == "actors" else ""
+    )
+    records = channel_records(session_dir, channel)
+    if not target_actor:
+        return records
+    return [
+        record
+        for record in records
+        if writer_role(session_dir, target_actor, writer=str(record.get("actor") or "")) != "foreign"
+    ]
 
 
 def filtered_records(
@@ -138,7 +156,7 @@ def render_channel_record_markdown(
 def sync_channel_projection(session_dir: Path, channel: FrictionChannel) -> None:
     write_text_atomic(
         channel_surface_path(session_dir, channel),
-        render_channel_markdown(channel_records(session_dir, channel), channel),
+        render_channel_markdown(visible_channel_records(session_dir, channel), channel),
     )
 
 
@@ -204,7 +222,8 @@ def recent_channel_lines(
     limit: int,
 ) -> list[str]:
     records = sorted(
-        channel_records(session_dir, channel), key=lambda item: str(item.get("timestamp") or "")
+        visible_channel_records(session_dir, channel),
+        key=lambda item: str(item.get("timestamp") or ""),
     )
     entries = []
     for record in records[-limit:]:

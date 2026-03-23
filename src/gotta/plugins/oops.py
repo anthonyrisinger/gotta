@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from gotta.actor import require_writer, writer_name, writer_role
 from gotta.content import (
     ContentError,
     CommonOptions,
@@ -208,6 +209,12 @@ def _aggregate_oops_records(
             kind=kind,
             severity=severity,
         ):
+            if (
+                actor_root.resolve().parent.name == "actors"
+                and writer_role(actor_root, current_actor, writer=str(record.get("actor") or ""))
+                == "foreign"
+            ):
+                continue
             payload = dict(record)
             payload.setdefault("actor", current_actor)
             payload.setdefault("label", session_plugin._actor_label(current_actor, work_dir=work_dir))
@@ -223,6 +230,16 @@ def cmd_oops(args: argparse.Namespace) -> int:
             explicit_session=getattr(args, "session", None),
             explicit_actor=getattr(args, "actor", None),
         )
+        writer = writer_name()
+        actor_branch = session_dir.resolve().parent.name == "actors"
+        target_actor = session_plugin.session_actor(session_dir) if actor_branch else ""
+        if target_actor:
+            require_writer(
+                session_dir,
+                target_actor,
+                writer=writer,
+                action="write into this actor branch",
+            )
         payload = _read_text_source(
             session_root=session_dir,
             inline=(args.value[0] if args.value else None),
@@ -233,6 +250,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
         append_oops_record(
             session_dir,
             message=_normalize_text(payload, input_name="oops entry text"),
+            actor=writer,
             surface=args.surface or "",
             command=args.command or "",
             kind=args.kind or "",
@@ -249,6 +267,16 @@ def cmd_oops(args: argparse.Namespace) -> int:
             explicit_session=getattr(args, "session", None),
             explicit_actor=getattr(args, "actor", None),
         )
+        writer = writer_name()
+        actor_branch = session_dir.resolve().parent.name == "actors"
+        target_actor = session_plugin.session_actor(session_dir) if actor_branch else ""
+        if target_actor:
+            require_writer(
+                session_dir,
+                target_actor,
+                writer=writer,
+                action="write into this actor branch",
+            )
         entries = _read_text_items_source(
             session_root=session_dir,
             inline_items=list(args.value or []),
@@ -260,6 +288,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             append_oops_record(
                 session_dir,
                 message=_normalize_text(entry, input_name="oops entry text"),
+                actor=writer,
                 surface=args.surface or "",
                 command=args.command or "",
                 kind=args.kind or "",
@@ -278,6 +307,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             explicit_session=getattr(args, "session", None),
             explicit_actor=explicit_actor,
         )
+        actor_name = session_plugin.session_identity(session_dir)
         records = filtered_oops_records(
             oops_records(session_dir),
             surface=args.surface or "",
@@ -285,6 +315,11 @@ def cmd_oops(args: argparse.Namespace) -> int:
             kind=args.kind or "",
             severity=args.severity or "",
         )
+        records = [
+            record
+            for record in records
+            if writer_role(session_dir, actor_name, writer=str(record.get("actor") or "")) != "foreign"
+        ]
         actor_ids = [session_plugin.session_identity(session_dir)]
     else:
         session_dir = session_plugin._shared_session_dir(

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta import builtin
 from gotta import content
 from gotta import main as cli
@@ -246,6 +247,45 @@ def test_main_ambient_provider_get_honors_explicit_actor_attribution(
     assert entries[-1]["plugin"] == "github"
     assert entries[-1]["artifact_kind"] == "evidence"
     assert entries[-1]["actor"] == claude
+
+
+def test_main_rejects_foreign_actor_attributed_materialization(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Claude"]) == 0
+    capsys.readouterr()
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, "foreign-123")
+
+    def fake_github_main(argv: list[str]) -> int:
+        print("# Repo\n\nmain body\n")
+        return 0
+
+    monkeypatch.setattr(github, "main", fake_github_main)
+
+    assert (
+        cli.main(
+            [
+                "github",
+                "https://github.com/acme/widgets",
+                "--session",
+                "demo",
+                "--actor",
+                "claude",
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+
+    assert "bind and launch a sibling actor" in captured.err
+    manifest_path = registry / "demo" / "content" / "manifest.jsonl"
+    assert not manifest_path.exists()
 
 
 def test_main_dispatches_direct_plugin_args_inside_bound_session(

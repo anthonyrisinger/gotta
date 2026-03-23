@@ -46,6 +46,7 @@ from gotta.friction import oops_log_path, render_oops_markdown
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.logs import append_log_record, logs_state_path, sync_logs_projection
 from gotta.notes import (
+    actor_voice,
     actor_notes_ready,
     actor_notes_surface_path,
     sync_actor_notes_projection,
@@ -56,6 +57,7 @@ from gotta.actor import (
     session_actor,
     actor_session_root,
     requested_disposition_label,
+    writer_role,
 )
 from gotta.todo import (
     create_todo_item,
@@ -1775,6 +1777,8 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
         timestamp = str(payload.get("timestamp") or "").strip()
         detail = str(payload.get("detail") or "").strip()
         author = str(payload.get("author") or "").strip()
+        if writer_role(work_dir, actor_name, writer=author or actor_name) == "foreign":
+            continue
         events.append(
             {
                 "timestamp": timestamp,
@@ -1861,14 +1865,19 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     signoff_at = str(state.get("signoff_at") or "")
     actor_dir = _actor_session_dir(work_dir, actor_name)
     notes_path = actor_dir / "NOTES.md"
-    notes_ready = actor_notes_ready(work_dir, _normalize_actor_name(actor_name))
+    voice = actor_voice(work_dir, _normalize_actor_name(actor_name))
+    notes_ready = voice == "present"
     evidence = _actor_evidence_summary(work_dir, actor_name)
     evidence_note = _actor_evidence_note(evidence)
     recent_activity = _actor_recent_activity(work_dir, actor_name)
     evidence_live = int(evidence["artifact_count"]) > 0
     if signoff_at:
         derived_status = "signed_off"
-    notes_status = "present" if notes_ready else "empty" if notes_path.exists() else "missing"
+    notes_status = (
+        "present"
+        if actor_notes_ready(work_dir, _normalize_actor_name(actor_name))
+        else "empty" if notes_path.exists() else "missing"
+    )
     runtime_note = ""
     if status in {"starting", "active"} and runtime_live is False:
         if requested_status in {"completed", "failed", "signed_off"}:
@@ -1914,6 +1923,8 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + " That pending disposition will become authoritative automatically "
                 "when the actor runtime exits."
             )
+    voice_missing = voice == "missing"
+    voice_setup = voice == "setup"
     if derived_status == "closing":
         if notes_ready:
             next_step = (
@@ -1924,13 +1935,23 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + request_note
                 + runtime_note
             )
+        elif voice_setup:
+            next_step = (
+                "actor close-out is pending while the runtime is still live. Setup pulse is present, "
+                "but actor voice is still missing. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Land one final actor-authored durable note before runtime exit so the close-out "
+                "has real voice, then recheck actor status."
+                + request_note
+                + runtime_note
+            )
         else:
             next_step = (
-                "actor close-out is pending while the runtime is still live, but NOTES.md is "
-                "still empty. "
+                "actor close-out is pending while the runtime is still live, but actor voice is "
+                "still missing. "
                 + (evidence_note + " " if evidence_note else "")
-                + "Land one final durable note before runtime exit so the close-out has "
-                "narration, then recheck actor status."
+                + "Land one final actor-authored durable note before runtime exit so the close-out "
+                "has voice, then recheck actor status."
                 + request_note
                 + runtime_note
             )
@@ -1944,29 +1965,49 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + request_note
                 + runtime_note
             )
+        elif voice_setup:
+            next_step = (
+                "actor is still active and producing evidence artifacts. Setup pulse is present, "
+                "but actor voice has not landed yet. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Append an actor-authored durable note before requesting completion or sign-off, "
+                f"then recheck `gotta actor status {_normalize_actor_name(actor_name)}` shortly."
+                + request_note
+                + runtime_note
+            )
         else:
             next_step = (
-                "actor is still active and producing evidence artifacts, but NOTES.md is still empty. "
+                "actor is still active and producing evidence artifacts, but actor voice is still "
+                "missing. "
                 + (evidence_note + " " if evidence_note else "")
-                + "Append a durable note before requesting completion or sign-off, then recheck "
-                f"`gotta actor status {_normalize_actor_name(actor_name)}` shortly."
+                + "Append an actor-authored durable note before requesting completion or sign-off, "
+                f"then recheck `gotta actor status {_normalize_actor_name(actor_name)}` shortly."
                 + request_note
                 + runtime_note
             )
     elif derived_status in {"starting", "active"} and notes_ready:
         next_step = (
-            "actor is still active and has already started landing durable notes. "
+            "actor is still active and actor voice is present. "
             "Use NOTES.md for live actor visibility; recheck `gotta actor status "
             f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
             + request_note
             + runtime_note
         )
+    elif derived_status in {"starting", "active"} and voice_setup:
+        next_step = (
+            "setup pulse is present, but actor voice is still missing. Give the runtime a brief "
+            "startup window to land the first actor-authored durable note before treating this as a "
+            "visibility failure. If actor voice is still missing after one heartbeat interval or "
+            "after the first materialized artifact, intervene and recheck actor status."
+            + request_note
+            + runtime_note
+        )
     elif derived_status in {"starting", "active"}:
         next_step = (
-            "actor is live, but NOTES.md is still empty. Give the runtime a brief startup window to land "
-            "the first durable heartbeat note before treating this as a visibility failure. If NOTES.md "
-            "is still empty after one heartbeat interval or after the first materialized artifact, "
-            "intervene and recheck actor status."
+            "actor is live, but actor voice is still missing. Give the runtime a brief startup "
+            "window to land the first actor-authored durable note before treating this as a "
+            "visibility failure. If actor voice is still missing after one heartbeat interval or "
+            "after the first materialized artifact, intervene and recheck actor status."
             + request_note
             + runtime_note
         )
@@ -1983,7 +2024,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             )
             + request_note
         )
-    elif derived_status == "stalled" and (notes_ready or evidence_live):
+    elif derived_status == "stalled" and (not voice_missing or evidence_live):
         next_step = (
             "actor heartbeat is stale, but material actor state already exists in NOTES.md or the "
             "shared evidence web. "
@@ -2000,9 +2041,9 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             )
         else:
             next_step = (
-                "actor run is complete and evidence landed, but NOTES.md is still empty. Wait for a "
-                "durable note or sign off intentionally only if you are explicitly accepting an "
-                "evidence-only actor contribution."
+                "actor run is complete and evidence landed, but actor voice is still missing. Wait "
+                "for an actor-authored durable note or sign off intentionally only if you are "
+                "explicitly accepting an evidence-only actor contribution."
             )
     elif derived_status == "incomplete":
         next_step = (
@@ -2029,13 +2070,19 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "Continue retrieval if more evidence should land, or close out intentionally once "
             f"the narrative is complete with `gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
         )
+    elif derived_status in {"pending", "bound"} and voice_setup:
+        next_step = (
+            "setup pulse is present, but actor voice has not landed yet. Continue retrieval until the "
+            "actor writes a durable note, or close this branch out intentionally only if setup-only "
+            "state is truly sufficient."
+        )
     elif evidence_live and not notes_ready:
         next_step = (
-            "actor-attributed evidence is already live in the shared session web, but NOTES.md is "
-            "still empty. "
+            "actor-attributed evidence is already live in the shared session web, but actor voice is "
+            "still missing. "
             + (evidence_note + " " if evidence_note else "")
-            + "Land one durable note now so review, handoff, and session-wide inspection surfaces "
-            "have actor narration instead of evidence-only state."
+            + "Land one actor-authored durable note now so review, handoff, and session-wide "
+            "inspection surfaces have actor voice instead of evidence-only state."
         )
     else:
         next_step = ""
@@ -2049,6 +2096,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         "notes_path": str(notes_path),
         "notes_status": notes_status,
         "notes_ready": notes_ready,
+        "voice": voice,
         "evidence_live": bool(evidence_live),
         "evidence_note": evidence_note,
         "requested_status": requested_status,

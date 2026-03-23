@@ -29,6 +29,7 @@ from gotta.actor import (
     SUPERVISOR_GRACEFUL_STOP_MODE,
     SUPERVISOR_GRACEFUL_STOP_STATUS,
     actor_session_root,
+    require_writer,
 )
 from gotta import session as session_plugin
 from gotta.session import (
@@ -48,8 +49,8 @@ FEEDBACK_DIRECTIVE_PREFIX = "@@gotta "
 FEEDBACK_SURFACES = {"notes", "logs", "oops"}
 LAUNCHER_AUTHOR = "launcher"
 LAUNCHER_HEARTBEAT_NOTE = (
-    "launcher heartbeat: actor runtime spawned successfully; allow a brief startup "
-    "window before treating empty notes as failure."
+    "launcher pulse: actor runtime spawned successfully; wait for actor voice and do "
+    "not pair another agent into this actor."
 )
 
 
@@ -97,6 +98,10 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         f"""\
         You are {label.lower()} inside a first-class gotta session for one shared session.
 
+        This runtime already is the actor. Do not spawn, pair, or delegate another
+        agent from inside this actor runtime. If a narrower parallel branch is needed,
+        the supervisor must bind and launch a sibling actor instead.
+
         Use `gotta` itself as the primary investigation surface. If a native path
         is thin and you must use another tool, disclose that move through
         `gotta notes append ...` together with why the
@@ -140,6 +145,10 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
           `@@gotta {{"actor":"{actor_name}","surface":"oops","message":"reply permalink lost thread context"}}`
         - valid directive surfaces are `notes`, `logs`, and `oops`
         - directive lines are private launcher protocol: they are consumed immediately, update the matching durable surface, and never appear in the visible transcript
+        - use `@@gotta` continuously while you work: `logs` for rapid pulse, `notes` for durable milestone anchors, `oops` for native-surface friction
+        - emit one immediate `@@gotta` note as soon as the runtime is alive
+        - emit continuous `@@gotta` log pulses during active work
+        - emit a `@@gotta` note after the first strong anchor, after each material evidence wave, and before sign-off if the last durable note is stale
         - use native `gotta` mutation for multiline, structured, or more deliberate edits
 
         Evidence-first actor contract:
@@ -162,6 +171,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
         - append running notes with `gotta notes append --stdin`; add `--actor {actor_name}` only when you are intentionally targeting this actor from another bound root
+        - do not satisfy the narration contract by opening another native agent; if native `gotta` narration is blocked, record that as friction instead
         - when you are truly done, run:
           `gotta actor signoff {actor_name} --summary "<one-line sign-off>"`
         """
@@ -295,6 +305,12 @@ def _apply_feedback_directive(
     actor_root = session_plugin._actor_session_dir(work_root, actor_name)
     first_line = message.splitlines()[0] if message.splitlines() else message
     rendered_author = author.strip() or actor_name
+    require_writer(
+        work_root,
+        actor_name,
+        writer=rendered_author,
+        action="write into this actor branch",
+    )
     if surface == "notes":
         append_actor_note(actor_root, actor_name, message=message, author=rendered_author)
         session_plugin._append_actor_event(
@@ -334,7 +350,7 @@ def _apply_feedback_directive(
             detail="appended 1 logs entry",
         )
         return
-    append_oops_record(actor_root, message=message, actor=actor_name)
+    append_oops_record(actor_root, message=message, actor=rendered_author)
 
 
 def _record_launcher_heartbeat(work_root: Path, actor_name: str) -> None:
@@ -479,8 +495,11 @@ def build_parser(command_name: str = "gotta actor") -> argparse.ArgumentParser:
         prog=command_name,
         description=(
             "Bind, launch, and disposition sibling actor sessions inside the "
-            "active session. Actor launch requires a real WANT.md and GOAL.md first; "
-            "rewrite actor charters with `gotta want|goal --actor <actor> ...`."
+            "active session. Actor launch creates the live actor runtime itself; do "
+            "not pair another agent into that actor. If you need parallelism, bind "
+            "and launch a sibling actor. Actor launch requires a real WANT.md and "
+            "GOAL.md first; rewrite actor charters with `gotta want|goal --actor "
+            "<actor> ...`."
         ),
     )
     parser.add_argument(
@@ -565,7 +584,8 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
     for actor_name, state in payload.items():
         line = (
             f"{actor_name}: {state['status']} "
-            f"(notes: {state['notes_status']}, artifacts: {state['artifact_count']})"
+            f"(voice: {state.get('voice', 'missing')}, notes: {state['notes_status']}, "
+            f"artifacts: {state['artifact_count']})"
         )
         if state.get("still_running"):
             line += " [still running]"
@@ -988,6 +1008,12 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
     session_plugin._sync_actor_todo_state(work_root)
     session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
     _record_launcher_heartbeat(work_root, actor_name)
+    print(
+        f"launcher pulse landed for {actor_name}; the launched background runtime already is "
+        "the actor. Wait for actor voice. Do not pair another agent into this actor; "
+        "bind and launch a sibling actor for parallel work.",
+        file=sys.stderr,
+    )
     stop_event = threading.Event()
     heartbeat = _with_heartbeat(work_root, actor_name, stop_event)
     output_lock = threading.Lock()

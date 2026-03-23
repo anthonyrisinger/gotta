@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 
+from gotta.actor import require_writer, writer_name, writer_role
 from gotta.helptext import format_long_help, is_long_help_request
-from gotta.logs import append_log_record, log_records, logs_payload, logs_state_path, logs_surface_path
+from gotta.logs import append_log_record, log_records, logs_state_path, logs_surface_path
 from gotta import session as session_plugin
 
 
@@ -75,6 +76,12 @@ def _aggregate_logs(
     for current_actor in actor_ids:
         actor_root = session_plugin._actor_session_dir(work_dir, current_actor)
         for record in log_records(actor_root):
+            if (
+                actor_root.resolve().parent.name == "actors"
+                and writer_role(actor_root, current_actor, writer=str(record.get("actor") or ""))
+                == "foreign"
+            ):
+                continue
             payload = dict(record)
             payload.setdefault("actor", current_actor)
             payload.setdefault("label", session_plugin._actor_label(current_actor, work_dir=work_dir))
@@ -103,7 +110,20 @@ def main(argv: list[str] | None = None) -> int:
                 explicit_session=getattr(args, "session", None),
                 explicit_actor=explicit_actor,
             )
-            payload = logs_payload(work_dir, limit=max(args.limit, 0))
+            actor_name = session_plugin.session_identity(work_dir)
+            visible = [
+                record
+                for record in log_records(work_dir)
+                if writer_role(work_dir, actor_name, writer=str(record.get("actor") or "")) != "foreign"
+            ]
+            entries = sorted(visible, key=lambda item: str(item.get("timestamp") or ""))
+            limited = entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
+            payload = {
+                "logs": str(logs_surface_path(work_dir)),
+                "logs_log": str(logs_state_path(work_dir)),
+                "entry_count": len(entries),
+                "entries": limited,
+            }
             if args.output == "json":
                 print(json.dumps(payload, indent=2, sort_keys=True))
                 return 0
@@ -161,7 +181,18 @@ def main(argv: list[str] | None = None) -> int:
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
+    writer = writer_name()
+    actor_branch = work_dir.resolve().parent.name == "actors"
+    target_actor = session_plugin.session_actor(work_dir) if actor_branch else ""
+    if target_actor:
+        require_writer(
+            work_dir,
+            target_actor,
+            writer=writer,
+            action="write into this actor branch",
+        )
     log_path = logs_surface_path(work_dir)
+    record_actor = writer or ""
     if action == "extend":
         entries = session_plugin._read_text_items_source(
             session_root=work_dir,
@@ -174,12 +205,14 @@ def main(argv: list[str] | None = None) -> int:
             append_log_record(
                 work_dir,
                 message=session_plugin._normalize_entry_text(entry, input_name="log entry text"),
+                actor=record_actor,
             )
         session_plugin._record_session_activity(
             work_dir,
             plugin="logs",
             surface="logs",
             action="extend",
+            actor=record_actor,
             target=log_path,
             detail=f"extended logs with {len(entries)} item(s)",
         )
@@ -195,12 +228,14 @@ def main(argv: list[str] | None = None) -> int:
     append_log_record(
         work_dir,
         message=session_plugin._normalize_entry_text(payload, input_name="log entry text"),
+        actor=record_actor,
     )
     session_plugin._record_session_activity(
         work_dir,
         plugin="logs",
         surface="logs",
         action="append",
+        actor=record_actor,
         target=log_path,
         detail="appended 1 logs entry",
     )

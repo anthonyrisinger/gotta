@@ -8,9 +8,11 @@ from pathlib import Path
 from gotta.compat import UTC, datetime
 from gotta.actor import (
     actor_session_root,
+    resolve_actor_identity,
     requested_disposition_label,
     supervisor_stop_message,
     supervisor_stop_pending,
+    writer_role,
 )
 from gotta.content import SESSION_ACTOR_ENV, current_actor
 from gotta.projection import append_jsonl, read_jsonl_records, write_projection_if_changed
@@ -31,8 +33,35 @@ def actor_notes_records(work_dir: Path, actor_name: str) -> list[dict[str, objec
     return read_jsonl_records(actor_notes_log_path(work_dir, actor_name))
 
 
+def visible_actor_notes_records(work_dir: Path, actor_name: str) -> list[dict[str, object]]:
+    visible: list[dict[str, object]] = []
+    for record in actor_notes_records(work_dir, actor_name):
+        author = str(record.get("author") or "").strip()
+        if writer_role(work_dir, actor_name, writer=author or actor_name) == "foreign":
+            continue
+        visible.append(record)
+    return visible
+
+
+def actor_voice(work_dir: Path, actor_name: str) -> str:
+    normalized_actor = resolve_actor_identity(work_dir, actor_name)
+    nonempty = [
+        record
+        for record in visible_actor_notes_records(work_dir, actor_name)
+        if str(record.get("message") or "").strip()
+    ]
+    if any(str(record.get("author") or "").strip() == normalized_actor for record in nonempty):
+        return "present"
+    if nonempty:
+        return "setup"
+    return "missing"
+
+
 def actor_notes_ready(work_dir: Path, actor_name: str) -> bool:
-    return any(str(record.get("message") or "").strip() for record in actor_notes_records(work_dir, actor_name))
+    return any(
+        str(record.get("message") or "").strip()
+        for record in visible_actor_notes_records(work_dir, actor_name)
+    )
 
 
 def _author_name() -> str:
@@ -66,7 +95,7 @@ def actor_notes_payload(
     status_payload: dict[str, object],
 ) -> dict[str, object]:
     records = sorted(
-        actor_notes_records(work_dir, actor_name),
+        visible_actor_notes_records(work_dir, actor_name),
         key=lambda item: str(item.get("timestamp") or ""),
     )
     return {
@@ -109,6 +138,7 @@ def render_actor_notes_markdown(
             "## Live Actor State",
             "",
             f"- status: `{status_payload.get('status', 'pending')}`",
+            f"- voice: `{status_payload.get('voice', 'missing')}`",
             f"- notes_status: `{status_payload.get('notes_status', 'empty')}`",
             f"- artifact_count: {int(status_payload.get('artifact_count') or 0)}",
         ]
@@ -135,7 +165,7 @@ def render_actor_notes_markdown(
         lines.append(f"- next_step: {status_payload['next_step']}")
     lines.extend(["", "## Entries", ""])
     records = sorted(
-        actor_notes_records(work_dir, actor_name),
+        visible_actor_notes_records(work_dir, actor_name),
         key=lambda item: str(item.get("timestamp") or ""),
     )
     if not records:

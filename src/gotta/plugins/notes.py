@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from gotta.actor import require_writer, writer_name
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.notes import (
     append_actor_note,
@@ -84,6 +85,7 @@ def _summary_payload(work_dir, *, actor_name: str) -> dict[str, object]:
         "notes": str(actor_notes_surface_path(work_dir, actor_name)),
         "notes_log": str(actor_notes_log_path(work_dir, actor_name)),
         "status": str(status.get("status") or "pending"),
+        "voice": str(status.get("voice") or "missing"),
         "notes_status": str(status.get("notes_status") or "empty"),
         "artifact_count": int(status.get("artifact_count") or 0),
         "next_step": str(status.get("next_step") or ""),
@@ -127,9 +129,9 @@ def _append_actor_name(work_dir, *, explicit_actor: str = "") -> str:
     return actor_ids[0]
 
 
-def _append_author_name(actor_name: str, *, explicit_actor: str = "") -> str:
+def _append_author_name(actor_name: str, *, explicit_actor: str = "", writer: str = "") -> str:
     if explicit_actor:
-        return session_plugin.current_actor(default_actor=actor_name)
+        return writer or actor_name
     return actor_name
 
 
@@ -237,9 +239,17 @@ def main(argv: list[str] | None = None) -> int:
         work_dir,
         explicit_actor=str(getattr(args, "actor", None) or ""),
     )
+    actor_writer = writer_name()
     author_name = _append_author_name(
         actor_name,
         explicit_actor=str(getattr(args, "actor", None) or ""),
+        writer=actor_writer,
+    )
+    require_writer(
+        work_dir,
+        actor_name,
+        writer=actor_writer,
+        action="write into this actor branch",
     )
     session_plugin._ensure_actor_surface(work_dir, actor_name)
     message = session_plugin._normalize_entry_text(

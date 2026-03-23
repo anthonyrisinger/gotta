@@ -31,6 +31,8 @@ from gotta.builtin import (
     available_plugins as discovered_plugin_names,
     get_plugin,
 )
+from gotta.actor import require_writer, session_actor, writer_name
+from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta.invocation import (
     ResolvedInvocation,
     SUPPRESS_MATERIALIZATION_ENV as INVOCATION_SUPPRESS_MATERIALIZATION_ENV,
@@ -464,7 +466,24 @@ def _materialize_invocation(
         return None
     materialize_plugin = resolved.resolved_plugin
     materialize_argv = resolved.resolved_argv
-    actor = os.environ.get(ACTOR_ID_ENV, "").strip() or session_identity(dirs.session_dir)
+    explicit_actor = os.environ.get(ACTOR_ID_ENV, "").strip()
+    actor = explicit_actor or session_identity(dirs.session_dir)
+    target_actor = explicit_actor or session_actor(dirs.session_dir) or actor
+    resolved_session_root = dirs.session_dir.resolve()
+    actor_branch = resolved_session_root.parent.name == "actors"
+    if target_actor and actor_branch:
+        writer = writer_name()
+        if explicit_actor and not os.environ.get(ACTOR_SPEAKER_ENV, "").strip():
+            writer = explicit_actor
+        try:
+            require_writer(
+                dirs.session_dir,
+                target_actor,
+                writer=writer,
+                action="attribute materialized artifacts to this actor branch",
+            )
+        except SystemExit as exc:
+            raise ContentError(str(exc)) from exc
     metadata = {
         "tool": "gotta",
         "plugin": materialize_plugin,

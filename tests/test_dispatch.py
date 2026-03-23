@@ -1182,6 +1182,39 @@ def test_materialize_invocation_captures_actor_actor_metadata(
     assert manifest["actor_dir"].endswith("/actors/claude")
 
 
+def test_materialize_invocation_rejects_unbound_actor_shell(
+    tmp_path: Path, monkeypatch
+) -> None:
+    shared_root = tmp_path / "session-root"
+    dirs = content.ResolvedDirs(
+        session_dir=shared_root / "actors" / "claude",
+        content_dir=shared_root / "content",
+    )
+    dirs.session_dir.mkdir(parents=True, exist_ok=True)
+    dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    content.write_state_env(dirs)
+    monkeypatch.delenv(ACTOR_ID_ENV, raising=False)
+    monkeypatch.delenv(content.SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv("GOTTA_ACTOR_SPEAKER", raising=False)
+    monkeypatch.setattr(
+        content,
+        "current_context_binding",
+        lambda: type("Binding", (), {"binding_id": ""})(),
+    )
+
+    with pytest.raises(content.ContentError) as excinfo:
+        dispatch._materialize_invocation(
+            "read",
+            ["README.md"],
+            content.CommonOptions(),
+            b"hello\n",
+            dirs=dirs,
+        )
+
+    assert "bind and launch a sibling actor" in str(excinfo.value)
+    assert not (dirs.content_dir / "manifest.jsonl").exists()
+
+
 def test_github_route_prefers_markdown_for_common_github_targets() -> None:
     route_target = plugin_api.get_plugin("github").route_target
     assert route_target is not None

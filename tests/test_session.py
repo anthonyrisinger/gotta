@@ -38,6 +38,7 @@ def local_session_registry(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
     monkeypatch.delenv(ACTOR_CALLEE_ENV, raising=False)
     monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
 
 
 def make_dirs(root: Path) -> content.ResolvedDirs:
@@ -378,12 +379,16 @@ def test_actor_launch_records_immediate_launcher_heartbeat(
     monkeypatch.setattr(actor, "_with_heartbeat", lambda *_args, **_kwargs: FakeThread())
 
     assert actor.main(["launch", claude, "--session", str(root)]) == 0
-    capsys.readouterr()
+    captured = capsys.readouterr()
 
     records = actor_notes_records(actor_root, claude)
     assert records[-1]["author"] == actor.LAUNCHER_AUTHOR
     assert records[-1]["message"] == actor.LAUNCHER_HEARTBEAT_NOTE
-    assert sessionlib._actor_status_payload(actor_root, claude)["notes_status"] == "present"
+    payload = sessionlib._actor_status_payload(actor_root, claude)
+    assert payload["notes_status"] == "present"
+    assert payload["voice"] == "setup"
+    assert "already is the actor" in captured.err
+    assert "Do not pair another agent into this actor" in captured.err
 
 
 def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
@@ -462,6 +467,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
         for record in oops_records(actor_root)
     )
     assert status["notes_status"] == "present"
+    assert status["voice"] == "present"
     assert "heartbeat note now" not in str(status.get("next_step") or "")
     assert any(
         str(event.get("actor") or "") == claude and str(event.get("plugin") or "") == "logs"
@@ -577,7 +583,7 @@ def test_actor_status_discovers_initialized_fingerprint_actors_missing_from_meta
 
 
 def test_notes_show_defaults_to_all_bound_actors(
-    tmp_path: Path, capsys
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
 
@@ -586,8 +592,10 @@ def test_notes_show_defaults_to_all_bound_actors(
     claude = _actor_id(root, "Claude")
     codex = _actor_id(root, "Codex")
 
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
     assert notes.main(["append", "codex note", "--actor", codex, "--session", str(root)]) == 0
     capsys.readouterr()
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, claude)
     assert notes.main(["append", "claude note", "--actor", claude, "--session", str(root)]) == 0
     capsys.readouterr()
 
@@ -601,13 +609,14 @@ def test_notes_show_defaults_to_all_bound_actors(
 
 
 def test_notes_append_infers_single_bound_actor_without_flag(
-    tmp_path: Path, capsys
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "Claude")
+    monkeypatch.setenv(SESSION_ACTOR_ENV, claude)
 
     assert notes.main(["append", "ambient note", "--session", str(root)]) == 0
     output = capsys.readouterr().out
@@ -619,7 +628,7 @@ def test_notes_append_infers_single_bound_actor_without_flag(
 
 
 def test_notes_append_on_actor_root_authors_as_target_actor(
-    tmp_path: Path, capsys
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
 
@@ -627,6 +636,7 @@ def test_notes_append_on_actor_root_authors_as_target_actor(
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "Claude")
     actor_root = _actor_root(root, "Claude")
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, claude)
 
     assert notes.main(["append", "actor-root note", "--session", str(actor_root)]) == 0
     capsys.readouterr()
@@ -702,7 +712,7 @@ def test_actor_status_filters_with_actor_flag(
 
 
 def test_logs_show_defaults_to_all_bound_actors(
-    tmp_path: Path, capsys
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
 
@@ -711,8 +721,10 @@ def test_logs_show_defaults_to_all_bound_actors(
     claude = _actor_id(root, "Claude")
     codex = _actor_id(root, "Codex")
 
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
     assert logs.main(["append", "codex log", "--session", str(root), "--actor", codex]) == 0
     capsys.readouterr()
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, claude)
     assert logs.main(["append", "claude log", "--session", str(root), "--actor", claude]) == 0
     capsys.readouterr()
 
@@ -1253,7 +1265,7 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
     assert payload["status"] == "pending"
     assert payload["artifact_count"] == 1
     assert payload["notes_status"] == "empty"
-    assert "Land one durable note now" in payload["next_step"]
+    assert "Land one actor-authored durable note now" in payload["next_step"]
 
 
 def test_actor_status_guides_pending_actor_with_notes_and_evidence(
@@ -1301,8 +1313,9 @@ def test_actor_recent_activity_carries_cross_actor_author(
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    _bind_actors(root, capsys, "Claude")
+    _bind_actors(root, capsys, "Claude", "Codex")
     claude = _actor_id(root, "claude")
+    codex = _actor_id(root, "codex")
     events_path = sessionlib._actor_events_path(root, claude)
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
@@ -1310,7 +1323,7 @@ def test_actor_recent_activity_carries_cross_actor_author(
             {
                 "timestamp": "2026-03-17T00:03:00Z",
                 "actor": claude,
-                "author": "thread-123",
+                "author": codex,
                 "event": "note",
                 "detail": "Wave 2 landed",
             }
@@ -1320,8 +1333,115 @@ def test_actor_recent_activity_carries_cross_actor_author(
     )
 
     payload = sessionlib._actor_status_payload(root, claude)
-    assert payload["recent_activity"][0]["author"] == "thread-123"
-    assert payload["recent_activity"][0]["summary"] == "thread-123: Wave 2 landed"
+    assert payload["recent_activity"][0]["author"] == codex
+    assert payload["recent_activity"][0]["summary"] == f"{codex}: Wave 2 landed"
+
+
+def test_actor_status_ignores_foreign_note_for_voice(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    notes.append_actor_note(
+        root,
+        claude,
+        message="foreign pulse",
+        author="foreign-123",
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = sessionlib._actor_status_payload(root, claude)
+
+    assert payload["notes_status"] == "empty"
+    assert payload["voice"] == "missing"
+
+
+def test_foreign_writer_cannot_append_actor_note(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, "foreign-123")
+
+    with pytest.raises(SystemExit) as excinfo:
+        notes.main(["append", "bad note", "--session", str(root), "--actor", claude])
+
+    assert "bind and launch a sibling actor" in str(excinfo.value)
+
+
+def test_unbound_shell_cannot_append_actor_note(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
+    monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
+    monkeypatch.setattr(
+        content,
+        "current_context_binding",
+        lambda: type("Binding", (), {"binding_id": ""})(),
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        notes.main(["append", "bad note", "--session", str(root), "--actor", claude])
+
+    assert "bind and launch a sibling actor" in str(excinfo.value)
+    assert actor_notes_records(_actor_root(root, claude), claude) == []
+
+
+def test_foreign_writer_cannot_append_actor_log(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, "foreign-123")
+
+    with pytest.raises(SystemExit) as excinfo:
+        logs.main(["append", "bad log", "--session", str(root), "--actor", claude])
+
+    assert "bind and launch a sibling actor" in str(excinfo.value)
+
+
+def test_unbound_shell_cannot_append_actor_log(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
+    monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
+    monkeypatch.setattr(
+        content,
+        "current_context_binding",
+        lambda: type("Binding", (), {"binding_id": ""})(),
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        logs.main(["append", "bad log", "--session", str(root), "--actor", claude])
+
+    assert "bind and launch a sibling actor" in str(excinfo.value)
+    assert log_records(_actor_root(root, claude)) == []
+
+
+def test_peer_actor_log_preserves_peer_author(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "claude")
+    codex = _actor_id(root, "codex")
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
+
+    assert logs.main(["append", "peer log", "--session", str(root), "--actor", claude]) == 0
+    capsys.readouterr()
+
+    assert log_records(_actor_root(root, claude))[-1]["actor"] == codex
 
 
 def test_session_bind_can_switch_active_session(tmp_path: Path, monkeypatch, capsys) -> None:
