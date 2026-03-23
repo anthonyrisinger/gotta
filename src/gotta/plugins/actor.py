@@ -46,6 +46,11 @@ LIVE_STATUSES = {"starting", "active", "closing", "producing_evidence", "stalled
 TERMINAL_STATUSES = {"completed", "failed", "incomplete", "rejected", "signed_off"}
 FEEDBACK_DIRECTIVE_PREFIX = "@@gotta "
 FEEDBACK_SURFACES = {"notes", "logs", "oops"}
+LAUNCHER_AUTHOR = "launcher"
+LAUNCHER_HEARTBEAT_NOTE = (
+    "launcher heartbeat: actor runtime spawned successfully; allow a brief startup "
+    "window before treating empty notes as failure."
+)
 
 
 def _normalize_args(argv: list[str]) -> list[str]:
@@ -94,7 +99,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
 
         Use `gotta` itself as the primary investigation surface. If a native path
         is thin and you must use another tool, disclose that move through
-        `gotta notes append --actor {actor_name} ...` together with why the
+        `gotta notes append ...` together with why the
         native path was insufficient.
 
         Session layout:
@@ -156,7 +161,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - session-rooted `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
         - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
-        - append running notes with `gotta notes append --actor {actor_name} --stdin`; empty notes at closeout are a visibility failure, not success
+        - append running notes with `gotta notes append --stdin`; add `--actor {actor_name}` only when you are intentionally targeting this actor from another bound root
         - when you are truly done, run:
           `gotta actor signoff {actor_name} --summary "<one-line sign-off>"`
         """
@@ -285,23 +290,25 @@ def _apply_feedback_directive(
     *,
     surface: str,
     message: str,
+    author: str = "",
 ) -> None:
     actor_root = session_plugin._actor_session_dir(work_root, actor_name)
     first_line = message.splitlines()[0] if message.splitlines() else message
+    rendered_author = author.strip() or actor_name
     if surface == "notes":
-        append_actor_note(actor_root, actor_name, message=message, author=actor_name)
+        append_actor_note(actor_root, actor_name, message=message, author=rendered_author)
         session_plugin._append_actor_event(
             actor_root,
             actor_name,
             event="note",
             detail=first_line,
-            author=actor_name,
+            author=rendered_author,
         )
         session_plugin._actor_log_line(
             actor_root,
             actor_name,
             f"noted: {first_line}",
-            author=actor_name,
+            author=rendered_author,
         )
         session_plugin._sync_actor_projection_surfaces(actor_root, actor_name)
         session_plugin._record_actor_projection_activity(
@@ -312,22 +319,32 @@ def _apply_feedback_directive(
             log_path=actor_notes_log_path(actor_root, actor_name),
             projection_path=actor_notes_surface_path(actor_root, actor_name),
             detail="appended actor note",
-            actor=actor_name,
+            actor=rendered_author,
         )
         return
     if surface == "logs":
-        append_log_record(actor_root, message=message, actor=actor_name)
+        append_log_record(actor_root, message=message, actor=rendered_author)
         session_plugin._record_session_activity(
             actor_root,
             plugin="logs",
             surface="logs",
             action="append",
-            actor=actor_name,
+            actor=rendered_author,
             target=logs_surface_path(actor_root),
             detail="appended 1 logs entry",
         )
         return
     append_oops_record(actor_root, message=message, actor=actor_name)
+
+
+def _record_launcher_heartbeat(work_root: Path, actor_name: str) -> None:
+    _apply_feedback_directive(
+        work_root,
+        actor_name,
+        surface="notes",
+        message=LAUNCHER_HEARTBEAT_NOTE,
+        author=LAUNCHER_AUTHOR,
+    )
 
 
 def _forward_actor_stream(
@@ -970,6 +987,7 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
     session_plugin._actor_log_line(work_root, actor_name, f"starting with {model}")
     session_plugin._sync_actor_todo_state(work_root)
     session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
+    _record_launcher_heartbeat(work_root, actor_name)
     stop_event = threading.Event()
     heartbeat = _with_heartbeat(work_root, actor_name, stop_event)
     output_lock = threading.Lock()

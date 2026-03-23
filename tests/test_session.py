@@ -340,6 +340,52 @@ def test_actor_launch_uses_isolated_copilot_config_dir(
     assert captured["cwd"] == actor_root
 
 
+def test_actor_launch_records_immediate_launcher_heartbeat(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    actor_root = _actor_root(root, "claude")
+
+    class FakeProc:
+        pid = 4242
+        stdout = io.StringIO("")
+        stderr = io.StringIO("")
+
+        def wait(self) -> int:
+            return 0
+
+    class FakeThread:
+        def join(self, timeout: float | None = None) -> None:
+            if timeout is None:
+                return None
+            return None
+
+    monkeypatch.setattr(
+        actor.session_plugin,
+        "_actor_launch_blockers",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(actor, "_actor_prompt", lambda **_kwargs: "prompt")
+    monkeypatch.setattr(
+        actor,
+        "_spawn_actor_process",
+        lambda *_args, **_kwargs: FakeProc(),
+    )
+    monkeypatch.setattr(actor, "_with_heartbeat", lambda *_args, **_kwargs: FakeThread())
+
+    assert actor.main(["launch", claude, "--session", str(root)]) == 0
+    capsys.readouterr()
+
+    records = actor_notes_records(actor_root, claude)
+    assert records[-1]["author"] == actor.LAUNCHER_AUTHOR
+    assert records[-1]["message"] == actor.LAUNCHER_HEARTBEAT_NOTE
+    assert sessionlib._actor_status_payload(actor_root, claude)["notes_status"] == "present"
+
+
 def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -477,7 +523,10 @@ def test_actor_launch_consumes_invalid_feedback_directives_and_warns(
     assert "@@gotta" not in captured.out
     assert "@@gotta" not in captured.err
     assert captured.err.count("gotta actor feedback ignored:") == 2
-    assert actor_notes_records(actor_root, claude) == []
+    records = actor_notes_records(actor_root, claude)
+    assert len(records) == 1
+    assert records[0]["author"] == actor.LAUNCHER_AUTHOR
+    assert records[0]["message"] == actor.LAUNCHER_HEARTBEAT_NOTE
     assert oops_records(actor_root) == []
 
 
@@ -549,6 +598,78 @@ def test_notes_show_defaults_to_all_bound_actors(
     assert codex in payload["actors"]
     assert claude in payload["actors"]
     assert {entry["actor"] for entry in payload["entries"]} == {codex, claude}
+
+
+def test_notes_append_infers_single_bound_actor_without_flag(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "Claude")
+
+    assert notes.main(["append", "ambient note", "--session", str(root)]) == 0
+    output = capsys.readouterr().out
+
+    assert f"appended actor note for {claude}" in output
+    record = actor_notes_records(root, claude)[-1]
+    assert record["author"] == claude
+    assert record["message"] == "ambient note"
+
+
+def test_notes_append_on_actor_root_authors_as_target_actor(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "Claude")
+    actor_root = _actor_root(root, "Claude")
+
+    assert notes.main(["append", "actor-root note", "--session", str(actor_root)]) == 0
+    capsys.readouterr()
+
+    record = actor_notes_records(actor_root, claude)[-1]
+    assert record["actor"] == claude
+    assert record["author"] == claude
+    assert record["message"] == "actor-root note"
+
+
+def test_notes_append_infers_ambient_bound_actor_without_flag(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+
+    monkeypatch.setenv(content.SESSION_ENV, str(root))
+    monkeypatch.setenv(SESSION_ACTOR_ENV, claude)
+
+    assert notes.main(["append", "ambient shared-root note"]) == 0
+    output = capsys.readouterr().out
+
+    assert f"appended actor note for {claude}" in output
+    record = actor_notes_records(root, claude)[-1]
+    assert record["author"] == claude
+    assert record["message"] == "ambient shared-root note"
+
+
+def test_notes_append_requires_explicit_actor_when_multiple_bound_actors(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+
+    with pytest.raises(SystemExit) as excinfo:
+        notes.main(["append", "ambiguous note", "--session", str(root)])
+
+    assert "actor note append is ambiguous" in str(excinfo.value)
 
 
 def test_notes_show_unbound_actor_fails_without_materializing_surface(

@@ -92,7 +92,7 @@ def render_actor_notes_markdown(
         "",
         f"> Generated automatically from `state/{ACTOR_NOTES_LOG_NAME}`.",
         "> This is a human-readable projection; the structured actor notes log is canonical.",
-        "> Prefer `gotta notes append --actor <actor> ...` for mutation.",
+        "> Prefer `gotta notes append ...` on the active actor root; add `--actor <actor>` only when targeting another bound actor intentionally.",
         "> Shared live pulse still lands in `LOGS.md` and the session evidence web.",
         "",
     ]

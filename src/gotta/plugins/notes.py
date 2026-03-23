@@ -102,6 +102,37 @@ def _require_bound_actor(work_dir, actor_name: str) -> None:
         )
 
 
+def _append_actor_name(work_dir, *, explicit_actor: str = "") -> str:
+    if explicit_actor:
+        actor_name = session_plugin._resolve_bound_actor_name(work_dir, explicit_actor)
+        _require_bound_actor(work_dir, actor_name)
+        return actor_name
+    actor_ids = list(session_plugin._target_actor_ids(work_dir))
+    if not actor_ids:
+        raise SystemExit(
+            "no actor is in scope here; bind or enter one first, or pass "
+            "`--actor <actor>` explicitly"
+        )
+    rooted_actor = session_plugin.session_actor(work_dir)
+    if rooted_actor and rooted_actor in actor_ids:
+        return rooted_actor
+    ambient_actor = session_plugin.current_actor(default_actor="")
+    if ambient_actor and ambient_actor in actor_ids:
+        return ambient_actor
+    if len(actor_ids) > 1:
+        raise SystemExit(
+            "actor note append is ambiguous across multiple bound actors; pass "
+            "`--actor <actor>` explicitly"
+        )
+    return actor_ids[0]
+
+
+def _append_author_name(actor_name: str, *, explicit_actor: str = "") -> str:
+    if explicit_actor:
+        return session_plugin.current_actor(default_actor=actor_name)
+    return actor_name
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = _normalize_args(list(argv or []))
     if is_long_help_request(argv):
@@ -197,15 +228,19 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {continuation}")
         return 0
 
-    if not args.actor:
-        raise SystemExit("missing actor; use `gotta notes append --actor <actor> ...`")
     session_dir = session_plugin._session_dir(
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
     work_dir = session_dir.resolve()
-    actor_name = session_plugin._resolve_bound_actor_name(work_dir, args.actor or "")
-    _require_bound_actor(work_dir, actor_name)
+    actor_name = _append_actor_name(
+        work_dir,
+        explicit_actor=str(getattr(args, "actor", None) or ""),
+    )
+    author_name = _append_author_name(
+        actor_name,
+        explicit_actor=str(getattr(args, "actor", None) or ""),
+    )
     session_plugin._ensure_actor_surface(work_dir, actor_name)
     message = session_plugin._normalize_entry_text(
         session_plugin._read_text_source(
@@ -217,9 +252,20 @@ def main(argv: list[str] | None = None) -> int:
         ),
         input_name="actor note",
     )
-    append_actor_note(work_dir, actor_name, message=message)
-    session_plugin._append_actor_event(work_dir, actor_name, event="note", detail=message.splitlines()[0])
-    session_plugin._actor_log_line(work_dir, actor_name, f"noted: {message.splitlines()[0]}")
+    append_actor_note(work_dir, actor_name, message=message, author=author_name)
+    session_plugin._append_actor_event(
+        work_dir,
+        actor_name,
+        event="note",
+        detail=message.splitlines()[0],
+        author=author_name,
+    )
+    session_plugin._actor_log_line(
+        work_dir,
+        actor_name,
+        f"noted: {message.splitlines()[0]}",
+        author=author_name,
+    )
     session_plugin._sync_actor_projection_surfaces(work_dir, actor_name)
     session_plugin._record_actor_projection_activity(
         work_dir,
@@ -229,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         log_path=actor_notes_log_path(work_dir, actor_name),
         projection_path=actor_notes_surface_path(work_dir, actor_name),
         detail="appended actor note",
+        actor=author_name,
     )
     print(f"appended actor note for {actor_name}")
     return 0
