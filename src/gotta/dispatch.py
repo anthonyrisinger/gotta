@@ -88,6 +88,8 @@ def print_usage() -> int:
     print("", file=sys.stderr)
     print("canonical session-binding path: `gotta ...`", file=sys.stderr)
     print("", file=sys.stderr)
+    print("builtin non-session surfaces: `gotta version`, `gotta --version`", file=sys.stderr)
+    print("", file=sys.stderr)
     print(
         "session investigative surfaces live under `gotta session`: "
         "`manifest`, `timeline`, `graph`, `leads`, `analyze`, `scan`",

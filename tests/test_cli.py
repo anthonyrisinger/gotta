@@ -31,9 +31,33 @@ def _actor_id(shared_root: Path, actor_ref: str) -> str:
     return sessionlib._resolve_bound_actor_name(shared_root, actor_ref)
 
 
-def test_main_rejects_unknown_plugin(capsys) -> None:
+def test_main_rejects_unknown_plugin_without_creating_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
     assert cli.main(["nonsense"]) == 2
-    assert "unknown gotta plugin: nonsense" in capsys.readouterr().err
+    captured = capsys.readouterr()
+
+    assert "unknown gotta plugin: nonsense" in captured.err
+    assert "created a new gotta session" not in captured.err
+    assert not (tmp_path / "session").exists()
+
+
+@pytest.mark.parametrize("argv", [["version"], ["--version"], ["-V"]])
+def test_main_version_is_top_level_and_sessionless(
+    tmp_path: Path, monkeypatch, capsys, argv: list[str]
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(argv) == 0
+    captured = capsys.readouterr()
+
+    assert captured.out.strip() == f"gotta {cli._gotta_version()}"
+    assert captured.err == ""
+    assert not (tmp_path / "session").exists()
 
 
 def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(

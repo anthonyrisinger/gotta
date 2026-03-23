@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import io
+from importlib.metadata import PackageNotFoundError, version as package_version
 import os
 from pathlib import Path
 import subprocess
@@ -13,7 +14,7 @@ import time
 import json
 
 from gotta.builtin import SessionAccessMode, get_plugin
-from gotta.compat import UTC, datetime
+from gotta.compat import UTC, datetime, tomllib
 from gotta.actors import resolve_actor_context, seed_actor_context
 from gotta.dispatch import available_plugins, print_usage, run_plugin, system_exit_status
 from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV
@@ -93,6 +94,9 @@ def normalize_help_aliases(argv: list[str]) -> list[str]:
 
 def _gotta_main(argv: list[str]) -> int:
     argv = normalize_help_aliases(argv)
+    if _is_version_request(argv):
+        print(f"gotta {_gotta_version()}")
+        return 0
     if not argv or (len(argv) == 1 and argv[0] in {"-h", "--help"}):
         return print_usage()
     if is_long_help_request(argv):
@@ -101,6 +105,8 @@ def _gotta_main(argv: list[str]) -> int:
         print("usage: gotta <plugin> [args...]")
         print("")
         print("Canonical operator path: `gotta ...`")
+        print("")
+        print("Builtin non-session surfaces: `gotta version`, `gotta --version`")
         print("")
         print(
             "Session synthesis surfaces live under `gotta session`: "
@@ -495,12 +501,33 @@ def _is_nonbinding_help(argv: list[str]) -> bool:
     return "--help" in argv or "--help-all" in argv
 
 
+def _gotta_version() -> str:
+    try:
+        return package_version("gotta")
+    except PackageNotFoundError:
+        pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+        try:
+            payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            return "unknown"
+        project = payload.get("project")
+        if not isinstance(project, dict):
+            return "unknown"
+        return str(project.get("version") or "").strip() or "unknown"
+
+
+def _is_version_request(argv: list[str]) -> bool:
+    if not argv:
+        return False
+    return len(argv) == 1 and argv[0] in {"version", "--version", "-V"}
+
+
 def _session_access_mode(argv: list[str]) -> SessionAccessMode:
     if not argv:
         return "none"
     spec = get_plugin(argv[0])
     if spec is None:
-        return "write"
+        return "none"
     access = spec.session_access
     if access is None:
         return "write"
@@ -560,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     normalized = normalize_help_aliases(args)
     try:
-        if _is_nonbinding_help(normalized):
+        if _is_nonbinding_help(normalized) or _is_version_request(normalized):
             return _gotta_main(normalized)
         plugin_name = normalized[0] if normalized else ""
         context = current_context_binding()
