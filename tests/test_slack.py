@@ -118,21 +118,35 @@ def test_list_channels_defaults_to_bounded_json_page(monkeypatch, tmp_path: Path
             [
                 (
                     "C001",
-                    "alpha",
+                    "example-channel-1",
                     "public_channel",
                     0,
                     0,
-                    "alpha",
-                    json.dumps({"id": "C001", "name": "alpha", "is_private": False, "is_archived": False}),
+                    "example-channel-1",
+                    json.dumps(
+                        {
+                            "id": "C001",
+                            "name": "example-channel-1",
+                            "is_private": False,
+                            "is_archived": False,
+                        }
+                    ),
                 ),
                 (
                     "C002",
-                    "bravo",
+                    "example-channel-2",
                     "public_channel",
                     0,
                     0,
-                    "bravo",
-                    json.dumps({"id": "C002", "name": "bravo", "is_private": False, "is_archived": False}),
+                    "example-channel-2",
+                    json.dumps(
+                        {
+                            "id": "C002",
+                            "name": "example-channel-2",
+                            "is_private": False,
+                            "is_archived": False,
+                        }
+                    ),
                 ),
             ],
         )
@@ -184,24 +198,42 @@ def test_list_users_supports_offset_paging(monkeypatch, tmp_path: Path, capsys) 
             [
                 (
                     "U001",
-                    "Alpha User",
-                    "alpha",
-                    "alpha user",
-                    json.dumps({"id": "U001", "profile": {"display_name": "Alpha User"}, "name": "alpha"}),
+                    "Example User 1",
+                    "example-user-1",
+                    "example user 1",
+                    json.dumps(
+                        {
+                            "id": "U001",
+                            "profile": {"display_name": "Example User 1"},
+                            "name": "example-user-1",
+                        }
+                    ),
                 ),
                 (
                     "U002",
-                    "Bravo User",
-                    "bravo",
-                    "bravo user",
-                    json.dumps({"id": "U002", "profile": {"display_name": "Bravo User"}, "name": "bravo"}),
+                    "Example User 2",
+                    "example-user-2",
+                    "example user 2",
+                    json.dumps(
+                        {
+                            "id": "U002",
+                            "profile": {"display_name": "Example User 2"},
+                            "name": "example-user-2",
+                        }
+                    ),
                 ),
                 (
                     "U003",
-                    "Charlie User",
-                    "charlie",
-                    "charlie user",
-                    json.dumps({"id": "U003", "profile": {"display_name": "Charlie User"}, "name": "charlie"}),
+                    "Example User 3",
+                    "example-user-3",
+                    "example user 3",
+                    json.dumps(
+                        {
+                            "id": "U003",
+                            "profile": {"display_name": "Example User 3"},
+                            "name": "example-user-3",
+                        }
+                    ),
                 ),
             ],
         )

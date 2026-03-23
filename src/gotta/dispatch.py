@@ -60,6 +60,18 @@ def die(message: str, code: int = 2) -> int:
     return code
 
 
+def system_exit_status(exc: SystemExit, *, emit: bool = True) -> int:
+    code = exc.code
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    message = str(code).strip()
+    if emit and message:
+        print(message, file=sys.stderr)
+    return 1
+
+
 SUPPRESS_MATERIALIZATION_ENV = INVOCATION_SUPPRESS_MATERIALIZATION_ENV
 
 
@@ -78,7 +90,7 @@ def print_usage() -> int:
     print("", file=sys.stderr)
     print(
         "session investigative surfaces live under `gotta session`: "
-        "`manifest`, `timeline`, `graph`, `leads`, `analyze`",
+        "`manifest`, `timeline`, `graph`, `leads`, `analyze`, `scan`",
         file=sys.stderr,
     )
     print("", file=sys.stderr)
@@ -550,7 +562,10 @@ def _emit_materialization_receipt(result: Materialization | None) -> None:
 
 
 def _run_callable(func: Callable[[list[str]], int], argv: list[str]) -> int:
-    return int(func(argv))
+    try:
+        return int(func(argv))
+    except SystemExit as exc:
+        return system_exit_status(exc)
 
 
 def _captured_execution(
@@ -657,7 +672,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             capture = None
             display = None
         except SystemExit as exc:
-            return int(exc.code or 0)
+            return system_exit_status(exc)
         except (ContentError, RuntimeError) as exc:
             return die(str(exc), code=1)
         if capture is not None and display is not None:

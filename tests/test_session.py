@@ -23,6 +23,7 @@ from gotta.plugins import goal
 from gotta.plugins import logs
 from gotta.plugins import notes
 from gotta.plugins import actor
+from gotta.plugins import read as read_plugin
 from gotta.plugins import session
 from gotta.plugins import want
 
@@ -2261,6 +2262,98 @@ def test_session_analyze_focus_respects_lineage_mode(
     assert any(item["preferredName"] == "ABC-1.md" for item in payload["content"])
     assert any(item["visibility_level"] == "restricted" for item in payload["content"])
     assert payload["leadSourceCount"] == len(payload["leadSources"])
+
+
+def test_session_scan_searches_projected_materialized_corpus(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    monkeypatch.setattr(
+        read_plugin,
+        "html_markdown",
+        lambda _data: b"# Example Heading\n\nGeneric synthetic body.\n",
+    )
+    content.materialize_bytes(
+        b"<h1>Example Heading</h1><p>Generic synthetic body.</p>",
+        dirs=dirs,
+        preferred_name="3925246070.html",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "locator": "get 3925246070",
+            "canonical_locator": "confluence:3925246070",
+            "artifact_kind": "evidence",
+            "content_type": "text/html",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b'{"title":"Other branch"}',
+        dirs=dirs,
+        preferred_name="DO-1.json",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get DO-1",
+            "canonical_locator": "jira:DO-1",
+            "artifact_kind": "discovery",
+            "content_type": "application/json",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    assert (
+        session.main(
+            [
+                "scan",
+                "Example",
+                "--session",
+                str(local_root),
+                "--plugin",
+                "confluence",
+                "--kind",
+                "evidence",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["entryCount"] == 1
+    assert payload["pluginFilter"] == "confluence"
+    assert payload["kindFilter"] == "evidence"
+    entry = payload["entries"][0]
+    assert entry["canonical_locator"] == "confluence:3925246070"
+    assert entry["artifactKind"] == "evidence"
+    assert entry["hitCount"] == 1
+    assert entry["followCommand"] == "gotta read 'confluence:3925246070'"
+    assert entry["artifactFollowCommand"].startswith("gotta read 'artifact:3925246070.html@")
+    assert any(line["text"] == "# Example Heading" for line in entry["snippets"][0]["lines"])
+
+
+def test_session_scan_rejects_invalid_regex_even_without_entries(
+    tmp_path: Path, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+
+    with pytest.raises(SystemExit) as excinfo:
+        session.main(
+            [
+                "scan",
+                "[",
+                "--match",
+                "regex",
+                "--session",
+                str(local_root),
+            ]
+        )
+
+    assert "invalid scan pattern:" in str(excinfo.value.code)
+    assert capsys.readouterr().out == ""
 
 
 def test_session_manifest_falls_back_to_jira_visibility_when_snapshot_metadata_is_unknown(

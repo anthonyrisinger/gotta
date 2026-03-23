@@ -774,6 +774,7 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
     output = captured.out + captured.err
     assert "# gotta" in output
     assert "Session synthesis surfaces live under `gotta session`" in output
+    assert "`manifest`, `timeline`, `graph`, `leads`, `analyze`, `scan`" in output
     assert "This top-level long help shows only plugin root surfaces." in output
     assert "Use `gotta <plugin> --help-all` for recursive help within one plugin." in output
     assert "## gotta ask" in output
@@ -789,10 +790,7 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
     assert "usage: gotta actor" in output
     assert "usage: gotta todo" in output
     assert "## gotta session" in output
-    assert (
-        "{init,bind,show,doctor,manifest,timeline,graph,analyze,leads}" in output
-        or "{init,bind,show,doctor,manifest,timeline,graph,leads,analyze}" in output
-    )
+    assert "scan" in output
     assert "Use --help-all for recursive command help." not in output
     assert "Use --help-all for the same long-form usage output." not in output
     assert "End of top-level long help for `gotta`." in output
@@ -878,6 +876,75 @@ def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
 
     assert captured.err == ""
     assert captured.out == "hello\n"
+
+
+def test_run_plugin_read_section_miss_returns_clean_error_for_local_view(
+    tmp_path: Path, capsys
+) -> None:
+    sample = tmp_path / "sample.md"
+    sample.write_text("# Intro\n\nbody\n", encoding="utf-8")
+
+    assert dispatch.run_plugin("read", [str(sample), "--section", "Missing"]) == 1
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert "no section heading matched: Missing" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_run_plugin_materializing_read_section_miss_returns_clean_error(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    assert session_plugin.main(["init", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        read_plugin,
+        "fetch_url",
+        lambda _target: (b"# Intro\n\nbody\n", "text/markdown", False),
+    )
+
+    assert (
+        dispatch.run_plugin(
+            "read",
+            [
+                "https://example.com/doc.md",
+                "--section",
+                "Missing",
+                "--session",
+                str(local_root),
+            ],
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert "no section heading matched: Missing" in captured.err
+    assert "Traceback" not in captured.err
+    assert content.scan_content_store(local_root / "content") == []
+
+
+def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty(
+    tmp_path: Path, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    assert session_plugin.main(["init", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
+    assert (
+        dispatch.run_plugin(
+            "session",
+            ["scan", "[", "--match", "regex", "--session", str(local_root)],
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert "invalid scan pattern:" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_materialize_invocation_carries_slack_thread_source_timestamps(

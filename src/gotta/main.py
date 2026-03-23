@@ -15,7 +15,7 @@ import json
 from gotta.builtin import SessionAccessMode, get_plugin
 from gotta.compat import UTC, datetime
 from gotta.actors import resolve_actor_context, seed_actor_context
-from gotta.dispatch import available_plugins, print_usage, run_plugin
+from gotta.dispatch import available_plugins, print_usage, run_plugin, system_exit_status
 from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 from gotta.actor import session_actor, supervisor_stop_message, supervisor_stop_pending
@@ -104,7 +104,7 @@ def _gotta_main(argv: list[str]) -> int:
         print("")
         print(
             "Session synthesis surfaces live under `gotta session`: "
-            "`manifest`, `timeline`, `graph`, `leads`, `analyze`"
+            "`manifest`, `timeline`, `graph`, `leads`, `analyze`, `scan`"
         )
         print("")
         print("This top-level long help shows only plugin root surfaces.")
@@ -122,7 +122,7 @@ def _gotta_main(argv: list[str]) -> int:
                 with redirect_stdout(buffer), redirect_stderr(buffer):
                     result = run_plugin(plugin, ["--help"])
             except SystemExit as exc:
-                result = int(exc.code or 0)
+                result = system_exit_status(exc, emit=False)
             if result != 0:
                 return result
             rendered = strip_long_help_boilerplate(buffer.getvalue())

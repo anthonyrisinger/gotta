@@ -622,11 +622,9 @@ def test_main_failed_session_init_seed_does_not_leave_half_session(
     _set_default_session_root(monkeypatch, registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main(["session", "init", "legacy mission"])
+    assert cli.main(["session", "init", "legacy mission"]) == 2
     err = capsys.readouterr().err
 
-    assert excinfo.value.code == 2
     session_root = _grouped_root(registry, "thread-123")
     assert "unrecognized arguments: legacy mission" in err
     assert (session_root / "WANT.md").is_file()
@@ -648,13 +646,9 @@ def test_main_want_and_goal_reject_inline_positional_text(
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
     assert cli.main(["session", "bind"]) == 0
 
-    with pytest.raises(SystemExit) as want_exc:
-        cli.main(["want", "inline text"])
-    assert want_exc.value.code == 2
+    assert cli.main(["want", "inline text"]) == 2
 
-    with pytest.raises(SystemExit) as goal_exc:
-        cli.main(["goal", "inline text"])
-    assert goal_exc.value.code == 2
+    assert cli.main(["goal", "inline text"]) == 2
 
 
 def test_main_explicit_actor_target_resolves_grouped_session(

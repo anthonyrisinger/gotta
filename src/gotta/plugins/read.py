@@ -464,6 +464,20 @@ def _stored_capture(path: Path) -> Capture:
     )
 
 
+def stored_display(path: Path) -> tuple[bytes, str]:
+    if not _has_stored_metadata(path):
+        data = path.read_bytes()
+        return data, guess_lang_from_path(path.name)
+    stored = _stored_capture(path)
+    display = _display_projection(stored)
+    language = (
+        "markdown"
+        if stored.type.split(";", 1)[0].strip().lower() == "text/html" and display != stored.data
+        else guess_lang_from_content_type(stored.type) or guess_lang_from_path(path.name)
+    )
+    return display, language
+
+
 def _has_stored_metadata(path: Path) -> bool:
     return (path.parent / "meta.json").exists()
 
@@ -639,26 +653,7 @@ def main(argv: list[str]) -> int:
 
     path = resolved.path
     if path is not None and path.is_file():
-        if not _has_stored_metadata(path):
-            if request.head > 0 or request.tail > 0 or request.section:
-                _render_viewed_bytes(
-                    path.read_bytes(),
-                    language=guess_lang_from_path(path.name or target),
-                    head=max(0, request.head),
-                    tail=max(0, request.tail),
-                    section=request.section,
-                )
-                return 0
-            render_file(path, guess_lang_from_path(path.name or target))
-            return 0
-        stored = _stored_capture(path)
-        display = _display_projection(stored)
-        language = (
-            "markdown"
-            if stored.type.split(";", 1)[0].strip().lower() == "text/html" and display != stored.data
-            else guess_lang_from_content_type(stored.type)
-            or guess_lang_from_path(path.name or target)
-        )
+        display, language = stored_display(path)
         if request.head > 0 or request.tail > 0 or request.section:
             _render_viewed_bytes(
                 display,
