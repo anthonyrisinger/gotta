@@ -123,8 +123,8 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
         prog=command_name,
         description=(
             "Append, extend, list, or summarize durable session speed bumps, "
-            "including suspected gotta bugs. Read paths summarize all bound "
-            "actor oops by default. "
+            "including suspected gotta bugs. Shared-session read paths summarize "
+            "all bound actor oops by default. "
             "For literal prose or Markdown, prefer stdin, --stdin, or --from-file."
         ),
     )
@@ -302,6 +302,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
         return 0
 
     explicit_actor = getattr(args, "actor", None)
+    scoped_actor = ""
     if explicit_actor:
         session_dir = session_plugin._session_dir(
             explicit_session=getattr(args, "session", None),
@@ -322,21 +323,37 @@ def cmd_oops(args: argparse.Namespace) -> int:
         ]
         actor_ids = [session_plugin.session_identity(session_dir)]
     else:
-        session_dir = session_plugin._shared_session_dir(
+        session_dir, scoped_actor = session_plugin._read_scope(
             explicit_session=getattr(args, "session", None),
         )
-        actor_ids, records = _aggregate_oops_records(
-            session_dir,
-            surface=args.surface or "",
-            command=args.command or "",
-            kind=args.kind or "",
-            severity=args.severity or "",
-        )
-        if not actor_ids:
-            raise SystemExit(
-                "no actors bound for this session; bind one intentionally with "
-                + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+        if scoped_actor:
+            records = filtered_oops_records(
+                oops_records(session_dir),
+                surface=args.surface or "",
+                command=args.command or "",
+                kind=args.kind or "",
+                severity=args.severity or "",
             )
+            records = [
+                record
+                for record in records
+                if writer_role(session_dir, scoped_actor, writer=str(record.get("actor") or ""))
+                != "foreign"
+            ]
+            actor_ids = [scoped_actor]
+        else:
+            actor_ids, records = _aggregate_oops_records(
+                session_dir,
+                surface=args.surface or "",
+                command=args.command or "",
+                kind=args.kind or "",
+                severity=args.severity or "",
+            )
+            if not actor_ids:
+                raise SystemExit(
+                    "no actors bound for this session; bind one intentionally with "
+                    + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+                )
     records = sorted(records, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
     if action == "list":
         limited = records[: max(args.limit, 0)]
@@ -348,7 +365,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             "entries": limited,
             "entry_count": len(records),
         }
-        if explicit_actor:
+        if explicit_actor or scoped_actor:
             payload["oops"] = str(oops_surface_path(session_dir))
             payload["oops_log"] = str(oops_log_path(session_dir))
         else:
@@ -359,11 +376,11 @@ def cmd_oops(args: argparse.Namespace) -> int:
             payload["oops_logs"] = {
                 actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
                 for actor in actor_ids
-            }
+        }
         if args.output == "json":
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
-        if explicit_actor:
+        if explicit_actor or scoped_actor:
             print(f"oops: {oops_surface_path(session_dir)}")
         else:
             print(f"oops: session-wide across {len(actor_ids)} actor(s)")
@@ -386,7 +403,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
         "actors": actor_ids,
         **oops_summary(records),
     }
-    if explicit_actor:
+    if explicit_actor or scoped_actor:
         payload["oops"] = str(oops_surface_path(session_dir))
         payload["oops_log"] = str(oops_log_path(session_dir))
     else:
@@ -397,11 +414,11 @@ def cmd_oops(args: argparse.Namespace) -> int:
         payload["oops_logs"] = {
             actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
             for actor in actor_ids
-        }
+    }
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
-    if explicit_actor:
+    if explicit_actor or scoped_actor:
         print(f"oops: {oops_surface_path(session_dir)}")
     else:
         print(f"oops: session-wide across {len(actor_ids)} actor(s)")

@@ -647,6 +647,32 @@ def test_notes_append_on_actor_root_authors_as_target_actor(
     assert record["message"] == "actor-root note"
 
 
+def test_notes_show_on_actor_root_stays_actor_local(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
+    actor_root = _actor_root(root, "Claude")
+
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, claude)
+    assert notes.main(["append", "claude note", "--session", str(actor_root)]) == 0
+    capsys.readouterr()
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
+    assert notes.main(["append", "codex note", "--session", str(root), "--actor", codex]) == 0
+    capsys.readouterr()
+
+    assert notes.main(["show", "--session", str(actor_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["actor"] == claude
+    assert payload["entry_count"] == 1
+    assert [entry["author"] for entry in payload["entries"]] == [claude]
+
+
 def test_notes_append_infers_ambient_bound_actor_without_flag(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -736,6 +762,31 @@ def test_logs_show_defaults_to_all_bound_actors(
     assert {entry["actor"] for entry in payload["entries"]} == {codex, claude}
 
 
+def test_logs_show_on_actor_root_stays_actor_local(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
+    actor_root = _actor_root(root, "Claude")
+
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, claude)
+    assert logs.main(["append", "claude log", "--session", str(actor_root)]) == 0
+    capsys.readouterr()
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
+    assert logs.main(["append", "codex log", "--session", str(root), "--actor", codex]) == 0
+    capsys.readouterr()
+
+    assert logs.main(["show", "--session", str(actor_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["entry_count"] == 1
+    assert [entry["actor"] for entry in payload["entries"]] == [claude]
+
+
 def test_charter_surfaces_default_to_all_bound_actors(
     tmp_path: Path, capsys
 ) -> None:
@@ -760,6 +811,33 @@ def test_charter_surfaces_default_to_all_bound_actors(
     assert goal.main(["--session", str(root)]) == 0
     goal_output = capsys.readouterr().out
     assert "Claude-specific goal." in goal_output
+
+
+def test_charter_surfaces_on_actor_root_stay_actor_local(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
+    claude_root = _actor_root(root, "Claude")
+
+    (sessionlib._actor_session_dir(root, claude) / "GOAL.md").write_text(
+        "# Goal\n\nClaude-specific goal.\n",
+        encoding="utf-8",
+    )
+    (sessionlib._actor_session_dir(root, codex) / "GOAL.md").write_text(
+        "# Goal\n\nCodex-specific goal.\n",
+        encoding="utf-8",
+    )
+
+    assert goal.main(["--session", str(claude_root)]) == 0
+    output = capsys.readouterr().out
+
+    assert "Claude-specific goal." in output
+    assert "Codex-specific goal." not in output
 
 
 def test_bound_session_root_prefers_explicit_identity_over_hyphen_split(

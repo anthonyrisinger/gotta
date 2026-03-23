@@ -20,7 +20,7 @@ def build_parser(command_name: str = "gotta logs") -> argparse.ArgumentParser:
         prog=command_name,
         description=(
             "Inspect or mutate the canonical session execution log. "
-            "Read paths show all bound actor logs by default. "
+            "Shared-session read paths show all bound actor logs by default. "
             "For prose or Markdown, prefer stdin, --stdin, or --from-file."
         ),
     )
@@ -138,9 +138,38 @@ def main(argv: list[str] | None = None) -> int:
                 for continuation in message_lines[1:]:
                     print(f"  {continuation}")
             return 0
-        work_dir = session_plugin._shared_session_dir(
+        work_dir, scoped_actor = session_plugin._read_scope(
             explicit_session=getattr(args, "session", None),
         )
+        if scoped_actor:
+            visible = [
+                record
+                for record in log_records(work_dir)
+                if writer_role(work_dir, scoped_actor, writer=str(record.get("actor") or ""))
+                != "foreign"
+            ]
+            entries = sorted(visible, key=lambda item: str(item.get("timestamp") or ""))
+            limited = entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
+            payload = {
+                "logs": str(logs_surface_path(work_dir)),
+                "logs_log": str(logs_state_path(work_dir)),
+                "entry_count": len(entries),
+                "entries": limited,
+            }
+            if args.output == "json":
+                print(json.dumps(payload, indent=2, sort_keys=True))
+                return 0
+            print(f"logs: {payload['logs']}")
+            print(f"entries: {payload['entry_count']}")
+            for record in payload["entries"]:
+                timestamp = str(record.get("timestamp") or "unknown-time")
+                actor = str(record.get("actor") or scoped_actor)
+                message = str(record.get("message") or "").strip() or "unspecified log entry"
+                message_lines = message.splitlines() or ["unspecified log entry"]
+                print(f"- `{timestamp}` [{actor}] {message_lines[0]}")
+                for continuation in message_lines[1:]:
+                    print(f"  {continuation}")
+            return 0
         actor_ids, records = _aggregate_logs(work_dir)
         if not actor_ids:
             raise SystemExit(

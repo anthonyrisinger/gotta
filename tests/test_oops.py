@@ -272,6 +272,68 @@ def test_oops_read_defaults_to_all_bound_actors_and_actor_filters_narrow(
     assert filtered["entry_count"] == 1
 
 
+def test_oops_read_on_actor_root_stays_actor_local(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+
+    assert actor.main(["bind", "Claude", "Codex", "--session", str(root)]) == 0
+    capsys.readouterr()
+    claude = sessionlib._resolve_bound_actor_name(root, "Claude")
+    codex = sessionlib._resolve_bound_actor_name(root, "Codex")
+    actor_root = sessionlib._session_dir(explicit_session=str(root), explicit_actor=claude)
+
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, claude)
+    assert (
+        oops.main(
+            [
+                "append",
+                "claude oops",
+                "--session",
+                str(actor_root),
+                "--surface",
+                "actor",
+                "--kind",
+                "contract",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
+    assert (
+        oops.main(
+            [
+                "append",
+                "codex oops",
+                "--session",
+                str(root),
+                "--actor",
+                codex,
+                "--surface",
+                "session",
+                "--kind",
+                "routing",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert oops.main(["list", "--session", str(actor_root), "--output", "json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["actor_count"] == 1
+    assert listed["actors"] == [claude]
+    assert [entry["actor"] for entry in listed["entries"]] == [claude]
+
+    assert oops.main(["summary", "--session", str(actor_root), "--output", "json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["actor_count"] == 1
+    assert summary["actors"] == [claude]
+    assert summary["entry_count"] == 1
+
+
 def test_oops_append_uses_projection_append_hot_path_when_surface_exists(
     tmp_path: Path,
     monkeypatch,

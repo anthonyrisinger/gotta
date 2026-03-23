@@ -179,9 +179,30 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
-        work_dir = session_plugin._shared_session_dir(
+        work_dir, scoped_actor = session_plugin._read_scope(
             explicit_session=getattr(args, "session", None),
         )
+        if scoped_actor:
+            status = session_plugin._actor_status_payload(work_dir, scoped_actor)
+            payload = actor_notes_payload(
+                work_dir,
+                scoped_actor,
+                label=_actor_label(scoped_actor, work_dir=work_dir),
+                status_payload=status,
+            )
+            if args.output == "json":
+                print(json.dumps(payload, indent=2, sort_keys=True))
+                return 0
+            print(
+                render_actor_notes_markdown(
+                    work_dir,
+                    scoped_actor,
+                    label=_actor_label(scoped_actor, work_dir=work_dir),
+                    status_payload=status,
+                ),
+                end="",
+            )
+            return 0
         actor_ids = list(session_plugin._target_actor_ids(work_dir))
         if not actor_ids:
             raise SystemExit(

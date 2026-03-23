@@ -208,6 +208,21 @@ def _shared_session_dir(
     return shared_session_root(session_shared_id(resolved)).resolve()
 
 
+def _read_scope(
+    *,
+    explicit_session: str | None,
+) -> tuple[Path, str]:
+    current = _session_dir(
+        explicit_session=explicit_session,
+        explicit_actor=None,
+    ).resolve()
+    if current.parent.name == "actors" or topology.parse_grouped_session_root(current) is not None:
+        actor_name = session_identity(current)
+        if actor_name:
+            return current, actor_name
+    return current, ""
+
+
 def _target_actor_ids(work_dir: Path, actor_ref: str | None = None) -> tuple[str, ...]:
     selected = _selected_actor_ids(work_dir)
     if (
@@ -376,9 +391,15 @@ def run_charter_surface(
                 raise SystemExit(f"missing {surface_name} surface: {path}")
             print(path.read_text(encoding="utf-8"), end="")
             return 0
-        work_dir = _shared_session_dir(
+        work_dir, scoped_actor = _read_scope(
             explicit_session=getattr(args, "session", None),
         )
+        if scoped_actor:
+            path = work_dir / surface_name
+            if not path.is_file():
+                raise SystemExit(f"missing {surface_name} surface: {path}")
+            print(path.read_text(encoding="utf-8"), end="")
+            return 0
         actor_ids = _target_actor_ids(work_dir)
         if not actor_ids:
             raise SystemExit(
