@@ -2389,6 +2389,7 @@ def capture(argv: list[str], _options: Any) -> Capture:
             readme_path=readme_path,
             readme_summary=readme_summary,
         )
+        capture_payload = _canonicalize_capture_value(capture_payload)
         return Capture(
             data=json_bytes(capture_payload),
             name=_preferred_render_name(parsed, "json"),

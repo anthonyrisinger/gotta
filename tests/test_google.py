@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
+import urllib.parse
+import zlib
 
 import pytest
 
@@ -446,6 +449,46 @@ def test_gdrive_summary_includes_created_and_modified() -> None:
 
     assert "- **Created:** 2026-01-08T17:19:19.520Z" in rendered
     assert "- **Modified:** 2026-01-08T18:49:54.309Z" in rendered
+
+
+def test_gdrive_project_summarizes_drawio_mxfile() -> None:
+    model = (
+        '<mxGraphModel><root>'
+        '<mxCell id="0"/><mxCell id="1" parent="0"/>'
+        '<mxCell id="a" value="Generic Start" vertex="1" parent="1"/>'
+        '<mxCell id="b" value="Generic Finish" vertex="1" parent="1"/>'
+        '<mxCell id="e1" edge="1" source="a" target="b" parent="1"/>'
+        "</root></mxGraphModel>"
+    )
+    compressed = base64.b64encode(
+        zlib.compress(urllib.parse.quote(model).encode("utf-8"))[2:-4]
+    ).decode("ascii")
+    mxfile = (
+        '<mxfile><diagram id="page-1" name="Generic Page">'
+        f"{compressed}"
+        "</diagram></mxfile>"
+    ).encode("utf-8")
+    capture = gdrive.Capture(
+        data=mxfile,
+        name="diagram.mxfile",
+        type="application/vnd.jgraph.mxfile",
+        meta={
+            "projector": "gdrive",
+            "file_id": "file-123",
+            "source_title": "Generic Diagram",
+            "source_url": "https://drive.google.com/file/d/file-123/view",
+            "source_mime": "application/vnd.jgraph.mxfile",
+        },
+        view={"meta": {"id": "file-123", "name": "Generic Diagram", "mimeType": "application/vnd.jgraph.mxfile"}},
+    )
+
+    rendered = gdrive.project(["get", "--output", "markdown", "file-123"], capture).decode("utf-8")
+
+    assert "# Generic Diagram" in rendered
+    assert "- **Pages:** 1" in rendered
+    assert "Generic Page: 2 nodes, 1 edges" in rendered
+    assert "Generic Start" in rendered
+    assert "Generic Finish" in rendered
 
 
 def test_gdrive_search_markdown_includes_time_envelope() -> None:

@@ -457,6 +457,8 @@ def _resolve_shared_explicit_session(raw: str) -> Path | None:
             return resolved
         if topology.parse_grouped_session_root(resolved) is not None:
             return resolved
+        if (resolved / "state" / "env").exists():
+            return resolved
         return None
     if "/" in normalized:
         root = resolve_session_reference(normalized, allow_missing=False)
@@ -520,6 +522,31 @@ def _is_version_request(argv: list[str]) -> bool:
     if not argv:
         return False
     return len(argv) == 1 and argv[0] in {"version", "--version", "-V"}
+
+
+def _creation_receipt_lines(root: Path, *, context_id: str, context_source: str) -> list[str]:
+    lines = [
+        "created a new gotta session:",
+        f"- session root: {root}",
+        f"- context id: {context_id}",
+        f"- context source: {context_source}",
+        "- next: future fresh-process commands should pass this exact",
+        "  session root with `--session <session-root>`",
+    ]
+    in_shared_topology = (
+        topology.parse_grouped_session_root(root) is not None
+        or topology.parse_shared_session_root(root) is not None
+    )
+    if in_shared_topology:
+        lines[-1] += " or run"
+        lines.append(
+            f"  `gotta session bind {topology.shared_session_id(root)}` for ambient reuse"
+        )
+    else:
+        lines.append(
+            "  external session roots are not resumed through `gotta session bind`"
+        )
+    return lines
 
 
 def _session_access_mode(argv: list[str]) -> SessionAccessMode:
@@ -713,12 +740,11 @@ def main(argv: list[str] | None = None) -> int:
                 if created:
                     print(
                         "\n".join(
-                            [
-                                "created a new gotta session:",
-                                f"- session root: {root}",
-                                f"- context id: {context_id}",
-                                f"- context source: {context_source}",
-                            ]
+                            _creation_receipt_lines(
+                                root,
+                                context_id=context_id,
+                                context_source=context_source,
+                            )
                         ),
                         file=sys.stderr,
                     )

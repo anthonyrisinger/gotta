@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from gotta.plugins import github
@@ -57,6 +58,48 @@ def test_github_capture_canonicalizes_volatile_download_tokens() -> None:
     assert canonical["download_url"] == "https://raw.githubusercontent.com/acme/widgets/main/README.md"
     assert canonical["html_url"] == "https://github.com/acme/widgets/blob/main/README.md"
     assert canonical["nested"] == ["https://raw.githubusercontent.com/acme/widgets/main/app.py"]
+
+
+def test_github_repo_capture_canonicalizes_directory_entries_before_storage(monkeypatch) -> None:
+    monkeypatch.setattr(github, "ensure_gh", lambda: object())
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda _gh: None)
+    monkeypatch.setattr(
+        github,
+        "gh_json_object",
+        lambda _gh, _args: {
+            "name": "widgets",
+            "visibility": "private",
+            "defaultBranchRef": {"name": "main"},
+            "url": "https://github.com/acme/widgets",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-02T00:00:00Z",
+            "pushedAt": "2026-01-02T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        github,
+        "list_directory_entries",
+        lambda _gh, **_kwargs: [
+            {
+                "name": "README.md",
+                "path": "README.md",
+                "type": "file",
+                "download_url": "https://raw.githubusercontent.com/acme/widgets/main/README.md?token=secret",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        github,
+        "readme_rollup",
+        lambda *_args, **_kwargs: ("README.md", "Synthetic summary"),
+    )
+
+    capture = github.capture(["https://github.com/acme/widgets"], object())
+    payload = json.loads(capture.data.decode("utf-8"))
+
+    assert payload["entries"][0]["download_url"] == (
+        "https://raw.githubusercontent.com/acme/widgets/main/README.md"
+    )
 
 
 def test_parse_args_supports_search_surface() -> None:

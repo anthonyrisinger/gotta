@@ -96,6 +96,10 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     assert (session_root / "LOGS.md").is_file()
     assert (session_root / "OOPS.md").is_file()
     assert "created a new gotta session" in first_err
+    assert (
+        f"`gotta session bind {cli._session_token('thread-123')}` for ambient reuse"
+        in first_err
+    )
 
     assert cli.main(["todo", "append", "second task"]) == 0
     second_err = capsys.readouterr().err
@@ -779,6 +783,25 @@ def test_main_uses_term_session_id_for_deterministic_binding_on_write_surfaces(
     assert seen[-1][2] == "term-session-1"
     assert seen[-1][3] == "terminal_session"
     assert "created a new gotta session" in capsys.readouterr().err
+
+
+def test_main_read_only_commands_accept_explicit_initialized_actor_root(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "registry")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    session_root = tmp_path / "explicit-session"
+    assert cli.main(["session", "init", "--session", str(session_root)]) == 0
+    init_err = capsys.readouterr().err
+    assert "session root with `--session <session-root>`" in init_err
+    assert "for ambient reuse" not in init_err
+    assert "external session roots are not resumed through `gotta session bind`" in init_err
+
+    assert cli.main(["session", "doctor", "--session", str(session_root), "--output", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["session"]["sessionRoot"] == str(session_root.resolve())
 
 
 def test_main_warns_actor_when_supervisor_requested_failed_disposition(
