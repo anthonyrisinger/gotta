@@ -297,6 +297,8 @@ scaffolding unless they intentionally materialize durable evidence.
 
 - local files and directories
 - bounded local rereads through `--head`, `--tail`, and `--section`
+- bounded remote/provider reads whose limits only trim what is shown while the
+  full canonical payload still lands underneath in the evidence web
 - provider URLs routed to the correct plugin
 - canonical provider locators emitted by session surfaces
 - stored content rereads by artifact or digest

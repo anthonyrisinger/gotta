@@ -12,13 +12,15 @@ from gotta import builtin as plugin_api
 from gotta import main as cli
 from gotta import content, dispatch
 from gotta.actor import ACTOR_ID_ENV
+from gotta.plugins import read as read_plugin
+from gotta.plugins import session as session_plugin
 
 
 def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert not dispatch.should_materialize("read", ["--help"])
     assert not dispatch.should_materialize("read", ["artifact:demo.md@abc123", "--head", "20"])
-    assert not dispatch.should_materialize("read", ["https://github.com/acme/widgets", "--head", "3"])
-    assert not dispatch.should_materialize("read", ["https://example.com/manual.txt", "--tail", "5"])
+    assert dispatch.should_materialize("read", ["https://github.com/acme/widgets", "--head", "3"])
+    assert dispatch.should_materialize("read", ["https://example.com/manual.txt", "--tail", "5"])
     assert not dispatch.should_materialize("session", [])
     assert not dispatch.should_materialize("session", ["show"])
     assert not dispatch.should_materialize("session", ["analyze"])
@@ -1213,6 +1215,66 @@ def test_materialize_invocation_rejects_unbound_actor_shell(
 
     assert "bind and launch a sibling actor" in str(excinfo.value)
     assert not (dirs.content_dir / "manifest.jsonl").exists()
+
+
+def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    assert session_plugin.main(["init", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
+    def fake_delegate(plugin: str, argv: list[str]) -> int:
+        print("# Title")
+        print("")
+        print("line 1")
+        print("line 2")
+        return 0
+
+    monkeypatch.setattr(read_plugin, "delegate", fake_delegate)
+
+    assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--head", "3", "--session", str(local_root)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "# Title\n\nline 1\n"
+
+    snapshots = content.scan_content_store(local_root / "content")
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert snapshot.metadata["canonical_locator"] == "https://github.com/acme/widgets"
+    assert snapshot.data_path.read_text(encoding="utf-8") == "# Title\n\nline 1\nline 2\n"
+
+
+def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    assert session_plugin.main(["init", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
+    def fake_delegate(plugin: str, argv: list[str]) -> int:
+        print("# Title")
+        print("")
+        print("line 1")
+        print("line 2")
+        return 0
+
+    monkeypatch.setattr(read_plugin, "delegate", fake_delegate)
+
+    assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--head", "3", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+    assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
+    snapshots = content.scan_content_store(local_root / "content")
+    assert len(snapshots) == 1
+    assert snapshots[0].metadata["canonical_locator"] == "https://github.com/acme/widgets"
+
+    assert session_plugin.main(["manifest", "--session", str(local_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entryCount"] == 1
+    assert payload["fetchRecordCount"] == 2
+    assert payload["entries"][0]["canonical_locator"] == "https://github.com/acme/widgets"
+    assert payload["entries"][0]["fetchCount"] == 2
 
 
 def test_github_route_prefers_markdown_for_common_github_targets() -> None:

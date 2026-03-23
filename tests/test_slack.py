@@ -303,6 +303,18 @@ def test_resolve_slack_ref_prefers_thread_ts_query_over_reply_permalink_ts() -> 
     assert ref.url == "https://demo.slack.com/archives/C12345678/p1773075428384009"
 
 
+def test_resolve_slack_ref_accepts_canonical_thread_locator() -> None:
+    ref = slack.resolve_slack_ref(
+        "slack:thread:C12345678:1773075428384009",
+        workspace="demo",
+    )
+
+    assert ref.kind == "thread"
+    assert ref.channel_id == "C12345678"
+    assert ref.thread_ts == "1773075428.384009"
+    assert ref.url == "https://demo.slack.com/archives/C12345678/p1773075428384009"
+
+
 def test_render_markdown_never_degrades_channel_label_to_bare_hash() -> None:
     envelope = {
         "workspace": "demo",

@@ -3565,6 +3565,37 @@ def test_session_manifest_supports_offset_and_all_paging(
     assert payload["entries"][0]["canonical_locator"] == "jira:PROJ-1"
 
 
+def test_session_manifest_collapses_repeated_fetches_into_one_canonical_entry(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    for index in range(2):
+        content.materialize_bytes(
+            b"same body",
+            dirs=dirs,
+            preferred_name="demo.md",
+            metadata={
+                "tool": "gotta",
+                "plugin": "read",
+                "artifact_kind": "evidence",
+                "locator": "https://github.com/acme/widgets",
+                "canonical_locator": "https://github.com/acme/widgets",
+                "actor": "claude",
+            },
+            timestamp=f"2026-03-11T00:00:0{index}.000001Z",
+        )
+
+    assert session.main(["manifest", "--session", str(local_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entryCount"] == 1
+    assert payload["fetchRecordCount"] == 2
+    assert payload["entries"][0]["canonical_locator"] == "https://github.com/acme/widgets"
+    assert payload["entries"][0]["fetchCount"] == 2
+    assert payload["entries"][0]["firstFetchedAt"] == "2026-03-11T00:00:00.000001Z"
+    assert payload["entries"][0]["lastFetchedAt"] == "2026-03-11T00:00:01.000001Z"
+
+
 def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
     tmp_path: Path
 ) -> None:

@@ -464,14 +464,14 @@ def test_read_view_shaping_makes_routed_targets_non_materializing() -> None:
     resolved = target.resolve_read_target(["https://github.com/acme/widgets", "--head", "3"])
 
     assert resolved.kind == "routed"
-    assert resolved.should_materialize is False
+    assert resolved.should_materialize is True
 
 
 def test_read_view_shaping_makes_remote_urls_non_materializing() -> None:
     resolved = target.resolve_read_target(["https://example.com/manual.txt", "--tail", "5"])
 
     assert resolved.kind == "remote_url"
-    assert resolved.should_materialize is False
+    assert resolved.should_materialize is True
 
 
 def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
@@ -485,9 +485,59 @@ def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
 def test_read_help_text_describes_plain_vs_shaped_materialization() -> None:
     description = target.build_parser().description or ""
 
-    assert "store durable evidence only when an initialized session is already in play" in description
-    assert "shaped reads (`--head`, `--tail`, `--section`)" in read.USAGE
+    assert "Remote/provider reads store durable evidence only when an initialized session" in description
+    assert "`--head`, `--tail`, and `--section` only trim what is shown to the operator" in read.USAGE
     assert "--actor" in target.build_parser().format_help()
+
+
+def test_execute_materializing_read_keeps_full_routed_bytes_under_bounded_view(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        read,
+        "resolve_read_target",
+        lambda argv: target.ReadTarget(
+            request=target.parse_args(argv),
+            kind="routed",
+            path=None,
+            routed_plugin="github",
+            routed_argv=["fake"],
+            canonical_locator="https://github.com/acme/widgets",
+            preferred_name="widgets.md",
+            should_materialize=True,
+        ),
+    )
+
+    def fake_delegate(plugin: str, argv: list[str]) -> int:
+        print("# Title")
+        print("")
+        print("line 1")
+        print("line 2")
+        return 0
+
+    monkeypatch.setattr(read, "delegate", fake_delegate)
+
+    outcome = read.execute_materializing_read(["https://github.com/acme/widgets", "--head", "3"])
+
+    assert outcome.code == 0
+    assert outcome.display_bytes.decode("utf-8") == "# Title\n\nline 1\n"
+    assert outcome.canonical_bytes.decode("utf-8") == "# Title\n\nline 1\nline 2\n"
+
+
+def test_execute_materializing_read_keeps_full_remote_bytes_under_bounded_view(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        read,
+        "fetch_url",
+        lambda _target: (b"line 1\nline 2\nline 3\n", "text/plain", False),
+    )
+
+    outcome = read.execute_materializing_read(["https://example.com/manual.txt", "--tail", "2"])
+
+    assert outcome.code == 0
+    assert outcome.display_bytes.decode("utf-8") == "line 2\nline 3\n"
+    assert outcome.canonical_bytes.decode("utf-8") == "line 1\nline 2\nline 3\n"
 
 
 def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> None:

@@ -623,6 +623,23 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
     except ContentError as exc:
         return die(str(exc))
 
+    if plugin == "read":
+        from gotta.plugins import read as read_plugin
+
+        try:
+            with scoped_runtime_env(dirs):
+                outcome = read_plugin.execute_materializing_read(cleaned)
+        except RuntimeError as exc:
+            return die(str(exc), code=1)
+        if outcome.code == 0:
+            try:
+                result = _materialize_invocation(resolved, outcome.canonical_bytes, dirs=dirs)
+            except ContentError as exc:
+                return die(str(exc), code=1)
+            _emit_materialization_receipt(result)
+        _emit_captured(outcome.display_bytes)
+        return outcome.code
+
     with scoped_runtime_env(dirs):
         with capture_stdout() as capture:
             code = _run_callable(runner, cleaned)

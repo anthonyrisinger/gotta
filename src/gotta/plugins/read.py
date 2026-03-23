@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
@@ -38,13 +39,15 @@ Routing:
   local directories   -> native listing, with optional recursive traversal
 
   Materialization:
-  plain routed provider fetches and direct remote reads store durable evidence
+  routed provider fetches and direct remote reads store durable evidence
   only when an initialized session is already active or passed explicitly.
-  shaped reads (`--head`, `--tail`, `--section`), local files, local
-  directories, and session-owned artifact rereads stay as non-materializing
-  views so reopening evidence does not fork the evidence graph. Use session
-  manifest, session leads <artifact>, or session analyze to continue from the
-  content store rather than re-fetching blindly.
+  `--head`, `--tail`, and `--section` only trim what is shown to the operator;
+  the full canonical remote/provider payload still lands underneath when the
+  read materializes. Local files, local directories, and session-owned artifact
+  rereads stay as non-materializing views so reopening evidence does not fork
+  the evidence graph. Use session manifest, session leads <artifact>, or
+  session analyze to continue from the content store rather than re-fetching
+  blindly.
 
   Attribution:
   pass `--actor <actor>` to attribute any materialized artifact from this read
@@ -54,6 +57,13 @@ Routing:
 REMOTE_FETCH_TIMEOUT_SECONDS = 15
 REMOTE_FETCH_MAX_BYTES = 2 * 1024 * 1024
 REMOTE_FETCH_CHUNK_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class ReadExecution:
+    code: int
+    canonical_bytes: bytes
+    display_bytes: bytes
 
 
 def die(message: str, code: int = 2) -> int:
@@ -343,6 +353,61 @@ def _apply_text_view(
 def _render_viewed_bytes(data: bytes, *, language: str, head: int, tail: int, section: str) -> None:
     text = data.decode("utf-8", errors="replace")
     sys.stdout.write(_apply_text_view(text, head=head, tail=tail, section=section))
+
+
+def _view_bytes(data: bytes, *, head: int, tail: int, section: str) -> bytes:
+    text = data.decode("utf-8", errors="replace")
+    return _apply_text_view(text, head=head, tail=tail, section=section).encode("utf-8")
+
+
+def _remote_canonical_bytes(target: str) -> bytes:
+    data, content_type, truncated = fetch_url(target)
+    if truncated:
+        _emit_truncation_note()
+    if content_type.split(";", 1)[0].strip().lower() == "text/html":
+        markdown = html_as_markdown_bytes(data)
+        if markdown is not None:
+            return markdown
+    return data
+
+
+def execute_materializing_read(argv: list[str]) -> ReadExecution:
+    request = parse_args(argv)
+    target = request.target
+    resolved = resolve_read_target(argv)
+    if resolved.kind == "routed":
+        assert resolved.routed_plugin is not None
+        with capture_stdout() as capture:
+            code = delegate(resolved.routed_plugin, resolved.routed_argv)
+        canonical = capture.getvalue()
+        if code != 0:
+            return ReadExecution(code=code, canonical_bytes=b"", display_bytes=canonical)
+        display = (
+            _view_bytes(
+                canonical,
+                head=max(0, request.head),
+                tail=max(0, request.tail),
+                section=request.section,
+            )
+            if request.head > 0 or request.tail > 0 or request.section
+            else canonical
+        )
+        return ReadExecution(code=code, canonical_bytes=canonical, display_bytes=display)
+    if resolved.kind == "remote_url":
+        assert target is not None
+        canonical = _remote_canonical_bytes(target)
+        display = (
+            _view_bytes(
+                canonical,
+                head=max(0, request.head),
+                tail=max(0, request.tail),
+                section=request.section,
+            )
+            if request.head > 0 or request.tail > 0 or request.section
+            else canonical
+        )
+        return ReadExecution(code=0, canonical_bytes=canonical, display_bytes=display)
+    raise RuntimeError(f"read target kind `{resolved.kind}` does not support canonical acquisition")
 
 
 def _delegate_with_view(

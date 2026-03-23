@@ -552,6 +552,86 @@ def _manifest_entry_sort_key(entry: dict[str, object]) -> tuple[str, str, str]:
     )
 
 
+def _manifest_identity_locator(entry: dict[str, object]) -> str:
+    checksum = str(entry.get("checksum", "")).strip()
+    locator = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip()
+    if locator:
+        return locator
+    return content_locator(checksum) if checksum else ""
+
+
+def _aggregate_manifest_entries(entries: list[dict[str, object]]) -> list[dict[str, object]]:
+    grouped: dict[tuple[str, str], dict[str, object]] = {}
+    for entry in entries:
+        checksum = str(entry.get("checksum", "")).strip()
+        locator = _manifest_identity_locator(entry)
+        key = (locator, checksum)
+        state = grouped.setdefault(
+            key,
+            {
+                "latest": entry,
+                "fetchCount": 0,
+                "firstFetchedAt": "",
+                "lastFetchedAt": "",
+                "plugins": set(),
+                "actors": set(),
+                "locators": set(),
+                "artifactKinds": set(),
+                "visibility": {},
+            },
+        )
+        fetched_at = str(entry.get("fetched_at", "")).strip()
+        latest = state["latest"]
+        if _manifest_entry_sort_key(entry) >= _manifest_entry_sort_key(latest):
+            state["latest"] = entry
+        state["fetchCount"] = int(state["fetchCount"]) + 1
+        if fetched_at and (not state["firstFetchedAt"] or fetched_at < state["firstFetchedAt"]):
+            state["firstFetchedAt"] = fetched_at
+        if fetched_at and (not state["lastFetchedAt"] or fetched_at > state["lastFetchedAt"]):
+            state["lastFetchedAt"] = fetched_at
+        plugin = str(entry.get("plugin", "")).strip()
+        actor = str(entry.get("actor", "")).strip()
+        raw_locator = str(entry.get("locator", "")).strip()
+        kind = _artifact_kind(entry.get("artifact_kind") or entry.get("artifactKind"))
+        if plugin:
+            state["plugins"].add(plugin)
+        if actor:
+            state["actors"].add(actor)
+        if raw_locator:
+            state["locators"].add(raw_locator)
+        if locator:
+            state["locators"].add(locator)
+        if kind:
+            state["artifactKinds"].add(kind)
+        state["visibility"] = best_visibility_metadata(
+            state.get("visibility", {}),
+            _resolved_visibility_metadata(
+                entry,
+                provider=plugin,
+                plugin=plugin,
+                subcommand=str(entry.get("subcommand") or ""),
+                locator=locator,
+            ),
+        )
+    aggregated: list[dict[str, object]] = []
+    for (locator, _checksum), state in grouped.items():
+        latest = dict(state["latest"])
+        latest["canonical_locator"] = str(latest.get("canonical_locator", "")).strip() or locator
+        latest["fetchCount"] = int(state["fetchCount"])
+        latest["firstFetchedAt"] = str(state.get("firstFetchedAt") or "")
+        latest["lastFetchedAt"] = str(state.get("lastFetchedAt") or "") or str(
+            latest.get("fetched_at", "") or ""
+        )
+        latest["fetched_at"] = latest["lastFetchedAt"]
+        latest["plugins"] = sorted(str(value) for value in state["plugins"])
+        latest["actors"] = sorted(str(value) for value in state["actors"])
+        latest["locators"] = sorted(str(value) for value in state["locators"])
+        latest["artifactKinds"] = sorted(str(value) for value in state["artifactKinds"])
+        latest.update(best_visibility_metadata(state.get("visibility", {})))
+        aggregated.append(latest)
+    return aggregated
+
+
 def _follow_command(locator: str, *, checksum: str = "") -> str:
     target = locator.strip() or (content_locator(checksum.strip()) if checksum.strip() else "unknown")
     return f"gotta read {sh_quote(target)}"
@@ -645,12 +725,13 @@ def _manifest_payload(
     offset: int = 0,
     include_all: bool = False,
 ) -> dict[str, object]:
-    entries = _filter_manifest_entries(
+    raw_entries = _filter_manifest_entries(
         _manifest_entries(dirs),
         plugin=plugin,
         actor=actor,
         locator=locator,
     )
+    entries = _aggregate_manifest_entries(raw_entries)
     ordered = sorted(entries, key=_manifest_entry_sort_key, reverse=True)
     discovery_count, evidence_count = _artifact_kind_counts(ordered)
     paged, paging = _paginate_items(
@@ -666,6 +747,13 @@ def _manifest_payload(
             "content_locator": content_locator(str(entry.get("checksum", "")).strip())
             if str(entry.get("checksum", "")).strip()
             else "",
+            "fetchCount": int(entry.get("fetchCount") or 0),
+            "firstFetchedAt": str(entry.get("firstFetchedAt") or ""),
+            "lastFetchedAt": str(entry.get("lastFetchedAt") or ""),
+            "plugins": list(entry.get("plugins") or []),
+            "actors": list(entry.get("actors") or []),
+            "locators": list(entry.get("locators") or []),
+            "artifactKinds": list(entry.get("artifactKinds") or []),
             "artifact_locator": _artifact_human_locator(
                 str(entry.get("preferred_name", "")).strip() or "data",
                 str(entry.get("checksum", "")).strip(),
@@ -700,6 +788,7 @@ def _manifest_payload(
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
         "entryCount": len(entries),
+        "fetchRecordCount": len(raw_entries),
         **paging,
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
@@ -3090,7 +3179,8 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     print(f"manifest: {payload['manifestPath']}")
     print(
         "entries: "
-        f"{payload['entryCount']} (showing {payload['shownCount']}; "
+        f"{payload['entryCount']} canonical (from {payload['fetchRecordCount']} fetches; "
+        f"showing {payload['shownCount']}; "
         f"discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
     )
@@ -3112,8 +3202,13 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     print("follow: pass any emitted locator directly to `gotta read <locator>`")
     for entry in payload["entries"]:
         fetched_at = str(entry.get("fetched_at", "")).strip() or "unknown-time"
-        plugin = str(entry.get("plugin", "")).strip() or "unknown-plugin"
-        actor = _rendered_actor(entry.get("actor"), session_root=dirs.session_dir)
+        plugin_list = [str(value).strip() for value in list(entry.get("plugins") or []) if str(value).strip()]
+        actor_list = [str(value).strip() for value in list(entry.get("actors") or []) if str(value).strip()]
+        plugin = ", ".join(plugin_list) or str(entry.get("plugin", "")).strip() or "unknown-plugin"
+        actor = (
+            ", ".join(actor_list)
+            or _rendered_actor(entry.get("actor"), session_root=dirs.session_dir)
+        )
         locator = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown"
         preferred_name = str(entry.get("preferred_name", "")).strip() or "data"
         checksum = str(entry.get("checksum", "")).strip()
@@ -3121,6 +3216,13 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         print(
             f"- {fetched_at} [{plugin}/{actor}] {locator} -> {preferred_name} ({short})"
         )
+        if int(entry.get("fetchCount") or 0) > 1:
+            print(
+                "  fetches: "
+                f"{int(entry.get('fetchCount') or 0)} "
+                f"(first {entry.get('firstFetchedAt') or 'unknown-time'}; "
+                f"last {entry.get('lastFetchedAt') or 'unknown-time'})"
+            )
         artifact_kind = str(entry.get("artifactKind") or "").strip()
         if artifact_kind:
             print(f"  artifact_kind: {artifact_kind}")

@@ -1061,6 +1061,22 @@ def parse_slack_ref(raw: str, *, workspace: str) -> SlackRef:
             "name, or CHANNEL:THREAD_TS."
         )
 
+    if value.startswith("slack:thread:"):
+        _prefix, _kind, channel_id, ts = (value.split(":", 3) + ["", "", "", ""])[:4]
+        if CHANNEL_ID_RE.match(channel_id):
+            if THREAD_TS_RE.fullmatch(ts):
+                thread_ts = ts
+            else:
+                thread_ts = normalize_pnum(ts)
+            return SlackRef(
+                raw=raw,
+                workspace=workspace,
+                kind="thread",
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                url=canonical_thread_url(workspace, channel_id, thread_ts),
+            )
+
     match = THREAD_COLON_RE.match(value)
     if match:
         channel_id = match.group("channel")
