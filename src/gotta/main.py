@@ -43,10 +43,12 @@ from gotta.content import (
     session_identity as content_session_identity,
     session_is_initialized,
     shared_session_root,
+    sh_quote,
     write_session_state,
 )
 from gotta import session as session_plugin
 from gotta import topology
+from gotta import binding as binding_helpers
 
 
 def die(message: str, code: int = 2) -> int:
@@ -524,28 +526,42 @@ def _is_version_request(argv: list[str]) -> bool:
     return len(argv) == 1 and argv[0] in {"version", "--version", "-V"}
 
 
-def _creation_receipt_lines(root: Path, *, context_id: str, context_source: str) -> list[str]:
+def _creation_receipt_lines(
+    root: Path,
+    *,
+    context_id: str,
+    context_source: str,
+    bound: bool,
+) -> list[str]:
+    shared_session_id = topology.parse_grouped_session_root(root)
+    shared_id = shared_session_id[0] if shared_session_id is not None else topology.parse_shared_session_root(root)
+    shared_topology = bool(shared_id)
+    bind_target = shared_id or sh_quote(str(root))
+    reuse_flag = "<shared-session-id>" if shared_topology else "<session-root>"
     lines = [
         "created a new gotta session:",
         f"- session root: {root}",
         f"- context id: {context_id}",
         f"- context source: {context_source}",
-        "- next: future fresh-process commands should pass this exact",
-        "  session root with `--session <session-root>`",
     ]
-    in_shared_topology = (
-        topology.parse_grouped_session_root(root) is not None
-        or topology.parse_shared_session_root(root) is not None
+    bind_command = f"`gotta session bind {bind_target}`"
+    if bound:
+        lines.extend(
+            [
+                "- next: this context is now bound to that session root",
+                "  same-context fresh-process commands should resolve here automatically",
+                f"  to reuse from another context, pass `--session {reuse_flag}` or run",
+                f"  {bind_command}",
+            ]
+        )
+        return lines
+    lines.extend(
+        [
+            "- next: this context is not yet bound to the created session",
+            f"  future commands should pass `--session {reuse_flag}` or run",
+            f"  {bind_command} to adopt it ambiently",
+        ]
     )
-    if in_shared_topology:
-        lines[-1] += " or run"
-        lines.append(
-            f"  `gotta session bind {topology.shared_session_id(root)}` for ambient reuse"
-        )
-    else:
-        lines.append(
-            "  external session roots are not resumed through `gotta session bind`"
-        )
     return lines
 
 
@@ -624,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
         explicit_actor = _explicit_actor_arg(normalized)
         explicit_target = bool(explicit_session or explicit_actor)
         session_access = _session_access_mode(normalized)
+        init_command = plugin_name == "session" and len(normalized) >= 2 and normalized[1] == "init"
         if plugin_name == "session" and len(normalized) >= 2 and normalized[1] in {"bind"}:
             return _gotta_main(normalized)
         if session_access == "none":
@@ -685,10 +702,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             root = _prefer_bound_session_root()
         created = False
+        bound_current_context = False
         if root is None:
             root = _resolve_existing_session_root(context_id, context_source)
         if root is None and session_access == "write":
             root, created = _bind_session_root(context_id, context_source)
+            bound_current_context = True
         if root is None and session_access != "ambient":
             return die(
                 "this command requires an existing session; run `gotta session bind` "
@@ -726,6 +745,13 @@ def main(argv: list[str] | None = None) -> int:
                 context_id=context_id,
                 context_source=context_source,
             )
+            if init_command and root is not None and not bound_current_context:
+                root = binding_helpers.bind_root_for_context(
+                    root,
+                    context_id=context_id,
+                    context_source=context_source,
+                )
+                bound_current_context = True
         created = created or scaffold_created
         original_env = os.environ.copy()
         try:
@@ -744,6 +770,7 @@ def main(argv: list[str] | None = None) -> int:
                                 root,
                                 context_id=context_id,
                                 context_source=context_source,
+                                bound=bound_current_context,
                             )
                         ),
                         file=sys.stderr,

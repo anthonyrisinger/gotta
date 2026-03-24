@@ -96,10 +96,10 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     assert (session_root / "LOGS.md").is_file()
     assert (session_root / "OOPS.md").is_file()
     assert "created a new gotta session" in first_err
-    assert (
-        f"`gotta session bind {cli._session_token('thread-123')}` for ambient reuse"
-        in first_err
-    )
+    assert "this context is now bound to that session root" in first_err
+    assert "same-context fresh-process commands should resolve here automatically" in first_err
+    assert f"`gotta session bind {cli._session_token('thread-123')}`" in first_err
+    assert "`--session <shared-session-id>`" in first_err
 
     assert cli.main(["todo", "append", "second task"]) == 0
     second_err = capsys.readouterr().err
@@ -785,7 +785,7 @@ def test_main_uses_term_session_id_for_deterministic_binding_on_write_surfaces(
     assert "created a new gotta session" in capsys.readouterr().err
 
 
-def test_main_read_only_commands_accept_explicit_initialized_actor_root(
+def test_main_explicit_session_init_binds_current_context(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     _set_default_session_root(monkeypatch, tmp_path / "registry")
@@ -794,14 +794,52 @@ def test_main_read_only_commands_accept_explicit_initialized_actor_root(
     session_root = tmp_path / "explicit-session"
     assert cli.main(["session", "init", "--session", str(session_root)]) == 0
     init_err = capsys.readouterr().err
-    assert "session root with `--session <session-root>`" in init_err
-    assert "for ambient reuse" not in init_err
-    assert "external session roots are not resumed through `gotta session bind`" in init_err
+    assert "this context is now bound to that session root" in init_err
+    assert "`gotta session bind '" in init_err
+    assert "`--session <session-root>`" in init_err
 
-    assert cli.main(["session", "doctor", "--session", str(session_root), "--output", "json"]) == 0
+    assert cli.main(["session", "doctor", "--output", "json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["session"]["sessionRoot"] == str(session_root.resolve())
+
+
+def test_main_shared_session_init_receipt_prefers_session_id_reuse(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "registry")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-shared")
+
+    assert cli.main(["session", "init", "--session", "review-demo"]) == 0
+    init_err = capsys.readouterr().err
+
+    assert "this context is now bound to that session root" in init_err
+    assert "`gotta session bind review-demo`" in init_err
+    assert "`--session <shared-session-id>`" in init_err
+    assert "`gotta session bind '" not in init_err
+
+
+def test_session_bind_accepts_exact_session_root_reference(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "registry")
+    session_root = tmp_path / "explicit-session"
+
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-creator")
+    assert cli.main(["session", "init", "--session", str(session_root)]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-reader")
+    assert cli.main(["session", "bind", str(session_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["sessionRoot"] == str(session_root.resolve())
+    assert payload["sessionId"] == content.session_id(session_root)
+    assert payload["actor"] == content.session_identity(session_root)
+
+    assert cli.main(["session", "doctor", "--output", "json"]) == 0
+    doctor = json.loads(capsys.readouterr().out)
+    assert doctor["session"]["sessionRoot"] == str(session_root.resolve())
 
 
 def test_main_warns_actor_when_supervisor_requested_failed_disposition(

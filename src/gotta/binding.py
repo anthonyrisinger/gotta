@@ -16,6 +16,7 @@ from gotta.content import (
     iso_utc,
     load_state_env_at_root,
     resolve_dirs,
+    resolve_session_reference,
     session_id,
     session_identity,
     session_token,
@@ -94,8 +95,8 @@ def ensure_actor_session(
     context_source: str,
 ) -> tuple[Path, bool]:
     resolved = root.expanduser().resolve()
-    current_session_id = topology.shared_session_id(resolved)
-    actor = topology.session_identity(resolved)
+    current_session_id = session_id(resolved)
+    actor = session_identity(resolved)
     shared_session_dir = shared_session_root(current_session_id)
     content_dir = shared_session_dir / "content"
     shared_session_dir.mkdir(parents=True, exist_ok=True)
@@ -133,6 +134,49 @@ def ensure_actor_session(
     return dirs.session_dir.resolve(), created
 
 
+def _resolve_bind_root(session_ref: str | None, *, binding_id: str) -> Path:
+    if not (session_ref or "").strip():
+        return topology.session_root_for(binding_id, binding_id).resolve()
+    resolved = resolve_session_reference(
+        session_ref or "",
+        identity=binding_id,
+        allow_missing=True,
+    )
+    if resolved is None:
+        raise SystemExit(
+            "session references for `gotta session bind` must be an absolute path, "
+            "a shared session id, or an explicit <session>/<actor> session reference"
+        )
+    return resolved.resolve()
+
+
+def bind_root_for_context(
+    root: Path,
+    *,
+    context_id: str,
+    context_source: str,
+) -> Path:
+    binding_id = topology.normalize_identity(session_id_from_context(context_id))
+    root, _created = ensure_actor_session(
+        root,
+        context_id=context_id,
+        context_source=context_source,
+    )
+    now = iso_utc()
+    existing = topology.load_binding_record(binding_id) or {}
+    topology.write_binding(
+        binding_id,
+        root,
+        context_id=context_id,
+        context_source=context_source,
+        session_id=session_id(root),
+        actor=session_identity(root),
+        created_at=str(existing.get("createdAt") or now),
+        updated_at=now,
+    )
+    return root
+
+
 def _resolved_payload(root: Path) -> dict[str, str]:
     resolved = root.resolve()
     state = load_state_env_at_root(resolved)
@@ -168,25 +212,11 @@ def bind_current_context(
     context_id = context.context_id
     context_source = context.context_source
     binding_id = topology.normalize_identity(session_id_from_context(context_id))
-    current_session_id = topology.normalize_session_id(session_ref or binding_id)
-    identity = binding_id
-    root = topology.session_root_for(current_session_id, identity)
-    root, _created = ensure_actor_session(
+    root = _resolve_bind_root(session_ref, binding_id=binding_id)
+    root = bind_root_for_context(
         root,
         context_id=context_id,
         context_source=context_source,
-    )
-    now = iso_utc()
-    existing = topology.load_binding_record(binding_id) or {}
-    topology.write_binding(
-        binding_id,
-        root,
-        context_id=context_id,
-        context_source=context_source,
-        session_id=current_session_id,
-        actor=identity,
-        created_at=str(existing.get("createdAt") or now),
-        updated_at=now,
     )
     return print_payload(_resolved_payload(root), output=output)
 

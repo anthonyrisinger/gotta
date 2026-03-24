@@ -174,7 +174,11 @@ def build_parser() -> argparse.ArgumentParser:
         parser_.add_argument("--actor", help="actor within the current session")
         parser_.add_argument("--content-dir", help="explicit content directory override")
 
-    bind.add_argument("session_id", nargs="?", help="shared session id")
+    bind.add_argument(
+        "session_id",
+        nargs="?",
+        help="session reference: shared session id, exact session root, or <session>/<actor>",
+    )
     bind.add_argument("--output", choices=["summary", "json", "path"], default="summary")
 
     init.add_argument(

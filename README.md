@@ -407,6 +407,14 @@ This split is deliberate:
 - operational truth stays append-only and durable
 - readable projections refresh from canonical state
 
+`gotta session init` scaffolds the target session and adopts it for the current
+runtime context. Future commands in that same context should resolve there
+ambiently. For shared-topology sessions, other contexts should reuse the shared
+session id with `--session <shared-session-id>` or `gotta session bind
+<shared-session-id>`. Exact-root reuse with `--session <session-root>` or
+`gotta session bind '<session-root>'` is the low-level path for non-shared
+roots or intentionally reusing one concrete actor root.
+
 Examples:
 
 ```bash
@@ -465,7 +473,10 @@ EOF
 Important invariants:
 
 - `gotta session bind ...` switches the active fingerprint binding to one
-  session-local actor root
+  actor root, whether you name it by shared session id, exact session root, or
+  explicit `<session>/<actor>` reference
+- binding a shared session id joins that shared session through the caller's own
+  actor root; binding an exact actor-root path reuses that exact actor root
 - `gotta actor bind ...` binds sibling actor sessions inside that shared
   session
   but does not launch them
