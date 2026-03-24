@@ -584,18 +584,30 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
     for actor_name, state in payload.items():
         line = (
             f"{actor_name}: {state['status']} "
-            f"(voice: {state.get('voice', 'missing')}, notes: {state['notes_status']}, "
-            f"artifacts: {state['artifact_count']})"
+            f"(voice: {state.get('voice', 'missing')}, progress: {state.get('progress_kind', 'none')}, "
+            f"notes: {state['notes_status']}, artifacts: {state['artifact_count']})"
         )
         if state.get("still_running"):
             line += " [still running]"
+        if (
+            state.get("still_running")
+            and state.get("progress_stale")
+            and int(state.get("artifact_count") or 0) == 0
+        ):
+            line += " [low signal]"
         print(line)
         if state.get("evidence_live"):
             print("  evidence: live")
+        if state.get("progress_stale") and state.get("progress_kind") != "none":
+            print("  progress_stale: true")
         last_activity_at = str(state.get("last_activity_at") or "").strip()
         last_activity_summary = str(state.get("last_activity_summary") or "").strip()
         if last_activity_at and last_activity_summary:
-            print(f"  recent_activity: {last_activity_at} {last_activity_summary}")
+            print(f"  recent_progress: {last_activity_at} {last_activity_summary}")
+        last_lifecycle_at = str(state.get("last_lifecycle_at") or "").strip()
+        last_lifecycle_summary = str(state.get("last_lifecycle_summary") or "").strip()
+        if last_lifecycle_at and last_lifecycle_summary:
+            print(f"  recent_lifecycle: {last_lifecycle_at} {last_lifecycle_summary}")
         recent_artifacts = [
             str(item.get("locator") or "").strip()
             for item in state.get("recent_artifacts", [])

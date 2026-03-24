@@ -104,42 +104,9 @@ def main(argv: list[str] | None = None) -> int:
         raise
     action = args.action or "show"
     if action == "show":
-        explicit_actor = getattr(args, "actor", None)
-        if explicit_actor:
-            work_dir = session_plugin._session_dir(
-                explicit_session=getattr(args, "session", None),
-                explicit_actor=explicit_actor,
-            )
-            actor_name = session_plugin.session_identity(work_dir)
-            visible = [
-                record
-                for record in log_records(work_dir)
-                if writer_role(work_dir, actor_name, writer=str(record.get("actor") or "")) != "foreign"
-            ]
-            entries = sorted(visible, key=lambda item: str(item.get("timestamp") or ""))
-            limited = entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
-            payload = {
-                "logs": str(logs_surface_path(work_dir)),
-                "logs_log": str(logs_state_path(work_dir)),
-                "entry_count": len(entries),
-                "entries": limited,
-            }
-            if args.output == "json":
-                print(json.dumps(payload, indent=2, sort_keys=True))
-                return 0
-            print(f"logs: {payload['logs']}")
-            print(f"entries: {payload['entry_count']}")
-            for record in payload["entries"]:
-                timestamp = str(record.get("timestamp") or "unknown-time")
-                actor = str(record.get("actor") or session_plugin.session_identity(work_dir))
-                message = str(record.get("message") or "").strip() or "unspecified log entry"
-                message_lines = message.splitlines() or ["unspecified log entry"]
-                print(f"- `{timestamp}` [{actor}] {message_lines[0]}")
-                for continuation in message_lines[1:]:
-                    print(f"  {continuation}")
-            return 0
-        work_dir, scoped_actor = session_plugin._read_scope(
+        work_dir, scoped_actor = session_plugin._observation_scope(
             explicit_session=getattr(args, "session", None),
+            explicit_actor=getattr(args, "actor", None),
         )
         if scoped_actor:
             visible = [

@@ -42,12 +42,18 @@ from gotta.content import (
     session_surface_initialized,
     write_session_state,
 )
-from gotta.friction import oops_log_path, render_oops_markdown
+from gotta.friction import OOPS_CHANNEL, oops_log_path, render_oops_markdown, visible_channel_records
 from gotta.helptext import format_long_help, is_long_help_request
-from gotta.logs import append_log_record, logs_state_path, sync_logs_projection
+from gotta.logs import (
+    append_log_record,
+    logs_state_path,
+    sync_logs_projection,
+    visible_log_records,
+)
 from gotta.notes import (
     actor_voice,
     actor_notes_ready,
+    visible_actor_notes_records,
     actor_notes_surface_path,
     sync_actor_notes_projection,
 )
@@ -186,6 +192,15 @@ def _session_dir(
     return current
 
 
+def _group_session_root(work_dir: Path) -> Path:
+    resolved = work_dir.expanduser().resolve()
+    if (resolved / "actors").is_dir():
+        return resolved
+    if resolved.parent.name == "actors":
+        return resolved.parent.parent.resolve()
+    return resolved
+
+
 def _shared_session_dir(
     *,
     explicit_session: str | None,
@@ -199,13 +214,7 @@ def _shared_session_dir(
             "start or bind a session first with `gotta ...` or bootstrap one "
             "manually with `gotta session init --session \"$WS\"`"
         )
-    resolved = current.resolve()
-    if (
-        topology.parse_grouped_session_root(resolved) is None
-        and topology.parse_shared_session_root(resolved) is None
-    ):
-        return resolved
-    return shared_session_root(session_shared_id(resolved)).resolve()
+    return _group_session_root(current)
 
 
 def _read_scope(
@@ -221,6 +230,27 @@ def _read_scope(
         if actor_name:
             return current, actor_name
     return current, ""
+
+
+def _observation_scope(
+    *,
+    explicit_session: str | None,
+    explicit_actor: str | None = None,
+) -> tuple[Path, str]:
+    if explicit_actor:
+        current = _session_dir(
+            explicit_session=explicit_session,
+            explicit_actor=explicit_actor,
+        ).resolve()
+        return current, session_identity(current)
+    current = _session_dir(
+        explicit_session=explicit_session,
+        explicit_actor=None,
+    ).resolve()
+    grouped_root = _group_session_root(current)
+    if grouped_root != current:
+        return grouped_root, ""
+    return current, session_identity(current) if current.parent.name == "actors" else ""
 
 
 def _target_actor_ids(work_dir: Path, actor_ref: str | None = None) -> tuple[str, ...]:
@@ -1774,14 +1804,11 @@ def _actor_activity_summary(
     return f"{label}: {author_prefix}".strip(": ")
 
 
-def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
+def _actor_event_records(work_dir: Path, actor_name: str) -> list[dict[str, object]]:
     path = _actor_events_path(work_dir, actor_name)
     if not path.exists():
-        return {
-            "recent_activity": [],
-            "last_activity_at": "",
-            "last_activity_summary": "",
-        }
+        return []
+    normalized_actor = _normalize_actor_name(actor_name)
     events: list[dict[str, object]] = []
     for index, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines()):
         if not raw_line.strip():
@@ -1798,7 +1825,7 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
         timestamp = str(payload.get("timestamp") or "").strip()
         detail = str(payload.get("detail") or "").strip()
         author = str(payload.get("author") or "").strip()
-        if writer_role(work_dir, actor_name, writer=author or actor_name) == "foreign":
+        if writer_role(work_dir, normalized_actor, writer=author or normalized_actor) == "foreign":
             continue
         events.append(
             {
@@ -1810,11 +1837,23 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
                     event,
                     detail,
                     author=author,
-                    target_actor=_normalize_actor_name(actor_name),
+                    target_actor=normalized_actor,
                 ),
                 "_order": index,
             }
         )
+    return events
+
+
+def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
+    events = _actor_event_records(work_dir, actor_name)
+    if not events:
+        return {
+            "recent_activity": [],
+            "recent_lifecycle": [],
+            "last_lifecycle_at": "",
+            "last_lifecycle_summary": "",
+        }
     ordered = sorted(
         events,
         key=lambda item: (
@@ -1823,6 +1862,11 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
         ),
         reverse=True,
     )
+    lifecycle = [
+        item
+        for item in ordered
+        if str(item.get("event") or "") != "note"
+    ]
     recent_activity = [
         {
             "timestamp": str(item.get("timestamp") or ""),
@@ -1833,11 +1877,167 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
         }
         for item in ordered[:limit]
     ]
-    latest = recent_activity[0] if recent_activity else {}
+    recent_lifecycle = [
+        {
+            "timestamp": str(item.get("timestamp") or ""),
+            "event": str(item.get("event") or ""),
+            "author": str(item.get("author") or ""),
+            "detail": str(item.get("detail") or ""),
+            "summary": str(item.get("summary") or ""),
+        }
+        for item in lifecycle[:limit]
+    ]
+    latest = recent_lifecycle[0] if recent_lifecycle else {}
     return {
         "recent_activity": recent_activity,
+        "recent_lifecycle": recent_lifecycle,
+        "last_lifecycle_at": str(latest.get("timestamp") or ""),
+        "last_lifecycle_summary": str(latest.get("summary") or ""),
+    }
+
+
+def _actor_progress_summary(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
+    normalized_actor = _normalize_actor_name(actor_name)
+    actor_root = _actor_session_dir(work_dir, normalized_actor)
+    events: list[dict[str, object]] = []
+    order = 0
+
+    def append_progress_event(
+        *,
+        timestamp: str,
+        event: str,
+        detail: str,
+        summary: str,
+        priority: int,
+    ) -> None:
+        nonlocal order
+        cleaned_timestamp = timestamp.strip()
+        cleaned_detail = detail.strip()
+        if not cleaned_timestamp or not cleaned_detail:
+            return
+        events.append(
+            {
+                "timestamp": cleaned_timestamp,
+                "event": event,
+                "author": normalized_actor,
+                "detail": cleaned_detail,
+                "summary": summary.strip() or cleaned_detail,
+                "_priority": priority,
+                "_order": order,
+            }
+        )
+        order += 1
+
+    for record in visible_actor_notes_records(work_dir, normalized_actor):
+        if str(record.get("author") or "").strip() != normalized_actor:
+            continue
+        message = str(record.get("message") or "").strip()
+        append_progress_event(
+            timestamp=str(record.get("timestamp") or ""),
+            event="note",
+            detail=message,
+            summary=_actor_activity_summary(
+                "note",
+                message,
+                author=normalized_actor,
+                target_actor=normalized_actor,
+            ),
+            priority=4,
+        )
+
+    for record in visible_channel_records(actor_root, OOPS_CHANNEL):
+        if str(record.get("actor") or "").strip() != normalized_actor:
+            continue
+        message = str(record.get("message") or "").strip()
+        append_progress_event(
+            timestamp=str(record.get("timestamp") or ""),
+            event="oops",
+            detail=message,
+            summary=_actor_activity_summary(
+                "oops",
+                message,
+                author=normalized_actor,
+                target_actor=normalized_actor,
+            ),
+            priority=3,
+        )
+
+    for record in visible_log_records(actor_root):
+        if str(record.get("actor") or "").strip() != normalized_actor:
+            continue
+        message = str(record.get("message") or "").strip()
+        append_progress_event(
+            timestamp=str(record.get("timestamp") or ""),
+            event="log",
+            detail=message,
+            summary=message,
+            priority=1,
+        )
+
+    manifest_path = work_dir / "content" / "manifest.jsonl"
+    if manifest_path.exists():
+        for raw_line in manifest_path.read_text(encoding="utf-8").splitlines():
+            if not raw_line.strip():
+                continue
+            try:
+                payload = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("actor") or "").strip() != normalized_actor:
+                continue
+            locator = str(
+                payload.get("canonical_locator") or payload.get("locator") or payload.get("preferred_name") or ""
+            ).strip()
+            append_progress_event(
+                timestamp=str(payload.get("fetched_at") or ""),
+                event="evidence",
+                detail=locator,
+                summary=f"evidence: {locator}",
+                priority=2,
+            )
+
+    ordered = sorted(
+        events,
+        key=lambda item: (
+            str(item.get("timestamp") or ""),
+            int(item.get("_priority") or 0),
+            int(item.get("_order") or 0),
+        ),
+        reverse=True,
+    )
+    recent_progress = [
+        {
+            "timestamp": str(item.get("timestamp") or ""),
+            "event": str(item.get("event") or ""),
+            "author": str(item.get("author") or ""),
+            "detail": str(item.get("detail") or ""),
+            "summary": str(item.get("summary") or ""),
+        }
+        for item in ordered[:limit]
+    ]
+    latest = recent_progress[0] if recent_progress else {}
+    progress_kind = (
+        "evidence"
+        if any(str(item.get("event") or "") == "evidence" for item in ordered)
+        else "narration" if ordered else "none"
+    )
+    progress_stale = False
+    latest_timestamp = str(latest.get("timestamp") or "")
+    if latest_timestamp:
+        try:
+            latest_dt = datetime.fromisoformat(latest_timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            latest_dt = None
+        if latest_dt is not None:
+            progress_stale = (time.time() - latest_dt.timestamp()) > ACTOR_STALL_SECONDS
+    return {
+        "recent_progress": recent_progress,
         "last_activity_at": str(latest.get("timestamp") or ""),
         "last_activity_summary": str(latest.get("summary") or ""),
+        "progress_kind": progress_kind,
+        "progress_stale": progress_stale,
     }
 
 
@@ -1891,6 +2091,34 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     evidence = _actor_evidence_summary(work_dir, actor_name)
     evidence_note = _actor_evidence_note(evidence)
     recent_activity = _actor_recent_activity(work_dir, actor_name)
+    progress = _actor_progress_summary(work_dir, actor_name)
+    lifecycle_entries = [dict(item) for item in recent_activity.get("recent_lifecycle", [])]
+    if lifecycle_entries and str(lifecycle_entries[0].get("event") or "") == "runtime_exit":
+        lifecycle_detail = str(lifecycle_entries[0].get("detail") or "")
+        request_labels = {
+            "stop_requested": "graceful stop request",
+            "failed_requested": "failure request",
+            "signoff_requested": "sign-off request",
+            "complete_requested": "completion request",
+        }
+        honored = next(
+            (
+                request_labels.get(str(item.get("event") or ""))
+                for item in lifecycle_entries[1:]
+                if str(item.get("event") or "") in request_labels
+            ),
+            "",
+        )
+        if honored and "code 0" in lifecycle_detail:
+            lifecycle_entries[0]["summary"] = (
+                f"runtime exit: actor process exited cleanly after honoring {honored}"
+            )
+    if lifecycle_entries:
+        recent_activity["recent_lifecycle"] = lifecycle_entries
+        recent_activity["last_lifecycle_at"] = str(lifecycle_entries[0].get("timestamp") or "")
+        recent_activity["last_lifecycle_summary"] = str(
+            lifecycle_entries[0].get("summary") or ""
+        )
     evidence_live = int(evidence["artifact_count"]) > 0
     if signoff_at:
         derived_status = "signed_off"
@@ -1947,6 +2175,12 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     voice_missing = voice == "missing"
     voice_setup = voice == "setup"
     voice_pulse = voice == "pulse"
+    progress_stale = bool(progress.get("progress_stale"))
+    low_signal_progress = (
+        bool(runtime_live)
+        and progress_stale
+        and int(evidence.get("artifact_count") or 0) == 0
+    )
     if derived_status == "closing":
         if notes_ready:
             next_step = (
@@ -2153,6 +2387,14 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         )
     else:
         next_step = ""
+    if low_signal_progress:
+        next_step = (
+            "actor runtime is still live, but actor-authored progress is stale and no "
+            "actor-attributed evidence has landed yet. Treat this as a low-signal run until "
+            "fresh actor-authored progress or evidence appears."
+            + request_note
+            + runtime_note
+        )
     return {
         **state,
         "label": _actor_label(actor_name, work_dir=work_dir),
@@ -2178,6 +2420,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             derived_status in {"completed", "signed_off"} and (notes_ready or evidence_live)
         ),
         "next_step": next_step,
+        **progress,
         **recent_activity,
         **evidence,
     }

@@ -150,37 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     action = args.action or "show"
 
     if action == "show":
-        if args.actor:
-            session_dir = session_plugin._session_dir(
-                explicit_session=getattr(args, "session", None),
-                explicit_actor=getattr(args, "actor", None),
-            )
-            work_dir = session_dir.resolve()
-            actor_name = session_plugin._resolve_bound_actor_name(work_dir, args.actor)
-            _require_bound_actor(work_dir, actor_name)
-            status = session_plugin._actor_status_payload(work_dir, actor_name)
-            payload = actor_notes_payload(
-                work_dir,
-                actor_name,
-                label=_actor_label(actor_name, work_dir=work_dir),
-                status_payload=status,
-            )
-            if args.output == "json":
-                print(json.dumps(payload, indent=2, sort_keys=True))
-                return 0
-            print(
-                render_actor_notes_markdown(
-                    work_dir,
-                    actor_name,
-                    label=_actor_label(actor_name, work_dir=work_dir),
-                    status_payload=status,
-                ),
-                end="",
-            )
-            return 0
-
-        work_dir, scoped_actor = session_plugin._read_scope(
+        work_dir, scoped_actor = session_plugin._observation_scope(
             explicit_session=getattr(args, "session", None),
+            explicit_actor=getattr(args, "actor", None),
         )
         if scoped_actor:
             status = session_plugin._actor_status_payload(work_dir, scoped_actor)

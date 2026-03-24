@@ -301,14 +301,12 @@ def cmd_oops(args: argparse.Namespace) -> int:
         print(f"extended oops entries in {oops_surface_path(session_dir)}: {len(entries)} item(s)")
         return 0
 
+    session_dir, scoped_actor = session_plugin._observation_scope(
+        explicit_session=getattr(args, "session", None),
+        explicit_actor=getattr(args, "actor", None),
+    )
     explicit_actor = getattr(args, "actor", None)
-    scoped_actor = ""
-    if explicit_actor:
-        session_dir = session_plugin._session_dir(
-            explicit_session=getattr(args, "session", None),
-            explicit_actor=explicit_actor,
-        )
-        actor_name = session_plugin.session_identity(session_dir)
+    if scoped_actor:
         records = filtered_oops_records(
             oops_records(session_dir),
             surface=args.surface or "",
@@ -319,41 +317,23 @@ def cmd_oops(args: argparse.Namespace) -> int:
         records = [
             record
             for record in records
-            if writer_role(session_dir, actor_name, writer=str(record.get("actor") or "")) != "foreign"
+            if writer_role(session_dir, scoped_actor, writer=str(record.get("actor") or ""))
+            != "foreign"
         ]
-        actor_ids = [session_plugin.session_identity(session_dir)]
+        actor_ids = [scoped_actor]
     else:
-        session_dir, scoped_actor = session_plugin._read_scope(
-            explicit_session=getattr(args, "session", None),
+        actor_ids, records = _aggregate_oops_records(
+            session_dir,
+            surface=args.surface or "",
+            command=args.command or "",
+            kind=args.kind or "",
+            severity=args.severity or "",
         )
-        if scoped_actor:
-            records = filtered_oops_records(
-                oops_records(session_dir),
-                surface=args.surface or "",
-                command=args.command or "",
-                kind=args.kind or "",
-                severity=args.severity or "",
+        if not actor_ids:
+            raise SystemExit(
+                "no actors bound for this session; bind one intentionally with "
+                + session_plugin._actor_bind_examples(prefix="gotta actor bind")
             )
-            records = [
-                record
-                for record in records
-                if writer_role(session_dir, scoped_actor, writer=str(record.get("actor") or ""))
-                != "foreign"
-            ]
-            actor_ids = [scoped_actor]
-        else:
-            actor_ids, records = _aggregate_oops_records(
-                session_dir,
-                surface=args.surface or "",
-                command=args.command or "",
-                kind=args.kind or "",
-                severity=args.severity or "",
-            )
-            if not actor_ids:
-                raise SystemExit(
-                    "no actors bound for this session; bind one intentionally with "
-                    + session_plugin._actor_bind_examples(prefix="gotta actor bind")
-                )
     records = sorted(records, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
     if action == "list":
         limited = records[: max(args.limit, 0)]

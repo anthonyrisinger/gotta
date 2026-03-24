@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import io
 import json
 import os
@@ -15,7 +16,7 @@ from gotta.logs import append_log_record, log_records
 from gotta import main as cli
 from gotta import topology
 from gotta.actor import SESSION_ACTOR_ENV
-from gotta.notes import actor_notes_records
+from gotta.notes import actor_notes_records, append_actor_note
 from gotta import session as sessionlib
 from gotta import todo as session_todo
 from gotta.notes import actor_notes_surface_path
@@ -648,7 +649,7 @@ def test_notes_append_on_actor_root_authors_as_target_actor(
     assert record["message"] == "actor-root note"
 
 
-def test_notes_show_on_actor_root_stays_actor_local(
+def test_notes_show_on_actor_root_defaults_to_session_wide(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -669,9 +670,9 @@ def test_notes_show_on_actor_root_stays_actor_local(
     assert notes.main(["show", "--session", str(actor_root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload["actor"] == claude
-    assert payload["entry_count"] == 1
-    assert [entry["author"] for entry in payload["entries"]] == [claude]
+    assert payload["actor_count"] == 2
+    assert set(payload["actors"]) == {claude, codex}
+    assert {entry["author"] for entry in payload["entries"]} == {claude, codex}
 
 
 def test_notes_append_infers_ambient_bound_actor_without_flag(
@@ -738,6 +739,23 @@ def test_actor_status_filters_with_actor_flag(
     assert list(payload) == [claude]
 
 
+def test_actor_status_defaults_to_all_bound_actors_from_actor_root(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
+    actor_root = _actor_root(root, "Claude")
+
+    assert actor.main(["status", "--session", str(actor_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert set(payload) == {claude, codex}
+
+
 def test_logs_show_defaults_to_all_bound_actors(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -763,7 +781,7 @@ def test_logs_show_defaults_to_all_bound_actors(
     assert {entry["actor"] for entry in payload["entries"]} == {codex, claude}
 
 
-def test_logs_show_on_actor_root_stays_actor_local(
+def test_logs_show_on_actor_root_defaults_to_session_wide(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -784,8 +802,9 @@ def test_logs_show_on_actor_root_stays_actor_local(
     assert logs.main(["show", "--session", str(actor_root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload["entry_count"] == 1
-    assert [entry["actor"] for entry in payload["entries"]] == [claude]
+    assert payload["actor_count"] == 2
+    assert payload["entry_count"] == 2
+    assert {entry["actor"] for entry in payload["entries"]} == {claude, codex}
 
 
 def test_charter_surfaces_default_to_all_bound_actors(
@@ -1192,18 +1211,17 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
                         "detail": "accepted by operator",
                     }
                 ),
-                json.dumps(
-                    {
-                        "timestamp": "2026-03-17T00:03:00Z",
-                        "actor": claude,
-                        "event": "note",
-                        "detail": "Wave 2 landed",
-                    }
-                ),
             ]
         )
         + "\n",
         encoding="utf-8",
+    )
+    append_actor_note(
+        root,
+        claude,
+        message="Wave 2 landed",
+        author=claude,
+        timestamp="2026-03-17T00:03:00Z",
     )
     dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
     for index, locator in enumerate(
@@ -1232,7 +1250,9 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
     assert actor.main(["status", claude, "--session", str(root)]) == 0
     output = capsys.readouterr().out
     assert "artifacts: 4" in output
-    assert "recent_activity: 2026-03-17T00:03:00Z Wave 2 landed" in output
+    assert "progress: evidence" in output
+    assert "recent_progress: 2026-03-17T00:04:00.000001Z evidence: jira:search connector" in output
+    assert "recent_lifecycle: 2026-03-17T00:02:00Z signed off: accepted by operator" in output
     assert "recent_artifacts:" in output
     assert "`jira:search connector`" in output
     assert "`github:search --type pr edge connector acme`" in output
@@ -1241,7 +1261,7 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
     assert "heartbeat" not in output
 
 
-def test_actor_status_json_reports_recent_activity_and_last_activity_summary(
+def test_actor_status_json_separates_progress_from_lifecycle(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -1267,13 +1287,59 @@ def test_actor_status_json_reports_recent_activity_and_last_activity_summary(
                     {
                         "timestamp": "2026-03-17T00:01:00Z",
                         "actor": claude,
-                        "event": "note",
-                        "detail": "Wave 1 landed",
+                        "event": "runtime_exit",
+                        "detail": "actor process exited with code 0",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    append_actor_note(
+        root,
+        claude,
+        message="Wave 1 landed",
+        author=claude,
+        timestamp="2026-03-17T00:01:00Z",
+    )
+
+    assert actor.main(["status", claude, "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)[claude]
+    assert payload["last_activity_at"] == "2026-03-17T00:01:00Z"
+    assert payload["last_activity_summary"] == "Wave 1 landed"
+    assert payload["last_lifecycle_at"] == "2026-03-17T00:01:00Z"
+    assert payload["last_lifecycle_summary"] == "runtime exit: actor process exited with code 0"
+    assert payload["progress_kind"] == "narration"
+    assert [item["event"] for item in payload["recent_progress"]] == ["note"]
+    assert [item["event"] for item in payload["recent_lifecycle"]] == ["runtime_exit"]
+    assert payload["artifact_count"] == 0
+
+
+def test_actor_status_reports_clean_runtime_exit_after_honoring_stop_request(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    events_path = sessionlib._actor_events_path(root, claude)
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    events_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-17T00:01:00Z",
+                        "actor": claude,
+                        "event": "stop_requested",
+                        "detail": "operator requested graceful stop",
                     }
                 ),
                 json.dumps(
                     {
-                        "timestamp": "2026-03-17T00:02:00Z",
+                        "timestamp": "2026-03-17T00:03:00Z",
                         "actor": claude,
                         "event": "runtime_exit",
                         "detail": "actor process exited with code 0",
@@ -1284,13 +1350,22 @@ def test_actor_status_json_reports_recent_activity_and_last_activity_summary(
         + "\n",
         encoding="utf-8",
     )
+    append_actor_note(
+        root,
+        claude,
+        message="Reached a stable checkpoint",
+        author=claude,
+        timestamp="2026-03-17T00:01:00Z",
+    )
 
-    assert actor.main(["status", claude, "--session", str(root), "--output", "json"]) == 0
-    payload = json.loads(capsys.readouterr().out)[claude]
-    assert payload["last_activity_at"] == "2026-03-17T00:02:00Z"
-    assert payload["last_activity_summary"] == "runtime exit: actor process exited with code 0"
-    assert [item["event"] for item in payload["recent_activity"]] == ["runtime_exit", "note"]
-    assert payload["artifact_count"] == 0
+    assert actor.main(["status", claude, "--session", str(root)]) == 0
+    output = capsys.readouterr().out
+
+    assert "recent_progress: 2026-03-17T00:01:00Z Reached a stable checkpoint" in output
+    assert (
+        "recent_lifecycle: 2026-03-17T00:03:00Z runtime exit: actor process exited cleanly "
+        "after honoring graceful stop request" in output
+    )
 
 
 def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
@@ -1346,6 +1421,47 @@ def test_actor_status_reports_pulse_after_actor_log_before_note(
     assert payload["voice"] == "pulse"
     assert "actor-authored pulse through logs, friction, or shared evidence" in payload["next_step"]
     assert "first durable actor note has not landed yet" in payload["next_step"]
+
+
+def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progress_is_stale(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    actor_root = _actor_root(root, "claude")
+    stale_started = (
+        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=120)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale_heartbeat = (
+        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=5)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sessionlib._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "pid": os.getpid(),
+            "started_at": stale_started,
+            "heartbeat_at": stale_heartbeat,
+        },
+    )
+    append_log_record(
+        actor_root,
+        message="stale investigation pulse",
+        actor=claude,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = sessionlib._actor_status_payload(root, claude)
+
+    assert payload["still_running"] is True
+    assert payload["progress_kind"] == "narration"
+    assert payload["progress_stale"] is True
+    assert payload["artifact_count"] == 0
+    assert "low-signal run" in payload["next_step"]
 
 
 def test_actor_status_reports_pulse_after_actor_evidence_before_note(
@@ -1487,6 +1603,8 @@ def test_actor_recent_activity_carries_cross_actor_author(
     payload = sessionlib._actor_status_payload(root, claude)
     assert payload["recent_activity"][0]["author"] == codex
     assert payload["recent_activity"][0]["summary"] == f"{codex}: Wave 2 landed"
+    assert payload["recent_lifecycle"] == []
+    assert payload["last_lifecycle_summary"] == ""
 
 
 def test_actor_status_ignores_foreign_note_for_voice(tmp_path: Path, capsys) -> None:
@@ -3851,6 +3969,79 @@ def test_session_timeline_acquired_includes_native_local_activity(
     assert payload["events"][1]["locator"] == "LOGS.md"
     assert payload["events"][1]["event_kind"] == "local"
     assert payload["events"][1]["fetched_at"] == "2026-03-11T00:00:01Z"
+
+
+def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_snapshots(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Codex")
+    claude = _actor_id(root, "Claude")
+    codex = _actor_id(root, "Codex")
+    claude_root = _actor_root(root, "Claude")
+    codex_root = _actor_root(root, "Codex")
+
+    content.append_activity_event(
+        claude_root,
+        {
+            "timestamp": "2026-03-11T00:00:01Z",
+            "plugin": "notes",
+            "surface": "notes",
+            "action": "append",
+            "actor": claude,
+            "locator": "NOTES.md",
+            "preferred_name": "NOTES.md",
+            "follow_command": "gotta read 'NOTES.md'",
+            "detail": "claude durable note",
+            "time_field": "session_recorded_at",
+        },
+    )
+    content.append_activity_event(
+        codex_root,
+        {
+            "timestamp": "2026-03-11T00:00:02Z",
+            "plugin": "logs",
+            "surface": "logs",
+            "action": "append",
+            "actor": codex,
+            "locator": "LOGS.md",
+            "preferred_name": "LOGS.md",
+            "follow_command": "gotta read 'LOGS.md'",
+            "detail": "codex execution pulse",
+            "time_field": "session_recorded_at",
+        },
+    )
+    content.append_activity_event(
+        codex_root,
+        {
+            "timestamp": "2026-03-11T00:00:03Z",
+            "plugin": "oops",
+            "surface": "oops",
+            "action": "append",
+            "actor": codex,
+            "locator": "state/oops.jsonl",
+            "preferred_name": "OOPS.md",
+            "follow_command": "gotta read 'OOPS.md'",
+            "detail": "codex noted friction",
+            "time_field": "session_recorded_at",
+        },
+    )
+    codex_root.joinpath("NOTES.md").write_text("# Notes\n\nlate snapshot\n", encoding="utf-8")
+
+    assert (
+        session.main(["timeline", "--session", str(claude_root), "--all", "--output", "json"])
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert len(payload["activityPaths"]) == 2
+    assert {Path(path).parent.parent.name for path in payload["activityPaths"]} == {claude, codex}
+    local_events = [event for event in payload["events"] if event["mode"] == "local"]
+    assert [event["actor"] for event in local_events[:3]] == [claude, codex, codex]
+    assert [event["locator"] for event in local_events[:3]] == ["NOTES.md", "LOGS.md", "state/oops.jsonl"]
+    assert all(event["locator"] != f"actor:{codex}:notes" for event in local_events)
 
 
 def test_session_timeline_labels_local_surface_snapshots_as_session(

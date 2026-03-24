@@ -1207,57 +1207,81 @@ def _meaningful_local_surface(path: Path) -> bool:
     return False
 
 
-def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
+def _timeline_activity_roots(dirs) -> list[Path]:
+    grouped_root = sessionlib._group_session_root(dirs.session_dir)
+    if grouped_root != dirs.session_dir.resolve() or (grouped_root / "actors").is_dir():
+        actor_ids = list(sessionlib._selected_actor_ids(grouped_root))
+        if actor_ids:
+            return [sessionlib._actor_session_dir(grouped_root, actor_id) for actor_id in actor_ids]
+    return [dirs.session_dir.resolve()]
+
+
+def _local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list[str]]:
     events: list[dict[str, object]] = []
-    seen_locators: set[str] = set()
-    for raw in activity_events(dirs.session_dir):
-        timestamp = str(raw.get("timestamp") or "").strip()
-        if not timestamp:
+    activity_paths: list[str] = []
+    seen_locators: set[tuple[str, str]] = set()
+    seen_activity_roots: set[Path] = set()
+    for activity_root in _timeline_activity_roots(dirs):
+        resolved_root = activity_root.resolve()
+        if resolved_root in seen_activity_roots:
             continue
-        locator = str(raw.get("locator") or "").strip() or "unknown"
-        seen_locators.add(locator)
-        events.append(
-            {
-                "mode": "local",
-                "source_time": timestamp,
-                "source_time_field": str(raw.get("time_field") or "session_recorded_at"),
-                "source_created_at": "",
-                "source_updated_at": "",
-                "source_published_at": "",
-                "fetched_at": timestamp,
-                "plugin": str(raw.get("plugin") or "session").strip() or "session",
-                "actor": _rendered_actor(raw.get("actor"), session_root=dirs.session_dir),
-                "target_actor": str(raw.get("target_actor") or "").strip(),
-                "locator": locator,
-                "preferred_name": str(raw.get("preferred_name") or locator).strip() or locator,
-                "checksum": "",
-                "artifactKind": "",
-                "content_locator": "",
-                "artifact_locator": "",
-                "follow_command": str(raw.get("follow_command") or "").strip(),
-                "detail": str(raw.get("detail") or "").strip(),
-                "event_kind": "local",
-                **classify_visibility_metadata(
-                    {},
-                    provider="gotta",
-                    plugin=str(raw.get("plugin") or "session").strip() or "session",
-                    locator=locator,
-                ),
-            }
-        )
+        seen_activity_roots.add(resolved_root)
+        activity_paths.append(str(activity_log_path(resolved_root)))
+        for raw in activity_events(resolved_root):
+            timestamp = str(raw.get("timestamp") or "").strip()
+            if not timestamp:
+                continue
+            locator = str(raw.get("locator") or "").strip() or "unknown"
+            seen_locators.add((str(resolved_root), locator))
+            events.append(
+                {
+                    "mode": "local",
+                    "source_time": timestamp,
+                    "source_time_field": str(raw.get("time_field") or "session_recorded_at"),
+                    "source_created_at": "",
+                    "source_updated_at": "",
+                    "source_published_at": "",
+                    "fetched_at": timestamp,
+                    "plugin": str(raw.get("plugin") or "session").strip() or "session",
+                    "actor": _rendered_actor(raw.get("actor"), session_root=resolved_root),
+                    "target_actor": str(raw.get("target_actor") or "").strip(),
+                    "locator": locator,
+                    "preferred_name": str(raw.get("preferred_name") or locator).strip() or locator,
+                    "checksum": "",
+                    "artifactKind": "",
+                    "content_locator": "",
+                    "artifact_locator": "",
+                    "follow_command": str(raw.get("follow_command") or "").strip(),
+                    "detail": str(raw.get("detail") or "").strip(),
+                    "event_kind": "local",
+                    **classify_visibility_metadata(
+                        {},
+                        provider="gotta",
+                        plugin=str(raw.get("plugin") or "session").strip() or "session",
+                        locator=locator,
+                    ),
+                }
+            )
     candidates: list[tuple[str, Path, str, str]] = [
         ("session", dirs.session_dir / relative, relative, f"gotta read {relative!r}")
         for relative in LOCAL_TIMELINE_FILES
     ]
-    for sibling in sorted(dirs.session_dir.parent.glob("*/NOTES.md")):
-        if sibling.parent.resolve() == dirs.session_dir.resolve():
-            continue
-        actor = sibling.parent.name
-        locator = f"actor:{actor}:notes"
-        follow = f"gotta read 'NOTES.md' --actor {actor}"
-        candidates.append(("actor", sibling, locator, follow))
+    grouped_root = sessionlib._group_session_root(dirs.session_dir)
+    if grouped_root != dirs.session_dir.resolve() or (grouped_root / "actors").is_dir():
+        for actor_root in _timeline_activity_roots(dirs):
+            resolved_root = actor_root.resolve()
+            if resolved_root == dirs.session_dir.resolve():
+                continue
+            if activity_log_path(resolved_root).is_file():
+                continue
+            sibling = resolved_root / "NOTES.md"
+            actor = resolved_root.name
+            locator = f"actor:{actor}:notes"
+            follow = f"gotta read 'NOTES.md' --actor {actor}"
+            candidates.append(("actor", sibling, locator, follow))
     for plugin, path, locator, follow_command in candidates:
-        if locator in seen_locators or not _meaningful_local_surface(path):
+        candidate_scope = str(path.parent.resolve())
+        if (candidate_scope, locator) in seen_locators or not _meaningful_local_surface(path):
             continue
         timestamp = _iso_utc_from_timestamp(path.stat().st_mtime)
         actor = path.parent.name if plugin == "actor" else _fallback_actor(dirs.session_dir)
@@ -1290,7 +1314,7 @@ def _local_activity_timeline_events(dirs) -> list[dict[str, object]]:
                 ),
             }
         )
-    return events
+    return events, activity_paths
 
 
 def _timeline_payload(
@@ -1302,7 +1326,10 @@ def _timeline_payload(
     mode: str = "acquired",
 ) -> dict[str, object]:
     normalized_mode = _normalize_timeline_mode(mode)
-    local_events = _local_activity_timeline_events(dirs)
+    local_events, activity_paths = _local_activity_timeline_events(dirs)
+    primary_activity_path = (
+        activity_paths[0] if activity_paths else str(activity_log_path(dirs.session_dir))
+    )
     if normalized_mode != "acquired":
         snapshots = scan_content_store(dirs.content_dir)
         events: list[dict[str, object]] = []
@@ -1373,7 +1400,8 @@ def _timeline_payload(
             "sessionDir": str(dirs.session_dir),
             "contentDir": str(dirs.content_dir),
             "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
-            "activityPath": str(activity_log_path(dirs.session_dir)),
+            "activityPath": primary_activity_path,
+            "activityPaths": activity_paths,
             "mode": normalized_mode,
             "modeDescription": TIMELINE_MODE_DESCRIPTIONS[normalized_mode],
             "coverageGapCount": coverage_gap_count,
@@ -1437,7 +1465,8 @@ def _timeline_payload(
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
-        "activityPath": str(activity_log_path(dirs.session_dir)),
+        "activityPath": primary_activity_path,
+        "activityPaths": activity_paths,
         "mode": normalized_mode,
         "modeDescription": TIMELINE_MODE_DESCRIPTIONS[normalized_mode],
         "coverageGapCount": 0,
@@ -3910,7 +3939,11 @@ def cmd_timeline(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     print(f"timeline: {payload['manifestPath']}")
-    print(f"activity: {payload['activityPath']}")
+    activity_paths = list(payload.get("activityPaths") or [])
+    if len(activity_paths) > 1:
+        print(f"activity: {len(activity_paths)} actor activity logs")
+    else:
+        print(f"activity: {payload['activityPath']}")
     print(f"mode: {payload['mode']} ({payload['modeDescription']})")
     print(f"coverage_gaps: {payload.get('coverageGapCount', 0)}")
     print(
