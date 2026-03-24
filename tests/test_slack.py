@@ -643,8 +643,8 @@ def test_query_search_all_and_any_modes() -> None:
                 "C12345678",
                 "1773085070.240949",
                 "1773085070.240949",
-                "ABC and MeshLink together",
-                json.dumps({"user": "U12345678", "text": "ABC and MeshLink together"}),
+                "ABC and example connector together",
+                json.dumps({"user": "U12345678", "text": "ABC and example connector together"}),
                 1,
                 1,
             ),
@@ -667,7 +667,7 @@ def test_query_search_all_and_any_modes() -> None:
 
         result_all = slack.query_search(
             conn,
-            query="ABC MeshLink",
+            query="ABC example connector",
             limit=20,
             workspace="demo",
             match_mode="all",

@@ -2495,6 +2495,81 @@ def _semantic_node_follow_command(
     return ""
 
 
+def _focus_match_threshold(best_score: int) -> int:
+    if best_score <= 0:
+        return 0
+    if best_score >= 4:
+        return 2
+    return best_score
+
+
+def _ordered_focus_scan_entries(
+    scan_payload: dict[str, object] | None,
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    if not isinstance(scan_payload, dict):
+        return []
+    entries = [
+        dict(entry)
+        for entry in scan_payload.get("entries") or []
+        if isinstance(entry, dict)
+    ]
+    ordered = sorted(
+        entries,
+        key=lambda entry: str(entry.get("lastFetchedAt") or entry.get("fetched_at") or ""),
+        reverse=True,
+    )
+    ordered = sorted(
+        ordered,
+        key=lambda entry: int(entry.get("hitCount") or 0),
+        reverse=True,
+    )
+    ordered = sorted(
+        ordered,
+        key=lambda entry: str(
+            entry.get("artifactKind") or entry.get("artifact_kind") or ""
+        )
+        != "evidence",
+    )
+    return ordered[: max(limit, 0)]
+
+
+def _lineage_source_candidate(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "source",
+        "label": str(item.get("locator") or ""),
+        "locator": str(item.get("locator") or ""),
+        "artifactKind": str(item.get("artifactKind") or ""),
+        "materialized": True,
+        "followCommand": str(item.get("followCommand") or ""),
+    }
+
+
+def _lineage_content_candidate(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "content",
+        "label": str(item.get("preferredName") or ""),
+        "checksum": str(item.get("checksum") or ""),
+        "artifactLocator": str(item.get("artifactLocator") or ""),
+        "contentLocator": str(item.get("contentLocator") or ""),
+        "artifactKind": str(item.get("artifactKind") or ""),
+        "materialized": True,
+        "followCommand": str(item.get("followCommand") or ""),
+    }
+
+
+def _lineage_lead_candidate(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "lead",
+        "label": str(item.get("locator") or ""),
+        "locator": str(item.get("locator") or ""),
+        "artifactKind": str(item.get("artifactKind") or ""),
+        "materialized": bool(item.get("materialized")),
+        "followCommand": str(item.get("followCommand") or ""),
+    }
+
+
 def _analysis_focus_score(node: dict[str, object], query: str) -> tuple[int, int, int, str]:
     query_lower = query.lower()
     label = str(node.get("label") or "")
@@ -2540,6 +2615,7 @@ def _semantic_focus_payload(
     *,
     focus: str,
     limit: int,
+    scan_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     query = focus.strip()
     if not query:
@@ -2555,15 +2631,27 @@ def _semantic_focus_payload(
             "nodes": [],
             "edges": [],
             "neighbors": [],
+            "anchors": [],
+            "matchedCount": 0,
         }
     nodes = [dict(node) for node in semantic.get("nodes") or []]
     node_index = {str(node["id"]): node for node in nodes}
     matches = sorted(
-        (node for node in nodes if _analysis_focus_score(node, query)[0] > 0),
+        (
+            node
+            for node in nodes
+            if str(node.get("kind") or "") in {"source", "content"}
+            and _analysis_focus_score(node, query)[0] > 0
+        ),
         key=lambda node: _analysis_focus_score(node, query),
         reverse=True,
     )
-    if not matches:
+    scan_entries = _ordered_focus_scan_entries(
+        scan_payload,
+        limit=max(limit * 2, 8),
+    )
+    seed_cap = max(4, min(max(limit, 1), 12))
+    if not matches and not scan_entries:
         return {
             "sessionDir": semantic["sessionDir"],
             "contentDir": semantic["contentDir"],
@@ -2571,24 +2659,79 @@ def _semantic_focus_payload(
             "matched": False,
             "empty": True,
             "nextStep": (
-                f"No analyzed node matched `{query}`. Try a canonical locator, artifact name, "
-                "checksum prefix, or a tighter keyword from session leads or manifest."
+                f"No analyzed node or projected artifact matched `{query}`. Try a canonical locator, "
+                "artifact name, checksum prefix, or a tighter keyword from session scan, leads, or manifest."
             ),
             "nodeCount": 0,
             "edgeCount": 0,
             "nodes": [],
             "edges": [],
             "neighbors": [],
+            "anchors": [],
+            "matchedCount": 0,
         }
 
-    root = dict(matches[0])
+    best_score = _analysis_focus_score(matches[0], query)[0] if matches else 0
+    threshold = _focus_match_threshold(best_score)
+    seed_ids: list[str] = []
+
+    def add_seed(node_id: str) -> None:
+        if node_id and node_id in node_index and node_id not in seed_ids:
+            seed_ids.append(node_id)
+
+    for node in matches:
+        if _analysis_focus_score(node, query)[0] < threshold:
+            break
+        add_seed(str(node.get("id") or ""))
+        if len(seed_ids) >= seed_cap:
+            break
+    for entry in scan_entries:
+        checksum = str(entry.get("checksum") or "").strip()
+        locator = str(entry.get("canonical_locator") or entry.get("locator") or "").strip()
+        if checksum:
+            add_seed(f"content:{checksum}")
+        if locator:
+            add_seed(f"source:{locator}")
+        if len(seed_ids) >= seed_cap:
+            break
+
+    if not seed_ids:
+        return {
+            "sessionDir": semantic["sessionDir"],
+            "contentDir": semantic["contentDir"],
+            "focus": query,
+            "matched": False,
+            "empty": True,
+            "nextStep": (
+                f"No analyzed node or projected artifact matched `{query}`. Try a canonical locator, "
+                "artifact name, checksum prefix, or a tighter keyword from session scan, leads, or manifest."
+            ),
+            "nodeCount": 0,
+            "edgeCount": 0,
+            "nodes": [],
+            "edges": [],
+            "neighbors": [],
+            "anchors": [],
+            "matchedCount": 0,
+        }
+
+    root = dict(node_index[seed_ids[0]])
     root["followCommand"] = _semantic_node_follow_command(root, lineage=lineage)
     root_id = str(root["id"])
+    seed_records = []
+    for node_id in seed_ids:
+        node = dict(node_index[node_id])
+        node["followCommand"] = _semantic_node_follow_command(node, lineage=lineage)
+        seed_records.append(node)
+    seed_id_set = set(seed_ids)
     structural_labels = {"source", "resource", "resolved_by", "query", "drives"}
     incident_edges = [
         dict(edge)
         for edge in semantic.get("edges") or []
-        if str(edge.get("source") or "") == root_id or str(edge.get("target") or "") == root_id
+        if (
+            str(edge.get("source") or "") in seed_id_set
+            or str(edge.get("target") or "") in seed_id_set
+        )
     ]
     semantic_incident_edges = [
         edge for edge in incident_edges if str(edge.get("label") or "") not in structural_labels
@@ -2599,7 +2742,9 @@ def _semantic_focus_payload(
     for edge in selected_edges:
         source = str(edge.get("source") or "")
         target = str(edge.get("target") or "")
-        neighbor_id = target if source == root_id else source
+        if source in seed_id_set and target in seed_id_set:
+            continue
+        neighbor_id = target if source in seed_id_set else source
         if not neighbor_id:
             continue
         if neighbor_id not in relation_labels_by_neighbor:
@@ -2611,7 +2756,9 @@ def _semantic_focus_payload(
         for edge in incident_edges:
             source = str(edge.get("source") or "")
             target = str(edge.get("target") or "")
-            neighbor_id = target if source == root_id else source
+            if source in seed_id_set and target in seed_id_set:
+                continue
+            neighbor_id = target if source in seed_id_set else source
             if not neighbor_id:
                 continue
             if neighbor_id not in relation_labels_by_neighbor:
@@ -2631,7 +2778,7 @@ def _semantic_focus_payload(
         )[: max(limit, 0)]
         if neighbor_id in node_index
     ]
-    selected_node_ids = {root_id, *selected_neighbor_ids}
+    selected_node_ids = {root_id, *seed_ids, *selected_neighbor_ids}
     focused_edges = [
         edge
         for edge in incident_edges
@@ -2651,7 +2798,7 @@ def _semantic_focus_payload(
                 "relations": relation_labels,
             }
         )
-    focused_nodes = [root, *neighbor_records]
+    focused_nodes = [*seed_records, *neighbor_records]
     suppressed_count = max(len(incident_edges) - len(focused_edges), 0)
     return {
         "sessionDir": semantic["sessionDir"],
@@ -2663,6 +2810,8 @@ def _semantic_focus_payload(
         "nodeCount": len(focused_nodes),
         "edgeCount": len(focused_edges),
         "root": root,
+        "anchors": seed_records[1:],
+        "matchedCount": len(seed_records),
         "neighbors": neighbor_records,
         "nodes": focused_nodes,
         "edges": focused_edges,
@@ -2699,6 +2848,7 @@ def _lineage_focus_payload(
     *,
     focus: str,
     limit: int,
+    scan_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     query = focus.strip()
     if not query:
@@ -2719,6 +2869,8 @@ def _lineage_focus_payload(
             "leadEdges": [],
             "discoveryArtifactCount": 0,
             "evidenceArtifactCount": 0,
+            "anchors": [],
+            "matchedCount": 0,
         }
     sources = [dict(item) for item in payload.get("sources") or []]
     content_items = [dict(item) for item in payload.get("content") or []]
@@ -2727,40 +2879,12 @@ def _lineage_focus_payload(
     content_index = {str(item.get("checksum") or ""): item for item in content_items}
     lead_index = {str(item.get("locator") or ""): item for item in lead_sources}
     candidates = [
+        *(_lineage_source_candidate(item) for item in sources),
+        *(_lineage_content_candidate(item) for item in content_items),
         *(
-            {
-                "kind": "source",
-                "label": str(item.get("locator") or ""),
-                "locator": str(item.get("locator") or ""),
-                "artifactKind": str(item.get("artifactKind") or ""),
-                "materialized": True,
-                "followCommand": str(item.get("followCommand") or ""),
-            }
-            for item in sources
-        ),
-        *(
-            {
-                "kind": "content",
-                "label": str(item.get("preferredName") or ""),
-                "checksum": str(item.get("checksum") or ""),
-                "artifactLocator": str(item.get("artifactLocator") or ""),
-                "contentLocator": str(item.get("contentLocator") or ""),
-                "artifactKind": str(item.get("artifactKind") or ""),
-                "materialized": True,
-                "followCommand": str(item.get("followCommand") or ""),
-            }
-            for item in content_items
-        ),
-        *(
-            {
-                "kind": "lead",
-                "label": str(item.get("locator") or ""),
-                "locator": str(item.get("locator") or ""),
-                "artifactKind": str(item.get("artifactKind") or ""),
-                "materialized": bool(item.get("materialized")),
-                "followCommand": str(item.get("followCommand") or ""),
-            }
+            _lineage_lead_candidate(item)
             for item in lead_sources
+            if str(item.get("locator") or "") not in source_index
         ),
     ]
     matches = sorted(
@@ -2768,7 +2892,12 @@ def _lineage_focus_payload(
         key=lambda candidate: _lineage_focus_score(candidate, query),
         reverse=True,
     )
-    if not matches:
+    scan_entries = _ordered_focus_scan_entries(
+        scan_payload,
+        limit=max(limit * 2, 8),
+    )
+    seed_cap = max(4, min(max(limit, 1), 12))
+    if not matches and not scan_entries:
         return {
             "sessionDir": payload["sessionDir"],
             "contentDir": payload["contentDir"],
@@ -2776,8 +2905,8 @@ def _lineage_focus_payload(
             "matched": False,
             "empty": True,
             "nextStep": (
-                f"No analyzed lineage anchor matched `{query}`. Try a canonical locator, artifact name, "
-                "checksum prefix, or a tighter target from session leads or manifest."
+                f"No analyzed lineage anchor or projected artifact matched `{query}`. Try a canonical locator, "
+                "artifact name, checksum prefix, or a tighter target from session scan, leads, or manifest."
             ),
             "root": {},
             "neighbors": [],
@@ -2789,43 +2918,130 @@ def _lineage_focus_payload(
             "leadEdges": [],
             "discoveryArtifactCount": 0,
             "evidenceArtifactCount": 0,
+            "anchors": [],
+            "matchedCount": 0,
         }
-    root = dict(matches[0])
+    best_score = _lineage_focus_score(matches[0], query)[0] if matches else 0
+    threshold = _focus_match_threshold(best_score)
+    seeds: list[dict[str, object]] = []
+    seen_seed_keys: set[tuple[str, str]] = set()
+
+    def add_seed(candidate: dict[str, object]) -> None:
+        kind = str(candidate.get("kind") or "")
+        if kind == "source":
+            key = ("source", str(candidate.get("locator") or ""))
+        elif kind == "content":
+            key = ("content", str(candidate.get("checksum") or ""))
+        else:
+            key = ("lead", str(candidate.get("locator") or ""))
+        if not key[1] or key in seen_seed_keys:
+            return
+        seen_seed_keys.add(key)
+        seeds.append(candidate)
+
+    for candidate in matches:
+        if _lineage_focus_score(candidate, query)[0] < threshold:
+            break
+        add_seed(dict(candidate))
+        if len(seeds) >= seed_cap:
+            break
+    for entry in scan_entries:
+        checksum = str(entry.get("checksum") or "").strip()
+        locator = str(entry.get("canonical_locator") or entry.get("locator") or "").strip()
+        if checksum and checksum in content_index:
+            add_seed(_lineage_content_candidate(content_index[checksum]))
+        if locator and locator in source_index:
+            add_seed(_lineage_source_candidate(source_index[locator]))
+        if len(seeds) >= seed_cap:
+            break
+
+    if not seeds:
+        return {
+            "sessionDir": payload["sessionDir"],
+            "contentDir": payload["contentDir"],
+            "focus": query,
+            "matched": False,
+            "empty": True,
+            "nextStep": (
+                f"No analyzed lineage anchor or projected artifact matched `{query}`. Try a canonical locator, "
+                "artifact name, checksum prefix, or a tighter target from session scan, leads, or manifest."
+            ),
+            "root": {},
+            "neighbors": [],
+            "sources": [],
+            "content": [],
+            "sourceEdges": [],
+            "revisionEdges": [],
+            "leadSources": [],
+            "leadEdges": [],
+            "discoveryArtifactCount": 0,
+            "evidenceArtifactCount": 0,
+            "anchors": [],
+            "matchedCount": 0,
+        }
+
+    root = dict(seeds[0])
     selected_sources: set[str] = set()
     selected_content: set[str] = set()
     selected_leads: set[str] = set()
-    if root["kind"] == "source":
-        selected_sources.add(str(root.get("locator") or ""))
-    elif root["kind"] == "content":
-        selected_content.add(str(root.get("checksum") or ""))
-    else:
-        selected_leads.add(str(root.get("locator") or ""))
+    matched_sources = {
+        str(candidate.get("locator") or "")
+        for candidate in matches
+        if str(candidate.get("kind") or "") == "source"
+    }
+    matched_leads = {
+        str(candidate.get("locator") or "")
+        for candidate in matches
+        if str(candidate.get("kind") or "") == "lead"
+    }
+    for candidate in seeds:
+        if candidate["kind"] == "source":
+            selected_sources.add(str(candidate.get("locator") or ""))
+        elif candidate["kind"] == "content":
+            selected_content.add(str(candidate.get("checksum") or ""))
+        else:
+            selected_leads.add(str(candidate.get("locator") or ""))
 
-    for edge in payload.get("sourceEdges") or []:
-        source = str(edge.get("source") or "")
-        checksum = str(edge.get("checksum") or "")
-        if source in selected_sources:
-            selected_content.add(checksum)
-        if checksum in selected_content:
-            selected_sources.add(source)
-    for edge in payload.get("revisionEdges") or []:
-        from_checksum = str(edge.get("from") or "")
-        to_checksum = str(edge.get("to") or "")
-        if from_checksum in selected_content:
-            selected_content.add(to_checksum)
-        if to_checksum in selected_content:
-            selected_content.add(from_checksum)
+    def expand_source_and_revision_edges() -> None:
+        for edge in payload.get("sourceEdges") or []:
+            source = str(edge.get("source") or "")
+            checksum = str(edge.get("checksum") or "")
+            if source in selected_sources:
+                selected_content.add(checksum)
+            if checksum in selected_content:
+                selected_sources.add(source)
+        for edge in payload.get("revisionEdges") or []:
+            from_checksum = str(edge.get("from") or "")
+            to_checksum = str(edge.get("to") or "")
+            if from_checksum in selected_content:
+                selected_content.add(to_checksum)
+            if to_checksum in selected_content:
+                selected_content.add(from_checksum)
+
+    expand_source_and_revision_edges()
     for edge in payload.get("leadEdges") or []:
         source_checksum = str(edge.get("sourceChecksum") or "")
         target_locator = str(edge.get("targetLocator") or "")
-        if source_checksum in selected_content:
-            selected_leads.add(target_locator)
+        target_is_source = target_locator in source_index
+        target_matches_focus = (
+            target_locator in matched_sources or target_locator in matched_leads
+        )
+        if source_checksum in selected_content and (
+            target_locator in selected_sources
+            or target_locator in selected_leads
+            or target_matches_focus
+        ):
+            if target_is_source:
+                selected_sources.add(target_locator)
+            else:
+                selected_leads.add(target_locator)
         if target_locator in selected_sources or target_locator in selected_leads:
             selected_content.add(source_checksum)
+    expand_source_and_revision_edges()
 
     neighbor_candidates: list[dict[str, object]] = []
     for locator in sorted(selected_sources):
-        if root["kind"] == "source" and locator == str(root.get("locator") or ""):
+        if ("source", locator) in seen_seed_keys:
             continue
         source_item = source_index.get(locator)
         if source_item is None:
@@ -2841,7 +3057,7 @@ def _lineage_focus_payload(
             }
         )
     for checksum in sorted(selected_content):
-        if root["kind"] == "content" and checksum == str(root.get("checksum") or ""):
+        if ("content", checksum) in seen_seed_keys:
             continue
         content_item = content_index.get(checksum)
         if content_item is None:
@@ -2857,7 +3073,7 @@ def _lineage_focus_payload(
             }
         )
     for locator in sorted(selected_leads):
-        if root["kind"] == "lead" and locator == str(root.get("locator") or ""):
+        if ("lead", locator) in seen_seed_keys:
             continue
         lead_item = lead_index.get(locator)
         if lead_item is None:
@@ -2902,20 +3118,29 @@ def _lineage_focus_payload(
         for item in ordered_neighbors
         if str(item.get("kind") or "") == "lead"
     }
+    seed_source_labels = {
+        value for kind, value in seen_seed_keys if kind == "source"
+    }
+    seed_content_checksums = {
+        value for kind, value in seen_seed_keys if kind == "content"
+    }
+    seed_lead_labels = {
+        value for kind, value in seen_seed_keys if kind == "lead"
+    }
     selected_sources = {
         locator
         for locator in selected_sources
-        if locator == str(root.get("locator") or "") or locator in neighbor_source_labels
+        if locator in seed_source_labels or locator in neighbor_source_labels
     }
     selected_content = {
         checksum
         for checksum in selected_content
-        if checksum == str(root.get("checksum") or "") or checksum in neighbor_content_checksums
+        if checksum in seed_content_checksums or checksum in neighbor_content_checksums
     }
     selected_leads = {
         locator
         for locator in selected_leads
-        if locator == str(root.get("locator") or "") or locator in neighbor_lead_labels
+        if locator in seed_lead_labels or locator in neighbor_lead_labels
     }
 
     selected_source_items = [item for item in sources if str(item.get("locator") or "") in selected_sources]
@@ -2961,6 +3186,8 @@ def _lineage_focus_payload(
         "empty": False,
         "nextStep": "",
         "root": root,
+        "anchors": seeds[1:],
+        "matchedCount": len(seeds),
         "neighbors": ordered_neighbors,
         "sources": selected_source_items,
         "content": selected_content_items,
@@ -3162,6 +3389,11 @@ def _render_analysis_focus_text(payload: dict[str, object]) -> str:
     lines.append(
         f"matched: {root['label']} ({root['kind']}, {root['group']})"
     )
+    if int(payload.get("matchedCount") or 0) > 1:
+        lines.append(
+            f"signal: {int(payload['matchedCount'])} anchors matched this focus; "
+            "showing the strongest root plus nearby corroborating anchors"
+        )
     state_bits = []
     if root.get("artifactKind"):
         state_bits.append(f"artifact_kind={root['artifactKind']}")
@@ -3173,6 +3405,15 @@ def _render_analysis_focus_text(payload: dict[str, object]) -> str:
         lines.append("state: " + ", ".join(state_bits))
     if root.get("followCommand"):
         lines.append(f"follow: `{root['followCommand']}`")
+    anchors = payload.get("anchors") or []
+    if anchors:
+        lines.append("also matched:")
+        for anchor in anchors:
+            lines.append(
+                f"  - {anchor['label']} ({anchor['kind']}, {anchor['group']})"
+            )
+            if anchor.get("followCommand"):
+                lines.append(f"    follow: `{anchor['followCommand']}`")
     if int(payload.get("suppressedStructuralEdgeCount") or 0) > 0:
         lines.append(
             "signal: "
@@ -3213,6 +3454,11 @@ def _render_lineage_focus_text(payload: dict[str, object]) -> str:
         return "\n".join(lines)
     root = payload["root"]
     lines.append(f"matched: {root['label']} ({root['kind']})")
+    if int(payload.get("matchedCount") or 0) > 1:
+        lines.append(
+            f"signal: {int(payload['matchedCount'])} anchors matched this focus; "
+            "showing the strongest root plus nearby corroborating anchors"
+        )
     state_bits = []
     if root.get("artifactKind"):
         state_bits.append(f"artifact_kind={root['artifactKind']}")
@@ -3224,6 +3470,13 @@ def _render_lineage_focus_text(payload: dict[str, object]) -> str:
         lines.append("state: " + ", ".join(state_bits))
     if root.get("followCommand"):
         lines.append(f"follow: `{root['followCommand']}`")
+    anchors = payload.get("anchors") or []
+    if anchors:
+        lines.append("also matched:")
+        for anchor in anchors:
+            lines.append(f"  - {anchor['label']} ({anchor['kind']})")
+            if anchor.get("followCommand"):
+                lines.append(f"    follow: `{anchor['followCommand']}`")
     if payload["neighbors"]:
         lines.append("neighbors:")
         for neighbor in payload["neighbors"]:
@@ -3657,11 +3910,18 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         if str(getattr(args, "focus", "") or "").strip():
             focus_query = str(args.focus)
             focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
+            focus_scan_payload = _scan_payload(
+                dirs,
+                query=focus_query,
+                limit=max(focus_limit * 2, 12),
+                include_all=True,
+            )
             if args.mode == "lineage":
                 focus_payload = _lineage_focus_payload(
                     payload,
                     focus=focus_query,
                     limit=focus_limit,
+                    scan_payload=focus_scan_payload,
                 )
             else:
                 focus_payload = _semantic_focus_payload(
@@ -3669,6 +3929,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     semantic_payload,
                     focus=focus_query,
                     limit=focus_limit,
+                    scan_payload=focus_scan_payload,
                 )
         if args.output == "text":
             if focus_payload is not None:

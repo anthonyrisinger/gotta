@@ -42,7 +42,7 @@ CANONICAL_LOCATOR_RE = re.compile(
 )
 _TRAILING_PUNCTUATION = ".,;:!?)>]}`'\"`"
 LEADS_CACHE_NAME = "leads.json"
-LEADS_CACHE_VERSION = 6
+LEADS_CACHE_VERSION = 7
 MAX_SNIPPET_CHARS = 240
 SLACK_PERMALINK_RE = re.compile(
     r"https://[^/.]+\.slack\.com/archives/(?P<channel>[A-Z0-9]+)(?:/p(?P<pnum>[0-9]{16}))?"
@@ -258,6 +258,26 @@ def _provider_for_url(target: str) -> str:
     if "drive.google.com" in host:
         return "gdrive"
     return "web"
+
+
+def _github_repo_reference(target: str) -> tuple[str, str]:
+    try:
+        parsed = urllib.parse.urlparse(target)
+    except ValueError:
+        return ("", "")
+    if parsed.netloc.strip().lower() != "github.com":
+        return ("", "")
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2:
+        return ("", "")
+    repo_ref = f"{parts[0]}/{parts[1]}"
+    if len(parts) == 2:
+        return (repo_ref, "repo")
+    if parts[2] == "tree" and len(parts) >= 4:
+        return (repo_ref, "tree")
+    if parts[2] == "blob" and len(parts) >= 4:
+        return (repo_ref, "blob")
+    return (repo_ref, "other")
 
 
 def lead_cache_path(content_dir: Path) -> Path:
@@ -794,17 +814,43 @@ def _snapshot_subcommand(snapshot: ContentSnapshot) -> str:
     return raw_subcommand
 
 
-def _effective_explicit_mentions(
-    snapshot: ContentSnapshot,
+def _is_structural_github_repo_navigation(
+    *,
+    source_locator: str,
+    provider: str,
+    mention: LeadMention,
+) -> bool:
+    if provider != "github":
+        return False
+    source_repo, source_kind = _github_repo_reference(source_locator)
+    if source_kind not in {"repo", "tree"} or not source_repo:
+        return False
+    target_repo, target_kind = _github_repo_reference(mention.canonical_locator)
+    if target_repo != source_repo or target_kind not in {"blob", "tree"}:
+        return False
+    snippet = mention.snippet.strip()
+    return snippet.startswith("- [") or snippet.startswith("- **README:**")
+
+
+def _filter_explicit_mentions(
+    *,
+    source_locator: str,
+    provider: str,
     mentions: list[LeadMention],
 ) -> list[LeadMention]:
-    source_locator = snapshot_locator(snapshot).strip()
-    return [
-        mention
-        for mention in mentions
-        if mention.canonical_locator.strip()
-        and mention.canonical_locator.strip() != source_locator
-    ]
+    filtered: list[LeadMention] = []
+    for mention in mentions:
+        target_locator = mention.canonical_locator.strip()
+        if not target_locator or target_locator == source_locator:
+            continue
+        if _is_structural_github_repo_navigation(
+            source_locator=source_locator,
+            provider=provider,
+            mention=mention,
+        ):
+            continue
+        filtered.append(mention)
+    return filtered
 
 
 def maybe_write_lead_cache(content_dir: Path, *, data: bytes) -> Path | None:
@@ -828,6 +874,11 @@ def maybe_write_lead_cache(content_dir: Path, *, data: bytes) -> Path | None:
             source_locator = str(
                 payload.get("canonical_locator", "") or payload.get("locator", "")
             ).strip()
+    mentions = _filter_explicit_mentions(
+        source_locator=source_locator,
+        provider=provider,
+        mentions=mentions,
+    )
     if provider and not any(
         mention.canonical_locator.strip()
         and mention.canonical_locator.strip() != source_locator
@@ -844,8 +895,12 @@ def lead_mentions_for_snapshot(snapshot: ContentSnapshot) -> list[LeadMention]:
     text = _lead_text_for_path(snapshot.data_path)
     if not text.strip():
         return []
-    mentions = extract_explicit_leads(text)
-    if not _effective_explicit_mentions(snapshot, mentions):
+    mentions = _filter_explicit_mentions(
+        source_locator=snapshot_locator(snapshot).strip(),
+        provider=_snapshot_provider(snapshot),
+        mentions=extract_explicit_leads(text),
+    )
+    if not mentions:
         mentions.extend(
             extract_semantic_search_leads(
                 text,

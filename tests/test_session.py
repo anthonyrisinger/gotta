@@ -1210,8 +1210,8 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
         [
             "jira:DEMO-6292",
             "jira:DEMO-6361",
-            "github:search --type pr edge rmp acme",
-            "jira:search RMP",
+            "github:search --type pr edge connector acme",
+            "jira:search connector",
         ],
         start=1,
     ):
@@ -1234,8 +1234,8 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
     assert "artifacts: 4" in output
     assert "recent_activity: 2026-03-17T00:03:00Z Wave 2 landed" in output
     assert "recent_artifacts:" in output
-    assert "`jira:search RMP`" in output
-    assert "`github:search --type pr edge rmp acme`" in output
+    assert "`jira:search connector`" in output
+    assert "`github:search --type pr edge connector acme`" in output
     assert "`jira:DEMO-6361`" in output
     assert "(+1 more)" in output
     assert "heartbeat" not in output
@@ -2264,6 +2264,149 @@ def test_session_analyze_focus_respects_lineage_mode(
     assert payload["leadSourceCount"] == len(payload["leadSources"])
 
 
+def test_session_analyze_focus_can_match_projected_corpus_without_label_hits(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"Generic synthetic body describing example connector worker behavior.\n",
+        dirs=dirs,
+        preferred_name="artifact-a.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"Generic synthetic body describing example connector importer behavior.\n",
+        dirs=dirs,
+        preferred_name="artifact-b.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "locator": "get 12345",
+            "canonical_locator": "confluence:12345",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--stdout",
+                "--output",
+                "json",
+                "--focus",
+                "example connector",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matched"] is True
+    assert payload["matchedCount"] >= 2
+    assert payload["root"]["kind"] == "content"
+    matched_labels = {payload["root"]["label"], *(item["label"] for item in payload["anchors"])}
+    assert "artifact-a.md" in matched_labels
+    assert "artifact-b.md" in matched_labels
+
+
+def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated_siblings(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        (
+            "- [acme/relevant:infra/syntheticconcept.tf]"
+            "(https://github.com/acme/relevant/blob/main/infra/syntheticconcept.tf)\n"
+            "- [psf/black:docs/overview.md](https://github.com/psf/black)\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="github-search-code-syntheticconcept.json",
+        metadata={
+            "tool": "gotta",
+            "plugin": "github",
+            "locator": "search --type code SyntheticConcept",
+            "canonical_locator": "github:search --type code SyntheticConcept",
+            "artifact_kind": "discovery",
+            "subcommand": "search",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b'resource "demo" "syntheticconcept" {}\n',
+        dirs=dirs,
+        preferred_name="syntheticconcept.tf",
+        metadata={
+            "tool": "gotta",
+            "plugin": "github",
+            "locator": "https://github.com/acme/relevant/blob/main/infra/syntheticconcept.tf",
+            "canonical_locator": "https://github.com/acme/relevant/blob/main/infra/syntheticconcept.tf",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+    content.materialize_bytes(
+        b'resource "demo" "plain" {}\n',
+        dirs=dirs,
+        preferred_name="plain.tf",
+        metadata={
+            "tool": "gotta",
+            "plugin": "github",
+            "locator": "https://github.com/psf/black",
+            "canonical_locator": "https://github.com/psf/black",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:02.000001Z",
+    )
+
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--stdout",
+                "--output",
+                "json",
+                "--mode",
+                "lineage",
+                "--focus",
+                "SyntheticConcept",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matched"] is True
+    assert any(
+        item["locator"] == "https://github.com/acme/relevant/blob/main/infra/syntheticconcept.tf"
+        for item in payload["sources"]
+    )
+    assert all(
+        item["locator"] != "https://github.com/psf/black"
+        for item in payload["sources"]
+    )
+    assert all(
+        item["locator"] != "https://github.com/psf/black"
+        for item in payload["leadSources"]
+    )
+
+
 def test_session_scan_searches_projected_materialized_corpus(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -2892,7 +3035,7 @@ def test_session_leads_falls_back_to_same_provider_search_for_prose_heavy_conflu
         (
             "# Network configuration for debugging devices remotely\n\n"
             "- URL: https://example.atlassian.net/wiki/pages/viewpage.action?pageId=4456054785\n\n"
-            "The RMP client or the MeshLink will have a tunnel over cellular connectivity.\n"
+            "The gateway client or the example connector will have a tunnel over cellular connectivity.\n"
         ).encode("utf-8"),
         dirs=dirs,
         preferred_name="4456054785.md",
@@ -2911,11 +3054,11 @@ def test_session_leads_falls_back_to_same_provider_search_for_prose_heavy_conflu
     payload = json.loads(capsys.readouterr().out)
 
     locators = {lead["locator"] for lead in payload["leadSources"]}
-    assert "confluence:search RMP MeshLink" in locators
+    assert "confluence:search Network configuration debugging" in locators
     confluence_lead = next(
         lead
         for lead in payload["leadSources"]
-        if lead["locator"] == "confluence:search RMP MeshLink"
+        if lead["locator"] == "confluence:search Network configuration debugging"
     )
     assert confluence_lead["firstParty"] is True
     assert confluence_lead["materialized"] is False
@@ -2930,10 +3073,10 @@ def test_session_leads_falls_back_to_workspace_scoped_slack_search_for_semantic_
     dirs = initialize_session(local_root)
     content.materialize_bytes(
         (
-            "### Slack Thread: RMP retrospective\n\n"
+            "### Slack Thread: connector retrospective\n\n"
             "- _Source_: https://demo.slack.com/archives/C12345678/p1773085070240949\n\n"
             "- _2026-03-13 14:05:26.726_ **operator**: "
-            "@teammate is always elevated as the one who reined in RMP "
+            "@teammate is always elevated as the one who reined in connector "
             "via the edge services change lol\n"
         ).encode("utf-8"),
         dirs=dirs,
@@ -2953,11 +3096,11 @@ def test_session_leads_falls_back_to_workspace_scoped_slack_search_for_semantic_
     payload = json.loads(capsys.readouterr().out)
 
     locators = {lead["locator"] for lead in payload["leadSources"]}
-    assert "slack:search --workspace demo RMP services" in locators
+    assert "slack:search --workspace demo connector retrospective" in locators
     slack_lead = next(
         lead
         for lead in payload["leadSources"]
-        if lead["locator"] == "slack:search --workspace demo RMP services"
+        if lead["locator"] == "slack:search --workspace demo connector retrospective"
     )
     assert slack_lead["firstParty"] is True
     assert slack_lead["materialized"] is False
@@ -3123,6 +3266,46 @@ def test_materialize_bytes_eagerly_mines_projected_display_for_leads(
     payload = json.loads((result.content_dir / "leads.json").read_text(encoding="utf-8"))
 
     assert {entry["canonical_locator"] for entry in payload["entries"]} == {"gdocs:doc-123"}
+
+
+def test_materialize_bytes_eagerly_drops_structural_github_repo_navigation_leads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dirs = initialize_session(tmp_path / "local")
+    monkeypatch.setattr(
+        read_plugin,
+        "stored_display",
+        lambda _path: (
+            (
+                "# acme/widgets\n\n"
+                "- **URL:** https://github.com/acme/widgets\n"
+                "- **README:** [README.md](https://github.com/acme/widgets/blob/main/README.md)\n\n"
+                "## Contents\n\n"
+                "- [README.md](https://github.com/acme/widgets/blob/main/README.md)\n"
+                "- [src/](https://github.com/acme/widgets/tree/main/src)\n"
+                "- [runbook.md](https://github.com/acme/widgets/blob/main/docs/runbook.md)\n"
+            ).encode("utf-8"),
+            "markdown",
+        ),
+    )
+
+    result = content.materialize_bytes(
+        b'{"synthetic": true}',
+        dirs=dirs,
+        preferred_name="acme-widgets.json",
+        metadata={
+            "tool": "gotta",
+            "plugin": "github",
+            "locator": "https://github.com/acme/widgets",
+            "canonical_locator": "https://github.com/acme/widgets",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    payload = json.loads((result.content_dir / "leads.json").read_text(encoding="utf-8"))
+    assert payload["leadCount"] == 0
+    assert payload["entries"] == []
 
 
 def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None:
