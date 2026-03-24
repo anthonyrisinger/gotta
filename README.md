@@ -334,7 +334,9 @@ gotta session manifest --plugin jira
 gotta session timeline --limit 20
 gotta session graph --output mermaid
 gotta session leads artifact:ticket.md@0123deadbeef
-gotta session analyze
+gotta session analyze --mode lineage --output mermaid
+gotta session analyze --output markdown
+gotta session analyze --receipt
 ```
 
 These surfaces intentionally compress the evidence web without severing it:
@@ -344,6 +346,12 @@ These surfaces intentionally compress the evidence web without severing it:
 - `graph` renders lineage and continuity
 - `leads` extracts explicit next reads from existing artifacts
 - `analyze` rebuilds cached session synthesis outputs from durable state
+
+`session analyze` always renders the requested `--output` format to stdout and
+still writes the durable analysis artifacts under the hood. Use `--receipt` if
+you also want the machine-readable write summary on stderr. Raw Mermaid output
+requires `--mode lineage` or `--mode semantic`; use `--output markdown` for the
+combined two-graph bundle.
 
 Empty `manifest`, `graph`, `leads`, and `analyze` output means the session has
 not materialized enough evidence yet.

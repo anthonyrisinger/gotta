@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import sys
 import urllib.parse
 import uuid
 
@@ -208,12 +209,10 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--offset", type=int, default=0)
     manifest.add_argument("--all", action="store_true")
     manifest.add_argument("--output", choices=["json", "text"], default="text")
-    manifest.add_argument("--stdout", action="store_true", help=argparse.SUPPRESS)
     timeline.add_argument("--limit", type=int, default=100)
     timeline.add_argument("--offset", type=int, default=0)
     timeline.add_argument("--all", action="store_true")
     timeline.add_argument("--output", choices=["json", "text"], default="text")
-    timeline.add_argument("--stdout", action="store_true", help=argparse.SUPPRESS)
     timeline.add_argument(
         "--mode",
         default="acquired",
@@ -228,15 +227,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument(
         "--output",
-        choices=["text", "mermaid", "json"],
+        choices=["text", "mermaid", "markdown", "json"],
         default="text",
-        help="render an analysis overview, Mermaid graph, or structured JSON",
+        help="render a text summary, Mermaid graph, Markdown bundle, or structured JSON to stdout",
     )
     analyze.add_argument(
         "--mode",
         choices=["lineage", "semantic", "all"],
         default="all",
-        help="write lineage content, semantic content, or both",
+        help="write lineage content, semantic content, or both; raw Mermaid output requires lineage or semantic mode",
     )
     analyze.add_argument(
         "--focus",
@@ -248,7 +247,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=8,
         help="maximum items to show per overview/focus section",
     )
-    analyze.add_argument("--stdout", action="store_true")
+    analyze.add_argument(
+        "--receipt",
+        action="store_true",
+        help="also print the machine-readable write receipt to stderr as JSON",
+    )
     scan.add_argument("query", help="literal text or regex to search for in stored projections")
     scan.add_argument("--plugin")
     scan.add_argument("--locator")
@@ -3370,9 +3373,100 @@ def _render_analysis_overview_text(payload: dict[str, object]) -> str:
             )
             lines.append(f"    follow: `{lead['followCommand']}`")
     lines.append(
-        "focus: use `gotta session analyze --focus <locator|keyword> --session <session> --stdout` "
+        "focus: use `gotta session analyze --focus <locator|keyword> --session <session>` "
         "to inspect one local neighborhood instead of dumping the full graph."
     )
+    return "\n".join(lines)
+
+
+def _render_lineage_overview_text(
+    payload: dict[str, object],
+    *,
+    limit: int,
+) -> str:
+    lines = [
+        f"session: {payload['sessionDir']}",
+        f"content: {payload['contentDir']}",
+        (
+            "artifacts: "
+            f"{payload['contentCount']} "
+            f"(discovery {payload['discoveryArtifactCount']}, "
+            f"evidence {payload['evidenceArtifactCount']})"
+        ),
+        (
+            "graph: "
+            f"{payload['sourceCount']} sources, "
+            f"{payload['leadSourceCount']} lead sources, "
+            f"{payload['leadEdgeCount']} lead edges"
+        ),
+    ]
+    if payload.get("nextStep"):
+        lines.append(f"next: {payload['nextStep']}")
+    sources = [dict(item) for item in (payload.get("sources") or [])[: max(limit, 0)]]
+    if sources:
+        lines.append("materialized sources:")
+        for source in sources:
+            lines.append(
+                f"  - {source['locator']} "
+                f"({int(source.get('contentCount') or 0)} materializations)"
+            )
+    if payload["leadSources"]:
+        lines.append("best leads:")
+        for lead in (payload.get("leadSources") or [])[: max(limit, 0)]:
+            relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+            lines.append(
+                f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
+                f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+            )
+            lines.append(f"    follow: `{lead['followCommand']}`")
+    return "\n".join(lines)
+
+
+def _render_semantic_overview_text(payload: dict[str, object]) -> str:
+    lines = [
+        f"session: {payload['sessionDir']}",
+        f"content: {payload['contentDir']}",
+        (
+            "artifacts: "
+            f"{payload['contentCount']} "
+            f"(discovery {payload['discoveryArtifactCount']}, "
+            f"evidence {payload['evidenceArtifactCount']})"
+        ),
+        (
+            "semantic: "
+            f"{payload['semanticNodeCount']} nodes, "
+            f"{payload['semanticEdgeCount']} edges"
+        ),
+    ]
+    shape_parts: list[str] = []
+    if bool(payload.get("sourceHeavy")):
+        shape_parts.append(
+            f"source-heavy ({int(payload['sourceNodeCount'])}/{int(payload['semanticNodeCount'])} source/query/provider nodes)"
+        )
+    if bool(payload.get("structuralHeavy")):
+        shape_parts.append(
+            f"structural-edge-heavy ({int(payload['structuralEdgeCount'])}/{int(payload['semanticEdgeCount'])} structural edges)"
+        )
+    if shape_parts:
+        lines.append("shape: " + "; ".join(shape_parts))
+    if payload.get("nextStep"):
+        lines.append(f"next: {payload['nextStep']}")
+    if payload["providerClusters"]:
+        lines.append("provider clusters:")
+        for cluster in payload["providerClusters"]:
+            lines.append(f"  - {cluster['provider']}: {cluster['nodeCount']} nodes")
+    if payload["dominantKinds"]:
+        lines.append("dominant node kinds:")
+        for item in payload["dominantKinds"]:
+            lines.append(f"  - {item['kind']}: {item['nodeCount']}")
+    if payload["dominantRelations"]:
+        lines.append("dominant relations:")
+        for item in payload["dominantRelations"]:
+            lines.append(f"  - {item['label']}: {item['edgeCount']}")
+    if payload["querySeeds"]:
+        lines.append("query seeds:")
+        for node in payload["querySeeds"]:
+            lines.append(f"  - {node['label']}")
     return "\n".join(lines)
 
 
@@ -3493,6 +3587,52 @@ def _render_lineage_focus_text(payload: dict[str, object]) -> str:
     else:
         lines.append("neighbors: none")
     return "\n".join(lines)
+
+
+def _render_text_bundle(sections: list[tuple[str, str]]) -> str:
+    lines: list[str] = []
+    for title, body in sections:
+        body_text = str(body).strip()
+        if not body_text:
+            continue
+        if lines:
+            lines.append("")
+        lines.append(f"## {title}")
+        lines.append("")
+        lines.append(body_text)
+    return "\n".join(lines)
+
+
+def _render_markdown_bundle(
+    sections: list[tuple[str, str]],
+    *,
+    title: str = "gotta session analyze",
+) -> str:
+    lines = [f"# {title}", ""]
+    for index, (section_title, body) in enumerate(sections):
+        graph_text = str(body).rstrip()
+        if index:
+            lines.append("")
+        lines.append(f"## {section_title}")
+        lines.append("")
+        lines.append("```mermaid")
+        lines.append(graph_text)
+        lines.append("```")
+    return "\n".join(lines)
+
+
+def _combined_analysis_payload(
+    *,
+    focus: str,
+    lineage: dict[str, object],
+    semantic: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "mode": "all",
+        "focus": focus,
+        "lineage": lineage,
+        "semantic": semantic,
+    }
 
 
 def _lead_signal_labels(lead: dict[str, object], *, aggregated: bool) -> list[str]:
@@ -3904,82 +4044,158 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             json.dumps(semantic_payload, indent=2, sort_keys=True) + "\n",
         )
     write_text_atomic(summary_path, json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    focus_query = str(getattr(args, "focus", "") or "").strip()
+    focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
+    overview = _analysis_overview_payload(
+        payload,
+        semantic_payload,
+        limit=focus_limit,
+    )
+    lineage_focus_payload = None
+    semantic_focus_payload = None
+    if focus_query:
+        focus_scan_payload = _scan_payload(
+            dirs,
+            query=focus_query,
+            limit=max(focus_limit * 2, 12),
+            include_all=True,
+        )
+        lineage_focus_payload = _lineage_focus_payload(
+            payload,
+            focus=focus_query,
+            limit=focus_limit,
+            scan_payload=focus_scan_payload,
+        )
+        semantic_focus_payload = _semantic_focus_payload(
+            payload,
+            semantic_payload,
+            focus=focus_query,
+            limit=focus_limit,
+            scan_payload=focus_scan_payload,
+        )
 
-    if args.stdout:
-        focus_payload = None
-        if str(getattr(args, "focus", "") or "").strip():
-            focus_query = str(args.focus)
-            focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
-            focus_scan_payload = _scan_payload(
-                dirs,
-                query=focus_query,
-                limit=max(focus_limit * 2, 12),
-                include_all=True,
+    if args.output == "text":
+        if args.mode == "lineage":
+            print(
+                _render_lineage_focus_text(lineage_focus_payload)
+                if lineage_focus_payload is not None
+                else _render_lineage_overview_text(payload, limit=focus_limit)
             )
-            if args.mode == "lineage":
-                focus_payload = _lineage_focus_payload(
-                    payload,
-                    focus=focus_query,
-                    limit=focus_limit,
-                    scan_payload=focus_scan_payload,
-                )
-            else:
-                focus_payload = _semantic_focus_payload(
-                    payload,
-                    semantic_payload,
-                    focus=focus_query,
-                    limit=focus_limit,
-                    scan_payload=focus_scan_payload,
-                )
-        if args.output == "text":
-            if focus_payload is not None:
-                if args.mode == "lineage":
-                    print(_render_lineage_focus_text(focus_payload))
-                else:
-                    print(_render_analysis_focus_text(focus_payload))
-                return 0
-            overview = _analysis_overview_payload(
-                payload,
-                semantic_payload,
-                limit=max(int(getattr(args, "limit", 8) or 0), 0),
+        elif args.mode == "semantic":
+            print(
+                _render_analysis_focus_text(semantic_focus_payload)
+                if semantic_focus_payload is not None
+                else _render_semantic_overview_text(overview)
             )
+        elif focus_query:
+            print(
+                _render_text_bundle(
+                    [
+                        ("Lineage", _render_lineage_focus_text(lineage_focus_payload)),
+                        ("Semantic", _render_analysis_focus_text(semantic_focus_payload)),
+                    ]
+                )
+            )
+        else:
             print(_render_analysis_overview_text(overview))
-            return 0
-        if args.mode == "semantic":
-            if args.output == "mermaid" and focus_payload is not None:
-                print(_render_semantic_mermaid(focus_payload))
-                return 0
-            if args.output == "mermaid":
-                print(semantic_mermaid)
-                return 0
-            if args.output == "json":
-                print(
-                    json.dumps(
-                        focus_payload if focus_payload is not None else semantic_payload,
-                        indent=2,
-                        sort_keys=True,
-                    )
-                )
-                return 0
-        if args.output == "mermaid" and focus_payload is not None:
-            if args.mode == "lineage":
-                print(_render_analysis_mermaid(focus_payload))
-            else:
-                print(_render_semantic_mermaid(focus_payload))
-            return 0
-        if args.output == "mermaid":
-            print(mermaid)
-            return 0
-        if args.output == "json":
+    elif args.output == "json":
+        if args.mode == "lineage":
             print(
                 json.dumps(
-                    focus_payload if focus_payload is not None else payload,
+                    lineage_focus_payload if lineage_focus_payload is not None else payload,
                     indent=2,
                     sort_keys=True,
                 )
             )
-            return 0
-    print(json.dumps(summary, indent=2, sort_keys=True))
+        elif args.mode == "semantic":
+            print(
+                json.dumps(
+                    semantic_focus_payload if semantic_focus_payload is not None else semantic_payload,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(
+                json.dumps(
+                    _combined_analysis_payload(
+                        focus=focus_query,
+                        lineage=(
+                            lineage_focus_payload
+                            if lineage_focus_payload is not None
+                            else payload
+                        ),
+                        semantic=(
+                            semantic_focus_payload
+                            if semantic_focus_payload is not None
+                            else semantic_payload
+                        ),
+                    ),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+    elif args.output == "markdown":
+        if args.mode == "lineage":
+            print(
+                _render_markdown_bundle(
+                    [
+                        (
+                            "Lineage",
+                            _render_analysis_mermaid(lineage_focus_payload)
+                            if lineage_focus_payload is not None
+                            else mermaid,
+                        )
+                    ]
+                )
+            )
+        elif args.mode == "semantic":
+            print(
+                _render_markdown_bundle(
+                    [
+                        (
+                            "Semantic",
+                            _render_semantic_mermaid(semantic_focus_payload)
+                            if semantic_focus_payload is not None
+                            else semantic_mermaid,
+                        )
+                    ]
+                )
+            )
+        else:
+            print(
+                _render_markdown_bundle(
+                    [
+                        (
+                            "Lineage",
+                            _render_analysis_mermaid(lineage_focus_payload)
+                            if lineage_focus_payload is not None
+                            else mermaid,
+                        ),
+                        (
+                            "Semantic",
+                            _render_semantic_mermaid(semantic_focus_payload)
+                            if semantic_focus_payload is not None
+                            else semantic_mermaid,
+                        ),
+                    ]
+                )
+            )
+    else:
+        if args.mode == "lineage":
+            print(
+                _render_analysis_mermaid(lineage_focus_payload)
+                if lineage_focus_payload is not None
+                else mermaid
+            )
+        else:
+            print(
+                _render_semantic_mermaid(semantic_focus_payload)
+                if semantic_focus_payload is not None
+                else semantic_mermaid
+            )
+    if args.receipt:
+        print(json.dumps(summary, indent=2, sort_keys=True), file=sys.stderr)
     return 0
 
 
@@ -4072,6 +4288,15 @@ def main(argv: list[str]) -> int:
         return print_long_help(parser)
     try:
         args = parser.parse_args(argv)
+        if (
+            getattr(args, "command", None) == "analyze"
+            and getattr(args, "output", None) == "mermaid"
+            and getattr(args, "mode", None) == "all"
+        ):
+            parser.error(
+                "`--output mermaid` requires `--mode lineage` or `--mode semantic`; "
+                "use `--output text|json` for combined output"
+            )
         command = args.command or "show"
         if command == "bind":
             return cmd_bind(args)

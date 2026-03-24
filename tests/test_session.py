@@ -1926,8 +1926,10 @@ def test_session_analyze_writes_summary_and_graph(tmp_path: Path, monkeypatch, c
     )
     monkeypatch.chdir(local_root)
 
-    assert session.main(["analyze", "--session", str(local_root)]) == 0
-    summary = json.loads(capsys.readouterr().out)
+    assert session.main(["analyze", "--session", str(local_root), "--receipt"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.startswith("session:")
+    summary = json.loads(captured.err)
     assert summary["sessionDir"] == str(local_root.resolve())
     assert summary["contentCount"] == 2
     assert summary["revisionEdgeCount"] == 1
@@ -1951,6 +1953,175 @@ def test_session_analyze_writes_summary_and_graph(tmp_path: Path, monkeypatch, c
     assert semantic_payload["nodeCount"] >= 2
     assert any(edge["to"] != edge["from"] for edge in graph_payload["revisionEdges"])
     assert result.data_path.name == "data"
+
+
+def test_session_analyze_output_json_returns_combined_payload_by_default(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"# ABC-1\n\nDepends on ABC-2.\n",
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert session.main(["analyze", "--session", str(local_root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["mode"] == "all"
+    assert payload["focus"] == ""
+    assert "lineage" in payload
+    assert "semantic" in payload
+    assert payload["lineage"]["contentCount"] == 1
+    assert payload["semantic"]["nodeCount"] >= 1
+
+
+def test_session_analyze_output_mermaid_requires_explicit_mode(
+    capsys,
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        session.main(["analyze", "--output", "mermaid"])
+
+    assert excinfo.value.code == 2
+    assert (
+        "`--output mermaid` requires `--mode lineage` or `--mode semantic`"
+        in capsys.readouterr().err
+    )
+
+
+def test_session_analyze_output_mermaid_prints_raw_lineage_mermaid(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"# ABC-1\n\nDepends on ABC-2.\n",
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--mode",
+                "lineage",
+                "--output",
+                "mermaid",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+
+    assert output.startswith("---\ntitle: gotta session analysis\n---\nflowchart LR\n")
+
+
+def test_session_analyze_output_markdown_bundles_lineage_and_semantic_for_all_mode(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"# ABC-1\n\nDepends on ABC-2.\n",
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--output",
+                "markdown",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+
+    assert output.startswith("# gotta session analyze\n\n## Lineage\n\n```mermaid\n")
+    assert "\n## Semantic\n\n```mermaid\n" in output
+
+
+def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"# ABC-1\n\nDepends on ABC-2.\n",
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--mode",
+                "lineage",
+                "--output",
+                "mermaid",
+                "--receipt",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+
+    assert captured.out.startswith("---\ntitle: gotta session analysis\n---\nflowchart LR\n")
+    receipt = json.loads(captured.err)
+    assert receipt["sessionDir"] == str(local_root.resolve())
+    assert receipt["graphMermaidPath"].endswith("graph.mmd")
+
+
+def test_session_analyze_build_parser_rejects_stdout_flag() -> None:
+    with pytest.raises(SystemExit):
+        session.build_parser().parse_args(["analyze", "--stdout"])
 
 
 def test_session_graph_prefers_canonical_locator_for_binding(tmp_path: Path) -> None:
@@ -2031,7 +2202,7 @@ def test_session_empty_graph_and_analyze_make_empty_state_explicit(
     assert graph_payload["empty"] is True
     assert graph_payload["nextStep"].startswith("No materialized artifacts yet.")
 
-    assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
+    assert session.main(["analyze", "--session", str(local_root)]) == 0
     analyze_output = capsys.readouterr().out
     assert "No materialized artifacts yet." in analyze_output
     assert "gotta read <locator>" in analyze_output
@@ -2066,13 +2237,13 @@ def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
     assert graph_payload["nextStep"].startswith("Discovery artifacts are present")
     assert graph_payload["content"][0]["artifactKind"] == "discovery"
 
-    assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
+    assert session.main(["analyze", "--session", str(local_root)]) == 0
     analyze_output = capsys.readouterr().out
     assert "Discovery artifacts are present, but no evidence artifacts exist yet." in analyze_output
     assert "focus: use `gotta session analyze --focus <locator|keyword>" in analyze_output
 
 
-def test_session_analyze_stdout_defaults_to_text_overview_with_middle_sections(
+def test_session_analyze_defaults_to_text_overview_with_middle_sections(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     local_root = tmp_path / "local"
@@ -2111,7 +2282,7 @@ def test_session_analyze_stdout_defaults_to_text_overview_with_middle_sections(
     )
     monkeypatch.chdir(local_root)
 
-    assert session.main(["analyze", "--session", str(local_root), "--stdout"]) == 0
+    assert session.main(["analyze", "--session", str(local_root)]) == 0
 
     output = capsys.readouterr().out
     assert "provider clusters:" in output
@@ -2164,7 +2335,6 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
                 "analyze",
                 "--session",
                 str(local_root),
-                "--stdout",
                 "--focus",
                 "ABC-1.md",
             ]
@@ -2182,9 +2352,10 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
                 "analyze",
                 "--session",
                 str(local_root),
-                "--stdout",
                 "--output",
                 "json",
+                "--mode",
+                "semantic",
                 "--focus",
                 issue.digest[:8],
             ]
@@ -2241,7 +2412,6 @@ def test_session_analyze_focus_respects_lineage_mode(
                 "analyze",
                 "--session",
                 str(local_root),
-                "--stdout",
                 "--output",
                 "json",
                 "--mode",
@@ -2304,9 +2474,10 @@ def test_session_analyze_focus_can_match_projected_corpus_without_label_hits(
                 "analyze",
                 "--session",
                 str(local_root),
-                "--stdout",
                 "--output",
                 "json",
+                "--mode",
+                "semantic",
                 "--focus",
                 "example connector",
             ]
@@ -2380,7 +2551,6 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
                 "analyze",
                 "--session",
                 str(local_root),
-                "--stdout",
                 "--output",
                 "json",
                 "--mode",
@@ -2405,6 +2575,111 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
         item["locator"] != "https://github.com/psf/black"
         for item in payload["leadSources"]
     )
+
+
+def test_session_analyze_all_mode_focus_returns_combined_outputs(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    issue = content.materialize_bytes(
+        (
+            "# ABC-1\n\n"
+            "Depends on ABC-2.\n"
+            "PR: https://github.com/acme/widgets/pull/7\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"# ABC-2\n\nDone.\n",
+        dirs=dirs,
+        preferred_name="ABC-2.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-2",
+            "canonical_locator": "jira:ABC-2",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--focus",
+                issue.digest[:8],
+            ]
+        )
+        == 0
+    )
+    text_output = capsys.readouterr().out
+    assert text_output.startswith("## Lineage\n\nsession:")
+    assert "\n## Semantic\n\nsession:" in text_output
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--output",
+                "json",
+                "--focus",
+                issue.digest[:8],
+            ]
+        )
+        == 0
+    )
+    json_payload = json.loads(capsys.readouterr().out)
+    assert json_payload["mode"] == "all"
+    assert json_payload["lineage"]["matched"] is True
+    assert json_payload["semantic"]["matched"] is True
+
+    with pytest.raises(SystemExit) as excinfo:
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--output",
+                "mermaid",
+                "--focus",
+                issue.digest[:8],
+            ]
+        )
+    assert excinfo.value.code == 2
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--output",
+                "markdown",
+                "--focus",
+                issue.digest[:8],
+            ]
+        )
+        == 0
+    )
+    markdown_output = capsys.readouterr().out
+    assert markdown_output.startswith("# gotta session analyze\n\n## Lineage\n\n```mermaid\n")
+    assert "\n## Semantic\n\n```mermaid\n" in markdown_output
 
 
 def test_session_scan_searches_projected_materialized_corpus(
@@ -3395,7 +3670,7 @@ def test_session_manifest_accepts_stdout_flag_for_uniformity(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    assert session.main(["manifest", "--session", str(local_root), "--output", "json", "--stdout"]) == 0
+    assert session.main(["manifest", "--session", str(local_root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entryCount"] == 1
 
@@ -3498,7 +3773,7 @@ def test_session_timeline_accepts_stdout_flag_for_uniformity(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    assert session.main(["timeline", "--session", str(local_root), "--output", "json", "--stdout"]) == 0
+    assert session.main(["timeline", "--session", str(local_root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["eventCount"] == 1
 
