@@ -230,6 +230,20 @@ def test_github_preferred_name_is_specific_for_rendered_object_urls() -> None:
         )
         == "widgets-blob-main-docs-quickstart.md.json"
     )
+    assert (
+        github.preferred_name(
+            ["https://github.com/acme/widgets/actions/runs/123456789"],
+            options,
+        )
+        == "widgets-run-123456789.json"
+    )
+    assert (
+        github.preferred_name(
+            ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"],
+            options,
+        )
+        == "widgets-run-123456789-job-987654321.json"
+    )
 
 
 def test_route_target_accepts_clean_supported_github_urls() -> None:
@@ -238,6 +252,11 @@ def test_route_target_accepts_clean_supported_github_urls() -> None:
     assert github.route_target(url) == [url]
     assert github.route_target(f"{url}#history") == [f"{url}#history"]
     assert github.route_target("github:github.com/acme/widgets/commits/main") == [url]
+    run_url = "https://github.com/acme/widgets/actions/runs/123456789"
+    job_url = "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
+    assert github.route_target(run_url) == [run_url]
+    assert github.route_target(job_url) == [job_url]
+    assert github.route_target("github:github.com/acme/widgets/actions/runs/123456789") == [run_url]
 
 
 def test_route_target_strips_fragments_from_supported_tree_urls() -> None:
@@ -282,6 +301,133 @@ def test_main_supports_commit_urls(monkeypatch, capsys) -> None:
     output = capsys.readouterr().out
     assert "# acme/widgets commit abcdef1" in output
     assert "## Files" in output
+
+
+def test_main_supports_workflow_run_urls(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
+    monkeypatch.setattr(
+        github,
+        "workflow_run_payload",
+        lambda gh, owner, repo, run_id: {
+            "number": 1529,
+            "displayTitle": "Generic deployment",
+            "workflowName": "Generic Workflow",
+            "url": "https://github.com/acme/widgets/actions/runs/123456789",
+            "status": "completed",
+            "conclusion": "failure",
+            "event": "workflow_dispatch",
+            "headBranch": "main",
+            "headSha": "abcdef1234567890",
+            "createdAt": "2026-03-25T22:31:51Z",
+            "startedAt": "2026-03-25T22:31:55Z",
+            "updatedAt": "2026-03-25T22:34:22Z",
+            "jobs": [
+                {
+                    "name": "Generic Job",
+                    "url": "https://github.com/acme/widgets/actions/runs/123456789/job/987654321",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "startedAt": "2026-03-25T22:33:52Z",
+                    "completedAt": "2026-03-25T22:34:21Z",
+                }
+            ],
+        },
+    )
+
+    assert github.main(["https://github.com/acme/widgets/actions/runs/123456789"]) == 0
+    output = capsys.readouterr().out
+    assert "# acme/widgets workflow run #1529: Generic deployment" in output
+    assert "## Jobs" in output
+    assert "Generic Job" in output
+
+
+def test_main_supports_workflow_job_urls(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
+    monkeypatch.setattr(
+        github,
+        "workflow_job_payload",
+        lambda gh, owner, repo, run_id, job_id: {
+            "id": 987654321,
+            "run_id": 123456789,
+            "workflow_name": "Generic Workflow",
+            "html_url": "https://github.com/acme/widgets/actions/runs/123456789/job/987654321",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-03-25T22:32:52Z",
+            "started_at": "2026-03-25T22:33:52Z",
+            "completed_at": "2026-03-25T22:34:21Z",
+            "name": "Generic Job",
+            "head_branch": "main",
+            "head_sha": "abcdef1234567890",
+            "labels": ["generic-runner"],
+            "runner_name": "runner-01",
+            "runner_group_name": "generic-group",
+            "steps": [
+                {
+                    "name": "Generic Step",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "number": 12,
+                    "started_at": "2026-03-25T22:34:14Z",
+                    "completed_at": "2026-03-25T22:34:19Z",
+                }
+            ],
+        },
+    )
+
+    assert github.main(["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"]) == 0
+    output = capsys.readouterr().out
+    assert "# acme/widgets workflow job 987654321: Generic Job" in output
+    assert "## Steps" in output
+    assert "Generic Step" in output
+
+
+def test_capture_and_project_support_workflow_job_urls(monkeypatch) -> None:
+    monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
+    monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
+    monkeypatch.setattr(
+        github,
+        "workflow_job_payload",
+        lambda gh, owner, repo, run_id, job_id: {
+            "id": 987654321,
+            "run_id": 123456789,
+            "workflow_name": "Generic Workflow",
+            "html_url": "https://github.com/acme/widgets/actions/runs/123456789/job/987654321",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-03-25T22:32:52Z",
+            "started_at": "2026-03-25T22:33:52Z",
+            "completed_at": "2026-03-25T22:34:21Z",
+            "name": "Generic Job",
+            "head_branch": "main",
+            "head_sha": "abcdef1234567890",
+            "steps": [
+                {
+                    "name": "Generic Step",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "number": 12,
+                    "started_at": "2026-03-25T22:34:14Z",
+                    "completed_at": "2026-03-25T22:34:19Z",
+                }
+            ],
+        },
+    )
+
+    capture = github.capture(
+        ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"],
+        object(),
+    )
+
+    assert capture.meta["github_kind"] == "workflow_job"
+    rendered = github.project(
+        ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"],
+        capture,
+    ).decode("utf-8")
+    assert "# acme/widgets workflow job 987654321: Generic Job" in rendered
+    assert "Generic Step" in rendered
 
 
 def test_main_supports_commit_history_urls(monkeypatch, capsys) -> None:

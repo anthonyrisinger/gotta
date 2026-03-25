@@ -628,6 +628,13 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
         )
         == "gsheets:sheet-123"
     )
+    assert (
+        dispatch.canonical_locator(
+            "read",
+            ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321#summary"],
+        )
+        == "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
+    )
     assert dispatch.canonical_locator("jira", ["search", "Architecture"]) == "jira:search Architecture"
     assert (
         dispatch.canonical_locator("jira", ["issue-types", "--project", "OPS"])
@@ -1562,8 +1569,17 @@ def test_github_route_prefers_markdown_for_common_github_targets() -> None:
     assert route_target("https://github.com/acme/widgets/releases/tag/v1.2.3") == [
         "https://github.com/acme/widgets/releases/tag/v1.2.3"
     ]
+    assert route_target("https://github.com/acme/widgets/actions/runs/123456789") == [
+        "https://github.com/acme/widgets/actions/runs/123456789"
+    ]
+    assert route_target("https://github.com/acme/widgets/actions/runs/123456789/job/987654321") == [
+        "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
+    ]
     assert route_target("github:github.com/acme/widgets/blob/main/README.md") == [
         "https://github.com/acme/widgets/blob/main/README.md"
+    ]
+    assert route_target("github:github.com/acme/widgets/actions/runs/123456789/job/987654321") == [
+        "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
     ]
     assert route_target("github:search --type pr --repo acme/widgets ABC") == [
         "search",

@@ -37,6 +37,10 @@ ISSUE_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/issues/([0-9]+)(/.*
 COMMIT_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/commit/([0-9a-f]{7,40})(/.*)?$")
 COMMITS_ROOT_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/commits/?$")
 COMMITS_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/commits/([^/]+)(/.*)?$")
+ACTIONS_JOB_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/actions/runs/([0-9]+)/job/([0-9]+)(/.*)?$"
+)
+ACTIONS_RUN_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/actions/runs/([0-9]+)(/.*)?$")
 RELEASES_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/releases/?$")
 RELEASE_TAG_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/releases/tag/([^/]+)(/.*)?$")
 REPO_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/?$")
@@ -60,6 +64,8 @@ Supported URL shapes:
   - issue URLs
   - commit URLs
   - commit history URLs (`/commits` resolves through the repo default branch; `/commits/HEAD` follows the current tip; `/commits/<ref>` requires an existing ref)
+  - workflow run URLs (`/actions/runs/<run-id>`)
+  - workflow job URLs (`/actions/runs/<run-id>/job/<job-id>`)
   - release list URLs
   - release tag URLs
 
@@ -187,6 +193,8 @@ def _supported_url_route(target: str) -> list[str] | None:
     if any(char.isspace() for char in target):
         return None
     for pattern in (
+        ACTIONS_JOB_RE,
+        ACTIONS_RUN_RE,
         BLOB_RE,
         TREE_RE,
         PULL_RE,
@@ -245,6 +253,11 @@ def _preferred_render_name(parsed: ParsedArgs, extension: str) -> str:
                 suffix = f"{suffix}-{_slug(parts[3])}"
             if len(parts) >= 5:
                 suffix = f"{suffix}-{_slug('/'.join(parts[4:]))}"
+            return render_name(suffix)
+        if len(parts) >= 5 and parts[2] == "actions" and parts[3] == "runs":
+            suffix = f"{repo}-run-{_slug(parts[4])}"
+            if len(parts) >= 7 and parts[5] == "job":
+                suffix = f"{suffix}-job-{_slug(parts[6])}"
             return render_name(suffix)
         if len(parts) >= 4 and parts[2] == "tree":
             suffix = f"{repo}-tree-{_slug(parts[3])}"
@@ -663,6 +676,222 @@ def markdown_release_list(
             lines.append(f"  - tag: `{tag}`")
         if published:
             lines.append(f"  - published: {published}")
+    return "\n".join(lines) + "\n"
+
+
+WORKFLOW_RUN_JSON_FIELDS = (
+    "attempt,conclusion,createdAt,displayTitle,event,headBranch,headSha,jobs,"
+    "name,number,startedAt,status,updatedAt,url,workflowDatabaseId,workflowName"
+)
+
+
+def workflow_run_payload(gh: str, *, owner: str, repo: str, run_id: str) -> dict[str, object]:
+    payload = gh_json_object(
+        gh,
+        [
+            "run",
+            "view",
+            run_id,
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            WORKFLOW_RUN_JSON_FIELDS,
+        ],
+    )
+    return with_visibility_metadata(
+        payload,
+        provider="github",
+        locator=github_actions_run_url(owner, repo, run_id),
+    )
+
+
+def workflow_job_payload(
+    gh: str,
+    *,
+    owner: str,
+    repo: str,
+    run_id: str,
+    job_id: str,
+) -> dict[str, object]:
+    payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/actions/jobs/{job_id}"])
+    payload_run_id = str(payload.get("run_id") or "").strip()
+    if payload_run_id and payload_run_id != run_id:
+        raise RuntimeError(
+            f"GitHub Actions job `{job_id}` belongs to run `{payload_run_id}`, "
+            f"not `{run_id}`."
+        )
+    return with_visibility_metadata(
+        payload,
+        provider="github",
+        locator=github_actions_job_url(owner, repo, run_id, job_id),
+    )
+
+
+def markdown_workflow_run(
+    payload: dict[str, object],
+    *,
+    owner: str,
+    repo: str,
+    include_jobs: bool,
+) -> str:
+    display_title = str(payload.get("displayTitle") or payload.get("name") or "workflow run")
+    run_number = str(payload.get("number") or "").strip()
+    url = str(payload.get("url") or "")
+    workflow_name = str(payload.get("workflowName") or payload.get("name") or "").strip()
+    event = str(payload.get("event") or "").strip()
+    status = str(payload.get("status") or "").strip()
+    conclusion = str(payload.get("conclusion") or "").strip()
+    branch = str(payload.get("headBranch") or "").strip()
+    head_sha = str(payload.get("headSha") or "").strip()
+    created = str(payload.get("createdAt") or "").strip()
+    started = str(payload.get("startedAt") or "").strip()
+    updated = str(payload.get("updatedAt") or "").strip()
+    attempt = payload.get("attempt")
+    jobs = payload.get("jobs")
+    if not isinstance(jobs, list):
+        jobs = []
+    heading = f"# {owner}/{repo} workflow run"
+    if run_number:
+        heading += f" #{run_number}"
+    heading += f": {display_title}"
+    lines = [heading, ""]
+    if url:
+        lines.append(f"- **URL:** {url}")
+    lines.extend(render_visibility_metadata_lines(payload))
+    if workflow_name:
+        lines.append(f"- **Workflow:** `{workflow_name}`")
+    if event:
+        lines.append(f"- **Event:** `{event}`")
+    if status:
+        lines.append(f"- **Status:** `{status}`")
+    if conclusion:
+        lines.append(f"- **Conclusion:** `{conclusion}`")
+    if branch:
+        lines.append(f"- **Branch:** `{branch}`")
+    if head_sha:
+        lines.append(f"- **Commit:** `{head_sha}`")
+    if created:
+        lines.append(f"- **Created:** {created}")
+    if started:
+        lines.append(f"- **Started:** {started}")
+    if updated:
+        lines.append(f"- **Updated:** {updated}")
+    if isinstance(attempt, int):
+        lines.append(f"- **Attempt:** {attempt}")
+    lines.append(f"- **Jobs:** {len(jobs)}")
+    if include_jobs and jobs:
+        lines.extend(["", "## Jobs", ""])
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            job_name = str(job.get("name") or "job").strip()
+            job_url = str(job.get("url") or "").strip()
+            job_status = str(job.get("status") or "").strip()
+            job_conclusion = str(job.get("conclusion") or "").strip()
+            job_started = str(job.get("startedAt") or "").strip()
+            job_completed = str(job.get("completedAt") or "").strip()
+            line = f"- [{job_name}]({job_url})" if job_url else f"- {job_name}"
+            details: list[str] = []
+            if job_status:
+                details.append(f"status `{job_status}`")
+            if job_conclusion:
+                details.append(f"conclusion `{job_conclusion}`")
+            if job_started:
+                details.append(f"started `{job_started}`")
+            if job_completed:
+                details.append(f"completed `{job_completed}`")
+            if details:
+                line += " - " + ", ".join(details)
+            lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def markdown_workflow_job(
+    payload: dict[str, object],
+    *,
+    owner: str,
+    repo: str,
+    include_steps: bool,
+) -> str:
+    job_id = str(payload.get("id") or "").strip()
+    job_name = str(payload.get("name") or "workflow job").strip()
+    url = str(payload.get("html_url") or "").strip()
+    workflow_name = str(payload.get("workflow_name") or "").strip()
+    run_id = str(payload.get("run_id") or "").strip()
+    status = str(payload.get("status") or "").strip()
+    conclusion = str(payload.get("conclusion") or "").strip()
+    branch = str(payload.get("head_branch") or "").strip()
+    head_sha = str(payload.get("head_sha") or "").strip()
+    created = str(payload.get("created_at") or "").strip()
+    started = str(payload.get("started_at") or "").strip()
+    completed = str(payload.get("completed_at") or "").strip()
+    runner_name = str(payload.get("runner_name") or "").strip()
+    runner_group = str(payload.get("runner_group_name") or "").strip()
+    labels = payload.get("labels")
+    if not isinstance(labels, list):
+        labels = []
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        steps = []
+    heading = f"# {owner}/{repo} workflow job"
+    if job_id:
+        heading += f" {job_id}"
+    heading += f": {job_name}"
+    lines = [heading, ""]
+    if url:
+        lines.append(f"- **URL:** {url}")
+    lines.extend(render_visibility_metadata_lines(payload))
+    if workflow_name:
+        lines.append(f"- **Workflow:** `{workflow_name}`")
+    if run_id:
+        lines.append(f"- **Run ID:** `{run_id}`")
+    if status:
+        lines.append(f"- **Status:** `{status}`")
+    if conclusion:
+        lines.append(f"- **Conclusion:** `{conclusion}`")
+    if branch:
+        lines.append(f"- **Branch:** `{branch}`")
+    if head_sha:
+        lines.append(f"- **Commit:** `{head_sha}`")
+    if created:
+        lines.append(f"- **Created:** {created}")
+    if started:
+        lines.append(f"- **Started:** {started}")
+    if completed:
+        lines.append(f"- **Completed:** {completed}")
+    if runner_name:
+        lines.append(f"- **Runner:** `{runner_name}`")
+    if runner_group:
+        lines.append(f"- **Runner group:** `{runner_group}`")
+    if labels:
+        rendered_labels = [str(label).strip() for label in labels if str(label).strip()]
+        if rendered_labels:
+            lines.append(f"- **Labels:** {', '.join(f'`{label}`' for label in rendered_labels)}")
+    if include_steps and steps:
+        lines.extend(["", "## Steps", ""])
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            step_name = str(step.get("name") or "step").strip()
+            number = step.get("number")
+            step_status = str(step.get("status") or "").strip()
+            step_conclusion = str(step.get("conclusion") or "").strip()
+            step_started = str(step.get("started_at") or "").strip()
+            step_completed = str(step.get("completed_at") or "").strip()
+            label = f"{number}. {step_name}" if isinstance(number, int) else step_name
+            details: list[str] = []
+            if step_status:
+                details.append(f"status `{step_status}`")
+            if step_conclusion:
+                details.append(f"conclusion `{step_conclusion}`")
+            if step_started:
+                details.append(f"started `{step_started}`")
+            if step_completed:
+                details.append(f"completed `{step_completed}`")
+            if details:
+                lines.append(f"- {label} - " + ", ".join(details))
+            else:
+                lines.append(f"- {label}")
     return "\n".join(lines) + "\n"
 
 
@@ -1435,6 +1664,14 @@ def github_blob_url(owner: str, repo: str, ref: str, path: str) -> str:
     return f"https://github.com/{owner}/{repo}/blob/{ref}/{path}"
 
 
+def github_actions_run_url(owner: str, repo: str, run_id: str) -> str:
+    return f"https://github.com/{owner}/{repo}/actions/runs/{run_id}"
+
+
+def github_actions_job_url(owner: str, repo: str, run_id: str, job_id: str) -> str:
+    return f"{github_actions_run_url(owner, repo, run_id)}/job/{job_id}"
+
+
 def list_directory_entries(
     gh: str,
     *,
@@ -2082,6 +2319,46 @@ def capture(argv: list[str], _options: Any) -> Capture:
     gh = ensure_gh()
     ensure_gh_auth(gh)
     url, fragment = split_render_url(parsed.url)
+    if match := ACTIONS_JOB_RE.match(url):
+        owner, repo, run_id, job_id, _ = match.groups()
+        payload = workflow_job_payload(
+            gh,
+            owner=owner,
+            repo=repo,
+            run_id=run_id,
+            job_id=job_id,
+        )
+        payload = _canonicalize_capture_value(payload)
+        return Capture(
+            data=json_bytes(_object_capture_payload("workflow_job", payload, owner=owner, repo=repo)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "workflow_job",
+                "github_owner": owner,
+                "github_repo": repo,
+                "source_created_at": str(payload.get("created_at") or ""),
+                "source_updated_at": str(payload.get("completed_at") or payload.get("started_at") or ""),
+            },
+        )
+    if match := ACTIONS_RUN_RE.match(url):
+        owner, repo, run_id, _ = match.groups()
+        payload = workflow_run_payload(gh, owner=owner, repo=repo, run_id=run_id)
+        payload = _canonicalize_capture_value(payload)
+        return Capture(
+            data=json_bytes(_object_capture_payload("workflow_run", payload, owner=owner, repo=repo)),
+            name=_preferred_render_name(parsed, "json"),
+            type="application/json",
+            meta={
+                "projector": "github",
+                "github_kind": "workflow_run",
+                "github_owner": owner,
+                "github_repo": repo,
+                "source_created_at": str(payload.get("createdAt") or ""),
+                "source_updated_at": str(payload.get("updatedAt") or payload.get("startedAt") or ""),
+            },
+        )
     if match := BLOB_RE.match(url):
         owner, repo, ref, path = match.groups()
         path = normalize_ref_path(path)
@@ -2535,7 +2812,16 @@ def project(argv: list[str], capture: Capture) -> bytes:
                 readme_summary=str(payload.get("readmeSummary") or ""),
             ).encode("utf-8")
         return markdown_repo(repo_payload).encode("utf-8")
-    if kind in {"issue", "pr", "commit", "commits", "release", "releases"}:
+    if kind in {
+        "issue",
+        "pr",
+        "commit",
+        "commits",
+        "release",
+        "releases",
+        "workflow_run",
+        "workflow_job",
+    }:
         parsed = parse_args(argv, emit_help=False) if argv else ParsedArgs(command="render", output="markdown")
         object_payload = payload.get("payload") if isinstance(payload, dict) else payload
         if parsed.output == "json":
@@ -2573,6 +2859,20 @@ def project(argv: list[str], capture: Capture) -> bytes:
                 object_payload if isinstance(object_payload, dict) else {},
                 owner=owner,
                 repo=repo,
+            ).encode("utf-8")
+        if kind == "workflow_run":
+            return markdown_workflow_run(
+                object_payload if isinstance(object_payload, dict) else {},
+                owner=owner,
+                repo=repo,
+                include_jobs=parsed.output == "markdown",
+            ).encode("utf-8")
+        if kind == "workflow_job":
+            return markdown_workflow_job(
+                object_payload if isinstance(object_payload, dict) else {},
+                owner=owner,
+                repo=repo,
+                include_steps=parsed.output == "markdown",
             ).encode("utf-8")
         releases = object_payload if isinstance(object_payload, list) else []
         if parsed.output == "summary":
@@ -2644,6 +2944,54 @@ def main(argv: list[str]) -> int:
         emit_markdown(markdown_search(payload, include_details=(parsed.output == "markdown")))
         return 0
     url, fragment = split_render_url(parsed.url)
+
+    if match := ACTIONS_JOB_RE.match(url):
+        if parsed.limit is not None:
+            return _unsupported_render_limit_error()
+        owner, repo, run_id, job_id, _ = match.groups()
+        try:
+            payload = workflow_job_payload(
+                gh,
+                owner=owner,
+                repo=repo,
+                run_id=run_id,
+                job_id=job_id,
+            )
+        except RuntimeError as exc:
+            return die(str(exc), code=1)
+        if parsed.output in {"summary", "markdown"}:
+            emit_markdown(
+                markdown_workflow_job(
+                    payload,
+                    owner=owner,
+                    repo=repo,
+                    include_steps=(parsed.output == "markdown"),
+                )
+            )
+            return 0
+        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        return 0
+
+    if match := ACTIONS_RUN_RE.match(url):
+        if parsed.limit is not None:
+            return _unsupported_render_limit_error()
+        owner, repo, run_id, _ = match.groups()
+        try:
+            payload = workflow_run_payload(gh, owner=owner, repo=repo, run_id=run_id)
+        except RuntimeError as exc:
+            return die(str(exc), code=1)
+        if parsed.output in {"summary", "markdown"}:
+            emit_markdown(
+                markdown_workflow_run(
+                    payload,
+                    owner=owner,
+                    repo=repo,
+                    include_jobs=(parsed.output == "markdown"),
+                )
+            )
+            return 0
+        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        return 0
 
     if match := BLOB_RE.match(url):
         if parsed.limit is not None:
