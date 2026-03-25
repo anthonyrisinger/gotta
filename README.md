@@ -316,6 +316,21 @@ action. The goal is not only to recover information, but also to preserve
 enough working state that research, planning, and provider-native actions can
 happen against the same session context.
 
+## Remote Discovery
+
+`gotta search` is the canonical plain-text remote discovery surface:
+
+```bash
+gotta search jira:Architecture
+gotta search slack:ABC reboot --workspace demo --limit 10
+gotta search github:SomeFunction --type code --repo acme/widgets
+gotta search confluence:Architecture --title-only
+```
+
+The top-level verb already means search, so the routed target omits the
+subcommand by default. Explicit routed aliases like `github:search foo` still
+work, but the canonical form is `github:foo`.
+
 ## Session Synthesis Surfaces
 
 `gotta session` is how the raw evidence web becomes navigable:
@@ -336,7 +351,6 @@ gotta session graph --output mermaid
 gotta session leads artifact:ticket.md@0123deadbeef
 gotta session analyze --mode lineage --output mermaid
 gotta session analyze --output markdown
-gotta session analyze --receipt
 ```
 
 These surfaces intentionally compress the evidence web without severing it:
@@ -348,10 +362,11 @@ These surfaces intentionally compress the evidence web without severing it:
 - `analyze` rebuilds cached session synthesis outputs from durable state
 
 `session analyze` always renders the requested `--output` format to stdout and
-still writes the durable analysis artifacts under the hood. Use `--receipt` if
-you also want the machine-readable write summary on stderr. Raw Mermaid output
-requires `--mode lineage` or `--mode semantic`; use `--output markdown` for the
-combined two-graph bundle.
+still writes the durable analysis artifacts under the hood. Successful operator
+surfaces now emit a compact JSON receipt on stderr by default; pass `--quiet`
+to suppress informational stderr output. Raw Mermaid output requires
+`--mode lineage` or `--mode semantic`; use `--output markdown` for the combined
+two-graph bundle.
 
 Empty `manifest`, `graph`, `leads`, and `analyze` output means the session has
 not materialized enough evidence yet.

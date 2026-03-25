@@ -11,6 +11,7 @@ import urllib.parse
 
 from gotta.builtin import PluginSpec, get_plugin
 from gotta.content import CommonOptions
+from gotta.searching import SearchRouteError, resolve_search_route
 from gotta.target import resolve_read_target
 from gotta.providers import atlassian as atl
 
@@ -463,6 +464,12 @@ def _artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
 
 
 def artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
+    if plugin == "search":
+        try:
+            resolve_search_route(argv)
+        except SearchRouteError:
+            return "none"
+        return "discovery"
     if plugin == "read":
         try:
             target = resolve_read_target(argv, CommonOptions())
@@ -473,6 +480,8 @@ def artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
 
 
 def session_access_mode(plugin: str, argv: list[str]) -> str:
+    if plugin == "search":
+        return "ambient" if artifact_intent(plugin, argv) != "none" else "none"
     if plugin == "read":
         return "ambient"
     return "ambient" if artifact_intent(plugin, argv) != "none" else "none"
@@ -548,6 +557,43 @@ def resolve_invocation(
             artifact_kind=_artifact_kind(intent),
             should_materialize=intent != "none" and _materialization_enabled(),
             provider=provider,
+        )
+    if plugin == "search":
+        try:
+            search_route = resolve_search_route(argv)
+        except SearchRouteError:
+            preferred = options.save_as or "search.md"
+            return ResolvedInvocation(
+                entry_plugin=entry_plugin,
+                entry_argv=entry_argv,
+                resolved_plugin="search",
+                resolved_argv=resolved_argv,
+                canonical_locator="search",
+                preferred_name=preferred,
+                content_type="text/markdown",
+                artifact_intent="none",
+                artifact_kind="",
+                should_materialize=False,
+                provider="search",
+            )
+        canonical = _canonical_locator(search_route.provider, search_route.provider_argv)
+        preferred = _preferred_name(search_route.provider, search_route.provider_argv, options)
+        content_type = _infer_content_type(
+            search_route.provider, search_route.provider_argv, preferred
+        )
+        intent: ArtifactIntent = "discovery"
+        return ResolvedInvocation(
+            entry_plugin=entry_plugin,
+            entry_argv=entry_argv,
+            resolved_plugin=search_route.provider,
+            resolved_argv=search_route.provider_argv,
+            canonical_locator=canonical,
+            preferred_name=preferred,
+            content_type=content_type,
+            artifact_intent=intent,
+            artifact_kind=_artifact_kind(intent),
+            should_materialize=_materialization_enabled(),
+            provider=search_route.provider,
         )
     canonical = _canonical_locator(plugin, argv)
     preferred = _preferred_name(plugin, argv, options)

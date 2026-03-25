@@ -17,6 +17,12 @@ from gotta.plugins import github
 from gotta.plugins import jira
 
 
+def _last_stderr_json(stderr: str) -> dict[str, object]:
+    lines = [line for line in stderr.splitlines() if line.strip()]
+    assert lines, "expected JSON receipt on stderr"
+    return json.loads(lines[-1])
+
+
 def _set_default_session_root(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", root)
     monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", root)
@@ -180,16 +186,30 @@ def test_main_ambient_provider_search_materializes_discovery_in_bound_session(
     assert cli.main(["session", "bind", "demo"]) == 0
     capsys.readouterr()
 
-    def fake_github_main(argv: list[str]) -> int:
-        print("# Search Results\n\n- one\n")
-        return 0
+    canonical = b'{"items":[{"kind":"repo","name":"platform"}]}'
 
-    monkeypatch.setattr(github, "main", fake_github_main)
+    def fake_github_capture(argv: list[str], _options: object) -> Capture:
+        assert argv == ["search", "platform"]
+        return Capture(
+            data=canonical,
+            name="github-search-platform.json",
+            type="application/json",
+            meta={"projector": "github", "github_kind": "search"},
+        )
+
+    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+        assert argv == ["search", "platform"]
+        assert capture.data == canonical
+        return b"# Search Results\n\n- one\n"
+
+    monkeypatch.setattr(github, "capture", fake_github_capture)
+    monkeypatch.setattr(github, "project", fake_github_project)
 
     assert cli.main(["github", "search", "platform"]) == 0
     captured = capsys.readouterr()
 
-    assert "stored discovery artifact:" in captured.err
+    receipt = _last_stderr_json(captured.err)
+    assert receipt["artifactKind"] == "discovery"
     manifest_path = registry / "demo" / "content" / "manifest.jsonl"
     entries = [
         json.loads(line)
@@ -211,16 +231,30 @@ def test_main_read_routed_provider_search_preserves_discovery_artifact_kind(
     assert cli.main(["session", "bind", "demo"]) == 0
     capsys.readouterr()
 
-    def fake_github_main(argv: list[str]) -> int:
-        print("# Search Results\n\n- one\n")
-        return 0
+    canonical = b'{"items":[{"kind":"repo","name":"platform"}]}'
 
-    monkeypatch.setattr(github, "main", fake_github_main)
+    def fake_github_capture(argv: list[str], _options: object) -> Capture:
+        assert argv == ["search", "platform"]
+        return Capture(
+            data=canonical,
+            name="github-search-platform.json",
+            type="application/json",
+            meta={"projector": "github", "github_kind": "search"},
+        )
+
+    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+        assert argv == ["search", "platform"]
+        assert capture.data == canonical
+        return b"# Search Results\n\n- one\n"
+
+    monkeypatch.setattr(github, "capture", fake_github_capture)
+    monkeypatch.setattr(github, "project", fake_github_project)
 
     assert cli.main(["read", "github:search platform"]) == 0
     captured = capsys.readouterr()
 
-    assert "stored discovery artifact:" in captured.err
+    receipt = _last_stderr_json(captured.err)
+    assert receipt["artifactKind"] == "discovery"
     manifest_path = registry / "demo" / "content" / "manifest.jsonl"
     entries = [
         json.loads(line)
@@ -229,6 +263,173 @@ def test_main_read_routed_provider_search_preserves_discovery_artifact_kind(
     ]
     assert entries[-1]["plugin"] == "github"
     assert entries[-1]["artifact_kind"] == "discovery"
+
+
+def test_main_top_level_search_materializes_discovery_in_bound_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+
+    canonical = b'{"items":[{"kind":"repo","name":"platform"}]}'
+
+    def fake_github_capture(argv: list[str], _options: object) -> Capture:
+        assert argv == ["search", "platform"]
+        return Capture(
+            data=canonical,
+            name="github-search-platform.json",
+            type="application/json",
+            meta={"projector": "github", "github_kind": "search"},
+        )
+
+    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+        assert argv == ["search", "platform"]
+        assert capture.data == canonical
+        return b"# Search Results\n\n- one\n"
+
+    monkeypatch.setattr(github, "capture", fake_github_capture)
+    monkeypatch.setattr(github, "project", fake_github_project)
+
+    assert cli.main(["search", "github:platform"]) == 0
+    captured = capsys.readouterr()
+
+    receipt = _last_stderr_json(captured.err)
+    assert receipt["artifactKind"] == "discovery"
+    manifest_path = registry / "demo" / "content" / "manifest.jsonl"
+    entries = [
+        json.loads(line)
+        for line in manifest_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert entries[-1]["plugin"] == "github"
+    assert entries[-1]["artifact_kind"] == "discovery"
+
+
+def test_main_top_level_search_accepts_explicit_search_alias(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+
+    canonical = b'{"items":[{"kind":"repo","name":"platform"}]}'
+
+    def fake_github_capture(argv: list[str], _options: object) -> Capture:
+        assert argv == ["search", "platform"]
+        return Capture(
+            data=canonical,
+            name="github-search-platform.json",
+            type="application/json",
+            meta={"projector": "github", "github_kind": "search"},
+        )
+
+    monkeypatch.setattr(github, "capture", fake_github_capture)
+    monkeypatch.setattr(github, "project", lambda argv, capture: b"# Search Results\n\n- one\n")
+
+    assert cli.main(["search", "github:search", "platform"]) == 0
+    receipt = _last_stderr_json(capsys.readouterr().err)
+
+    assert receipt["artifactKind"] == "discovery"
+
+
+def test_main_top_level_search_redirects_provider_native_jql(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["search", "jira:jql", "project = OPS"]) == 2
+    captured = capsys.readouterr()
+
+    assert "gotta jira jql" in captured.err
+
+
+def test_main_top_level_search_redirects_read_like_provider_target_to_canonical_read(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["search", "jira:get", "OPS-1"]) == 2
+    captured = capsys.readouterr()
+
+    assert "gotta read jira:OPS-1" in captured.err
+
+    assert cli.main(["search", "confluence:get", "123"]) == 2
+    captured = capsys.readouterr()
+
+    assert "gotta read confluence:123" in captured.err
+
+    assert cli.main(["search", "github:get", "acme/widgets"]) == 2
+    captured = capsys.readouterr()
+
+    assert "gotta read https://github.com/acme/widgets" in captured.err
+
+
+def test_main_quiet_suppresses_success_receipt(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "demo"]) == 0
+    capsys.readouterr()
+
+    canonical = b'{"items":[{"kind":"repo","name":"platform"}]}'
+
+    monkeypatch.setattr(
+        github,
+        "capture",
+        lambda argv, _options: Capture(
+            data=canonical,
+            name="github-search-platform.json",
+            type="application/json",
+            meta={"projector": "github", "github_kind": "search"},
+        ),
+    )
+    monkeypatch.setattr(github, "project", lambda argv, capture: b"# Search Results\n\n- one\n")
+
+    assert cli.main(["search", "github:platform", "--quiet"]) == 0
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+
+
+def test_main_session_analyze_emits_default_json_receipt(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session-root"
+    dirs = content.resolve_dirs(content.CommonOptions(session_dir=str(root)), create=True)
+    sessionlib.scaffold_session(root)
+    content.materialize_bytes(
+        b"# Example\n\nhello world\n",
+        dirs=dirs,
+        preferred_name="example.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "read",
+            "locator": "example",
+            "canonical_locator": "example",
+        },
+    )
+    _set_default_session_root(monkeypatch, tmp_path / "registry")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "analyze", "--session", str(root), "--mode", "lineage"]) == 0
+    captured = capsys.readouterr()
+
+    assert captured.out.startswith("session:")
+    receipt = _last_stderr_json(captured.err)
+    assert receipt["sessionDir"] == str(root.resolve())
+    assert receipt["summaryPath"].endswith("summary.json")
 
 
 def test_main_ambient_provider_get_honors_explicit_actor_attribution(
@@ -275,7 +476,8 @@ def test_main_ambient_provider_get_honors_explicit_actor_attribution(
     )
     captured = capsys.readouterr()
 
-    assert "stored evidence artifact:" in captured.err
+    receipt = _last_stderr_json(captured.err)
+    assert receipt["artifactKind"] == "evidence"
     shared_root = registry / "demo"
     claude = _actor_id(shared_root, "claude")
     manifest_path = shared_root / "content" / "manifest.jsonl"

@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 import re
 import shlex
-import sys
 import urllib.parse
 import uuid
 
@@ -246,11 +245,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8,
         help="maximum items to show per overview/focus section",
-    )
-    analyze.add_argument(
-        "--receipt",
-        action="store_true",
-        help="also print the machine-readable write receipt to stderr as JSON",
     )
     scan.add_argument("query", help="literal text or regex to search for in stored projections")
     scan.add_argument("--plugin")
@@ -4227,8 +4221,6 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                 if semantic_focus_payload is not None
                 else semantic_mermaid
             )
-    if args.receipt:
-        print(json.dumps(summary, indent=2, sort_keys=True), file=sys.stderr)
     return 0
 
 

@@ -20,7 +20,12 @@ import urllib.request
 
 from gotta.builtin import get_plugin
 from gotta.capture import Capture
-from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV, capture_stdout, run_plugin
+from gotta.dispatch import (
+    SUPPRESS_MATERIALIZATION_ENV,
+    SUPPRESS_RECEIPTS_ENV,
+    capture_stdout,
+    run_plugin,
+)
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, looks_text, pretty_json
 from gotta.target import build_parser, parse_args, resolve_read_target
@@ -289,7 +294,9 @@ def html_as_markdown_bytes(data: bytes) -> bytes | None:
 
 def delegate(plugin: str, argv: list[str]) -> int:
     previous = os.environ.get(SUPPRESS_MATERIALIZATION_ENV)
+    previous_receipts = os.environ.get(SUPPRESS_RECEIPTS_ENV)
     os.environ[SUPPRESS_MATERIALIZATION_ENV] = "1"
+    os.environ[SUPPRESS_RECEIPTS_ENV] = "1"
     try:
         return run_plugin(plugin, argv)
     finally:
@@ -297,6 +304,10 @@ def delegate(plugin: str, argv: list[str]) -> int:
             os.environ.pop(SUPPRESS_MATERIALIZATION_ENV, None)
         else:
             os.environ[SUPPRESS_MATERIALIZATION_ENV] = previous
+        if previous_receipts is None:
+            os.environ.pop(SUPPRESS_RECEIPTS_ENV, None)
+        else:
+            os.environ[SUPPRESS_RECEIPTS_ENV] = previous_receipts
 
 
 def _directory_listing_text(path: Path, *, recursive: bool, max_depth: int) -> str:

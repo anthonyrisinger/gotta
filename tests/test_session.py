@@ -2044,10 +2044,11 @@ def test_session_analyze_writes_summary_and_graph(tmp_path: Path, monkeypatch, c
     )
     monkeypatch.chdir(local_root)
 
-    assert session.main(["analyze", "--session", str(local_root), "--receipt"]) == 0
+    assert session.main(["analyze", "--session", str(local_root)]) == 0
     captured = capsys.readouterr()
     assert captured.out.startswith("session:")
-    summary = json.loads(captured.err)
+    assert captured.err == ""
+    summary = json.loads((local_root / "summary.json").read_text(encoding="utf-8"))
     assert summary["sessionDir"] == str(local_root.resolve())
     assert summary["contentCount"] == 2
     assert summary["revisionEdgeCount"] == 1
@@ -2224,7 +2225,6 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
                 "lineage",
                 "--output",
                 "mermaid",
-                "--receipt",
             ]
         )
         == 0
@@ -2232,7 +2232,8 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
     captured = capsys.readouterr()
 
     assert captured.out.startswith("---\ntitle: gotta session analysis\n---\nflowchart LR\n")
-    receipt = json.loads(captured.err)
+    assert captured.err == ""
+    receipt = json.loads((local_root / "summary.json").read_text(encoding="utf-8"))
     assert receipt["sessionDir"] == str(local_root.resolve())
     assert receipt["graphMermaidPath"].endswith("graph.mmd")
 
@@ -2240,6 +2241,11 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
 def test_session_analyze_build_parser_rejects_stdout_flag() -> None:
     with pytest.raises(SystemExit):
         session.build_parser().parse_args(["analyze", "--stdout"])
+
+
+def test_session_analyze_build_parser_rejects_receipt_flag() -> None:
+    with pytest.raises(SystemExit):
+        session.build_parser().parse_args(["analyze", "--receipt"])
 
 
 def test_session_graph_prefers_canonical_locator_for_binding(tmp_path: Path) -> None:

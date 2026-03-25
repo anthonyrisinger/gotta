@@ -12,6 +12,7 @@ import pytest
 from gotta import builtin as plugin_api
 from gotta import main as cli
 from gotta import content, dispatch
+from gotta import invocation
 from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
 from gotta.plugins import read as read_plugin
@@ -65,12 +66,101 @@ def test_split_common_options_strips_shared_actor_target() -> None:
     assert cleaned == ["search", "platform"]
 
 
+def test_emit_budgeted_output_truncates_interactive_text_with_footer(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode("utf-8")
+
+    emitted = dispatch.emit_budgeted_output(
+        payload,
+        output_format="text",
+        interactive=True,
+        follow_command="gotta read artifact:demo@abc123",
+    )
+    captured = capsys.readouterr()
+
+    assert emitted.output_truncated is True
+    assert emitted.truncate_reason == "lines"
+    assert "output truncated by lines budget" in captured.out
+    assert "gotta read artifact:demo@abc123" in captured.out
+    assert len(captured.out.encode("utf-8")) <= dispatch.OUTPUT_BUDGET_BYTE_LIMIT
+
+
+def test_emit_budgeted_output_emits_json_preview_envelope_for_interactive_json(capsys) -> None:
+    payload = {"items": [{"id": index, "text": "x" * 64} for index in range(500)]}
+
+    emitted = dispatch.emit_budgeted_output(
+        json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
+        output_format="json",
+        interactive=True,
+        follow_command="gotta read artifact:demo@abc123",
+    )
+    rendered = json.loads(capsys.readouterr().out)
+
+    assert emitted.output_truncated is True
+    assert rendered["outputTruncated"] is True
+    assert rendered["truncateReason"] == "bytes"
+    assert rendered["followCommand"] == "gotta read artifact:demo@abc123"
+
+
+def test_emit_budgeted_output_keeps_json_preview_valid_with_long_follow_command(capsys) -> None:
+    payload = {"items": [{"id": index, "text": "x" * 64} for index in range(500)]}
+
+    emitted = dispatch.emit_budgeted_output(
+        json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
+        output_format="json",
+        interactive=True,
+        follow_command="x" * 20000,
+    )
+    raw = capsys.readouterr().out.encode("utf-8")
+    rendered = json.loads(raw)
+
+    assert emitted.output_truncated is True
+    assert len(raw) <= dispatch.OUTPUT_BUDGET_BYTE_LIMIT
+    assert rendered["outputTruncated"] is True
+    assert rendered["requestedFormat"] == "json"
+    assert rendered["truncateReason"] == "bytes"
+
+
 def test_session_access_mode_tracks_artifact_bearing_surfaces() -> None:
     assert dispatch.session_access_mode("jira", ["search", "platform"]) == "ambient"
     assert dispatch.session_access_mode("jira", ["status"]) == "none"
     assert dispatch.session_access_mode("confluence", ["get", "10101"]) == "ambient"
     assert dispatch.session_access_mode("confluence", ["replace", "10101", "a", "b"]) == "none"
     assert dispatch.session_access_mode("read", ["README.md"]) == "ambient"
+    assert dispatch.session_access_mode("search", ["jira:platform"]) == "ambient"
+
+
+def test_search_resolve_invocation_routes_provider_search_with_implicit_search() -> None:
+    resolved = invocation.resolve_invocation("search", ["jira:Architecture"], content.CommonOptions())
+
+    assert resolved.entry_plugin == "search"
+    assert resolved.resolved_plugin == "jira"
+    assert resolved.resolved_argv == ["search", "Architecture"]
+    assert resolved.artifact_intent == "discovery"
+    assert resolved.should_materialize is True
+
+
+def test_search_resolve_invocation_accepts_explicit_search_alias() -> None:
+    resolved = invocation.resolve_invocation(
+        "search",
+        ["slack:search", "ABC", "reboot", "--workspace", "demo"],
+        content.CommonOptions(),
+    )
+
+    assert resolved.resolved_plugin == "slack"
+    assert resolved.resolved_argv == [
+        "search",
+        "--workspace",
+        "demo",
+        "ABC reboot",
+    ]
+
+
+def test_search_resolve_invocation_disables_materialization_on_invalid_target() -> None:
+    resolved = invocation.resolve_invocation("search", ["jira:jql", "project = OPS"], content.CommonOptions())
+
+    assert resolved.should_materialize is False
+    assert resolved.artifact_intent == "none"
 
 
 @pytest.mark.parametrize(
@@ -881,8 +971,10 @@ def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
     assert dispatch.run_plugin("read", [str(sample)]) == 0
     captured = capsys.readouterr()
 
-    assert captured.err == ""
     assert captured.out == "hello\n"
+    receipt = json.loads(captured.err)
+    assert "artifactLocator" not in receipt
+    assert receipt["outputFormat"] == "text"
 
 
 def test_run_plugin_read_section_miss_returns_clean_error_for_local_view(

@@ -185,6 +185,10 @@ def _discover_plugin_route(target: str) -> tuple[str, list[str]] | None:
     return None
 
 
+def discover_plugin_route(target: str) -> tuple[str, list[str]] | None:
+    return _discover_plugin_route(target)
+
+
 def _partition_routed_target_tokens(
     tokens: list[str],
 ) -> tuple[str, str, tuple[str, ...]] | None:

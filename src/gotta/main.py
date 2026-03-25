@@ -108,7 +108,7 @@ def _gotta_main(argv: list[str]) -> int:
         print("")
         print("Canonical operator path: `gotta ...`")
         print("")
-        print("Builtin non-session surfaces: `gotta version`, `gotta --version`")
+        print("Builtin non-session surfaces: `gotta version`, `gotta --version`, `gotta search`")
         print("")
         print(
             "Session synthesis surfaces live under `gotta session`: "

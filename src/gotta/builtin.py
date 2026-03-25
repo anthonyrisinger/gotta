@@ -434,6 +434,21 @@ def slack_plugin() -> PluginSpec:
     )
 
 
+def search_plugin() -> PluginSpec:
+    return PluginSpec(
+        name="search",
+        description="route plain-text remote discovery through provider-native search surfaces",
+        runner=_runner("gotta.plugins.search"),
+        should_materialize=_module_attr("gotta.invocation", "should_materialize"),
+        session_access=_artifact_session_access("search"),
+        canonical_locator=_module_attr("gotta.plugins.search", "canonical_locator"),
+        preferred_name=_module_attr("gotta.plugins.search", "preferred_name"),
+        content_type=_module_attr("gotta.plugins.search", "content_type"),
+        capture=_module_attr("gotta.plugins.search", "capture"),
+        project=_module_attr("gotta.plugins.search", "project"),
+    )
+
+
 def _builtin_core_plugins() -> dict[str, PluginSpec]:
     factories = (
         ask_plugin,
@@ -451,6 +466,7 @@ def _builtin_core_plugins() -> dict[str, PluginSpec]:
         oops_plugin,
         actor_plugin,
         read_plugin,
+        search_plugin,
         session_plugin,
         slack_plugin,
         todo_plugin,
