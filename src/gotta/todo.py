@@ -236,9 +236,9 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
             [
                 f"- This session is already the {_actor_label(actor_actor)} actor root for this shared concern.",
                 "- `WANT.md`, `GOAL.md`, and `TODO.md` here are actor-local session surfaces.",
-                "- `LOGS.md` and `OOPS.md` here are actor-local continuous surfaces.",
+                "- `LOGS.md` is actor-local procedural/system trace and `OOPS.md` is actor-local friction.",
                 "- Append running notes with `gotta notes append ...` from this actor root; add `--actor <actor>` only when targeting another bound actor intentionally.",
-                "- Append at least one durable note before requesting completion or sign-off so shared actor visibility lands before closure.",
+                "- Append at least one short note before requesting completion or sign-off so shared actor visibility lands before closure.",
                 f"- When materially done, record actor completion through `gotta actor complete {actor_actor}`; use `gotta actor stop {actor_actor}` for a graceful operator-directed wind-down, `gotta actor fail {actor_actor}` for actual failure, and finish durable review with `gotta actor signoff {actor_actor} --summary ...`.",
             ]
         )

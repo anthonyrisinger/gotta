@@ -267,7 +267,7 @@ def want_plugin() -> PluginSpec:
 def logs_plugin() -> PluginSpec:
     return PluginSpec(
         name="logs",
-        description="inspect and mutate the canonical session execution log",
+        description="inspect and mutate the canonical session procedural trace",
         runner=_runner("gotta.plugins.logs"),
         should_materialize=lambda argv: False,
         session_access=_module_attr("gotta.plugins.logs", "session_access_mode"),
@@ -287,7 +287,7 @@ def goal_plugin() -> PluginSpec:
 def notes_plugin() -> PluginSpec:
     return PluginSpec(
         name="notes",
-        description="inspect and mutate canonical actor notes inside the active session",
+        description="inspect and mutate canonical actor-authored notes inside the active session",
         runner=_runner("gotta.plugins.notes"),
         should_materialize=lambda argv: False,
         session_access=_module_attr("gotta.plugins.notes", "session_access_mode"),

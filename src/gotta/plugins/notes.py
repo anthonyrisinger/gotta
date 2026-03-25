@@ -29,7 +29,7 @@ def build_parser(command_name: str = "gotta notes") -> argparse.ArgumentParser:
         prog=command_name,
         description=(
             "Inspect or mutate canonical actor notes inside the active session surface. "
-            "Use this for live actor visibility instead of waiting on a separate summary artifact."
+            "Notes are the canonical actor-authored narration surface, and short one-line notes are valid."
         ),
     )
     parser.add_argument(

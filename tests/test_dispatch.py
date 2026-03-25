@@ -807,7 +807,7 @@ def test_source_seeded_core_plugins_ignore_stale_core_metadata(monkeypatch) -> N
     try:
         assert (
             plugin_api.get_plugin("logs").description
-            == "inspect and mutate the canonical session execution log"
+            == "inspect and mutate the canonical session procedural trace"
         )
         assert plugin_api.get_plugin("todo").description == "inspect and mutate the canonical session checklist"
     finally:

@@ -1,4 +1,4 @@
-"""Top-level session-rooted durable execution log surface."""
+"""Top-level session-rooted procedural trace surface."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ def build_parser(command_name: str = "gotta logs") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=command_name,
         description=(
-            "Inspect or mutate the canonical session execution log. "
+            "Inspect or mutate the canonical session procedural trace. "
             "Shared-session read paths show all bound actor logs by default. "
-            "For prose or Markdown, prefer stdin, --stdin, or --from-file."
+            "Use notes for actor-authored narration; use logs for chronology and system/runtime trace."
         ),
     )
     parser.add_argument(

@@ -17,7 +17,6 @@ from gotta.actors import ACTOR_SPEAKER_ENV, resolve_actor_context
 from gotta.content import SESSION_REPO_ENV, load_state_env_at_root, session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.friction import append_oops_record
-from gotta.logs import append_log_record, logs_surface_path
 from gotta.notes import (
     actor_notes_log_path,
     actor_notes_surface_path,
@@ -46,7 +45,7 @@ ACTOR_HEARTBEAT_SECONDS = 30
 LIVE_STATUSES = {"starting", "active", "closing", "producing_evidence", "stalled"}
 TERMINAL_STATUSES = {"completed", "failed", "incomplete", "rejected", "signed_off"}
 FEEDBACK_DIRECTIVE_PREFIX = "@@gotta "
-FEEDBACK_SURFACES = {"notes", "logs", "oops"}
+FEEDBACK_SURFACES = {"notes", "oops"}
 LAUNCHER_AUTHOR = "launcher"
 LAUNCHER_HEARTBEAT_NOTE = (
     "launcher pulse: actor runtime spawned successfully; wait for actor voice and do "
@@ -118,7 +117,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - actor-local GOAL present before launch: `{actor_goal}`
         - actor-local TODO projection: `{actor_dir / 'TODO.md'}`
         - notes projection: `{notes_file}`
-        - actor-local execution log: `{actor_dir / 'LOGS.md'}`
+        - actor-local procedural trace: `{actor_dir / 'LOGS.md'}`
         - actor-local friction log: `{actor_dir / 'OOPS.md'}`
 
         Canonical actor mutation state:
@@ -139,34 +138,38 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         Fast durable updates:
 
         - the shortest path to visible progress is one consumed launcher directive line:
-          `@@gotta {{"actor":"{actor_name}","surface":"notes","message":"first durable heartbeat note"}}`
-        - use the same shape for other short durable pulses:
-          `@@gotta {{"actor":"{actor_name}","surface":"logs","message":"hydrated the thread root and 4 replies"}}`
+          `@@gotta {{"actor":"{actor_name}","surface":"notes","message":"alive: runtime is up and tracing the first branch"}}`
+        - use the same shape for other short durable notes:
+          `@@gotta {{"actor":"{actor_name}","surface":"notes","message":"first anchor: thread root and 4 replies hydrated"}}`
+          `@@gotta {{"actor":"{actor_name}","surface":"notes","message":"evidence wave: importer continuity artifacts landed"}}`
+          `@@gotta {{"actor":"{actor_name}","surface":"notes","message":"signoff: gateway reuse confirmed; no further retrieval needed"}}`
           `@@gotta {{"actor":"{actor_name}","surface":"oops","message":"reply permalink lost thread context"}}`
-        - valid directive surfaces are `notes`, `logs`, and `oops`
+        - valid directive surfaces are `notes` and `oops`
         - directive lines are private launcher protocol: they are consumed immediately, update the matching durable surface, and never appear in the visible transcript
-        - use `@@gotta` continuously while you work: `logs` for rapid pulse, `notes` for durable milestone anchors, `oops` for native-surface friction
+        - `notes` are the canonical actor-authored narration surface; one-line notes are valid and expected
+        - use `notes` for cheap durable heartbeat, first-anchor, evidence-wave, and signoff narration
+        - use `oops` for native-surface friction
         - emit one immediate `@@gotta` note as soon as the runtime is alive
-        - emit continuous `@@gotta` log pulses during active work
-        - emit a `@@gotta` note after the first strong anchor, after each material evidence wave, and before sign-off if the last durable note is stale
+        - emit another `@@gotta` note after the first strong anchor, after each material evidence wave, and before sign-off if the last short note is stale
         - use native `gotta` mutation for multiline, structured, or more deliberate edits
 
         Evidence-first actor contract:
 
         - prefer `gotta` commands over side channels
-        - use `gotta read`, `gotta session ...`, `gotta actor ...`, `gotta todo ...`, `gotta logs ...`, `gotta oops ...`, and `gotta notes ...` first for native inspection and mutation
+        - use `gotta read`, `gotta session ...`, `gotta actor ...`, `gotta todo ...`, `gotta notes ...`, `gotta oops ...`, and `gotta logs ...` first for native inspection and mutation
+        - treat `gotta logs ...` as chronology and system trace, not as your primary narration path
         - for large native outputs, try `gotta read --head`, `--tail`, or `--section` before shell slicing
         - do not start with shell traversal, `gh`, `rg`, `jq`, ad hoc Python, or other side channels; exhaust native `gotta` surfaces first
-        - if no native path exists, disclose that gap in a durable note instead of silently routing around it through shell traversal
+        - if no native path exists, disclose that gap in a short note instead of silently routing around it through shell traversal
         - treat actor-local WANT.md and GOAL.md as operator-authored live surfaces, not hidden templates that need to be rediscovered
         - treat actor-local WANT/GOAL/TODO/LOGS/OOPS plus the shared evidence web as the live truth surfaces
         - disclose any non-native move as a native-coverage gap instead of hiding it
         - materialized evidence becomes usable immediately through manifest, timeline, leads, and graph even before notes catch up
-        - append an initial durable heartbeat note as soon as the actor runtime is alive, even before the first strong anchor
-        - append a first substantive durable note immediately after the first strong anchor or branch; do not wait for a full evidence wave
-        - append another durable note after each material evidence wave or when the plan changes
-        - if you materially expanded the evidence web since your last note, append a new durable note before requesting completion or sign-off
-        - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final durable note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
+        - append an initial short heartbeat note as soon as the actor runtime is alive, even before the first strong anchor
+        - append a first substantive short note immediately after the first strong anchor or branch; do not wait for a full evidence wave
+        - append another short note after each material evidence wave or when the plan changes
+        - if you materially expanded the evidence web since your last note, append a new short note before requesting completion or sign-off
+        - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final short note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
         - session-rooted `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
         - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
@@ -282,6 +285,11 @@ def _parse_feedback_directive(
     if directive_actor != actor_name:
         return None, f"actor mismatch for {actor_name}"
     surface = str(payload.get("surface") or "").strip()
+    if surface == "logs":
+        return (
+            None,
+            "logs directives are disabled; use surface `notes` for heartbeat/anchor/wave/signoff narration",
+        )
     if surface not in FEEDBACK_SURFACES:
         return None, f"unsupported surface `{surface or 'missing'}`"
     message = payload.get("message")
@@ -336,18 +344,6 @@ def _apply_feedback_directive(
             projection_path=actor_notes_surface_path(actor_root, actor_name),
             detail="appended actor note",
             actor=rendered_author,
-        )
-        return
-    if surface == "logs":
-        append_log_record(actor_root, message=message, actor=rendered_author)
-        session_plugin._record_session_activity(
-            actor_root,
-            plugin="logs",
-            surface="logs",
-            action="append",
-            actor=rendered_author,
-            target=logs_surface_path(actor_root),
-            detail="appended 1 logs entry",
         )
         return
     append_oops_record(actor_root, message=message, actor=rendered_author)
@@ -600,6 +596,10 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
             print("  evidence: live")
         if state.get("progress_stale") and state.get("progress_kind") != "none":
             print("  progress_stale: true")
+        last_note_at = str(state.get("last_note_at") or "").strip()
+        last_note_summary = str(state.get("last_note_summary") or "").strip()
+        if last_note_at and last_note_summary:
+            print(f"  recent_note: {last_note_at} {last_note_summary}")
         last_activity_at = str(state.get("last_activity_at") or "").strip()
         last_activity_summary = str(state.get("last_activity_summary") or "").strip()
         if last_activity_at and last_activity_summary:

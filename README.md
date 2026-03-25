@@ -413,9 +413,9 @@ Inside this topology:
 
 - `WANT.md` and `GOAL.md` are actor-local intentional rewrites
 - `state/todo.jsonl` is actor-local truth and projects into `TODO.md`
-- `state/logs.jsonl` is actor-local truth and projects into `LOGS.md`
+- `state/logs.jsonl` is actor-local procedural/system trace and projects into `LOGS.md`
 - `state/oops.jsonl` is actor-local truth and projects into `OOPS.md`
-- `state/notes.jsonl` is actor-local truth and projects into `NOTES.md`
+- `state/notes.jsonl` is actor-authored narration truth and projects into `NOTES.md`
 - `sessions/<session-id>/content/` is shared across all actors bound into that
   session
 
@@ -507,7 +507,8 @@ Important invariants:
   rewritten before launch with `gotta want --actor <actor> ...` and
   `gotta goal --actor <actor> ...`
 - actor-local `TODO.md` is seeded automatically and can be extended
-- actor notes are supervisory visibility, not a separate truth store
+- actor notes are the canonical actor-authored narration surface
+- short one-line notes are valid; polished synthesis notes are optional
 - actor evidence often lands in the shared manifest, timeline, and graph before
   notes fully catch up
 
@@ -539,9 +540,10 @@ These terms appear throughout `gotta` and its documentation:
   extended, handed off, or compacted and rehydrated.
 
 - **actor** — a named participant in a session. Each actor has its own charter
-  surfaces (`WANT.md`, `GOAL.md`), state logs (`TODO.md`, `LOGS.md`, `OOPS.md`,
-  `NOTES.md`), and lifecycle. Actors can be human operators, AI agents, or
-  automated workflows.
+  surfaces (`WANT.md`, `GOAL.md`), checklist/state projections (`TODO.md`,
+  `LOGS.md`, `OOPS.md`, `NOTES.md`), and lifecycle. `NOTES.md` is actor-authored
+  narration, `LOGS.md` is procedural/system trace, and `OOPS.md` is friction.
+  Actors can be human operators, AI agents, or automated workflows.
 
 - **fingerprint** — the context identity that binds the current terminal,
   thread, or environment to a session and actor root. Fingerprints are derived

@@ -12,11 +12,11 @@ from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
 from gotta import content, dispatch
 from gotta.friction import oops_records
 from gotta import leads
-from gotta.logs import append_log_record, log_records
+from gotta.logs import append_log_record, log_records, render_logs_markdown
 from gotta import main as cli
 from gotta import topology
 from gotta.actor import SESSION_ACTOR_ENV
-from gotta.notes import actor_notes_records, append_actor_note
+from gotta.notes import actor_notes_records, append_actor_note, render_actor_notes_markdown
 from gotta import session as sessionlib
 from gotta import todo as session_todo
 from gotta.notes import actor_notes_surface_path
@@ -460,8 +460,17 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
     assert actor_notes_surface_path(actor_root, claude).read_text(encoding="utf-8")
     assert actor_notes_records(actor_root, claude)[-1]["message"] == "first durable heartbeat note"
     assert actor_notes_records(actor_root, claude)[-1]["author"] == claude
-    assert any(
+    assert (
+        "logs directives are disabled; use surface `notes` for heartbeat/anchor/wave/signoff narration"
+        in captured.err
+    )
+    assert not any(
         record["message"] == "hydrated slack thread root" and record["actor"] == claude
+        for record in log_records(actor_root)
+    )
+    assert any(
+        record["message"] == f"[{claude}] noted: first durable heartbeat note"
+        and record["actor"] == claude
         for record in log_records(actor_root)
     )
     assert any(
@@ -471,7 +480,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
     assert status["notes_status"] == "present"
     assert status["voice"] == "present"
     assert "heartbeat note now" not in str(status.get("next_step") or "")
-    assert any(
+    assert not any(
         str(event.get("actor") or "") == claude and str(event.get("plugin") or "") == "logs"
         for event in activity
     )
@@ -1251,6 +1260,7 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
     output = capsys.readouterr().out
     assert "artifacts: 4" in output
     assert "progress: evidence" in output
+    assert "recent_note: 2026-03-17T00:03:00Z Wave 2 landed" in output
     assert "recent_progress: 2026-03-17T00:04:00.000001Z evidence: jira:search connector" in output
     assert "recent_lifecycle: 2026-03-17T00:02:00Z signed off: accepted by operator" in output
     assert "recent_artifacts:" in output
@@ -1308,6 +1318,9 @@ def test_actor_status_json_separates_progress_from_lifecycle(
     payload = json.loads(capsys.readouterr().out)[claude]
     assert payload["last_activity_at"] == "2026-03-17T00:01:00Z"
     assert payload["last_activity_summary"] == "Wave 1 landed"
+    assert payload["last_note_at"] == "2026-03-17T00:01:00Z"
+    assert payload["last_note_summary"] == "Wave 1 landed"
+    assert isinstance(payload["notes_stale"], bool)
     assert payload["last_lifecycle_at"] == "2026-03-17T00:01:00Z"
     assert payload["last_lifecycle_summary"] == "runtime exit: actor process exited with code 0"
     assert payload["progress_kind"] == "narration"
@@ -1361,6 +1374,7 @@ def test_actor_status_reports_clean_runtime_exit_after_honoring_stop_request(
     assert actor.main(["status", claude, "--session", str(root)]) == 0
     output = capsys.readouterr().out
 
+    assert "recent_note: 2026-03-17T00:01:00Z Reached a stable checkpoint" in output
     assert "recent_progress: 2026-03-17T00:01:00Z Reached a stable checkpoint" in output
     assert (
         "recent_lifecycle: 2026-03-17T00:03:00Z runtime exit: actor process exited cleanly "
@@ -1389,9 +1403,10 @@ def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
     assert payload["notes_status"] == "empty"
     assert "brief startup window" in payload["next_step"]
     assert "one heartbeat interval" in payload["next_step"]
+    assert "short actor-authored note" in payload["next_step"]
 
 
-def test_actor_status_reports_pulse_after_actor_log_before_note(
+def test_actor_status_ignores_actor_log_for_voice_before_note(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -1418,9 +1433,11 @@ def test_actor_status_reports_pulse_after_actor_log_before_note(
     payload = sessionlib._actor_status_payload(root, claude)
 
     assert payload["notes_status"] == "empty"
-    assert payload["voice"] == "pulse"
-    assert "actor-authored pulse through logs, friction, or shared evidence" in payload["next_step"]
-    assert "first durable actor note has not landed yet" in payload["next_step"]
+    assert payload["voice"] == "missing"
+    assert payload["progress_kind"] == "none"
+    assert payload["last_note_at"] == ""
+    assert "brief startup window" in payload["next_step"]
+    assert "short actor-authored note" in payload["next_step"]
 
 
 def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progress_is_stale(
@@ -1431,7 +1448,6 @@ def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progres
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    actor_root = _actor_root(root, "claude")
     stale_started = (
         sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=120)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1448,10 +1464,11 @@ def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progres
             "heartbeat_at": stale_heartbeat,
         },
     )
-    append_log_record(
-        actor_root,
-        message="stale investigation pulse",
-        actor=claude,
+    append_actor_note(
+        root,
+        claude,
+        message="alive: tracing importer continuity",
+        author=claude,
         timestamp="2026-03-21T00:00:00Z",
     )
 
@@ -1460,6 +1477,8 @@ def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progres
     assert payload["still_running"] is True
     assert payload["progress_kind"] == "narration"
     assert payload["progress_stale"] is True
+    assert payload["notes_stale"] is True
+    assert payload["last_note_summary"] == "alive: tracing importer continuity"
     assert payload["artifact_count"] == 0
     assert "low-signal run" in payload["next_step"]
 
@@ -1500,8 +1519,8 @@ def test_actor_status_reports_pulse_after_actor_evidence_before_note(
     assert payload["status"] == "producing_evidence"
     assert payload["notes_status"] == "empty"
     assert payload["voice"] == "pulse"
-    assert "logs, friction, or shared evidence" in payload["next_step"]
-    assert "first durable actor note has not landed yet" in payload["next_step"]
+    assert "friction or shared evidence" in payload["next_step"]
+    assert "first short actor note has not landed yet" in payload["next_step"]
 
 
 def test_actor_status_requires_durable_note_when_pending_actor_already_has_evidence(
@@ -1533,7 +1552,7 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
     assert payload["artifact_count"] == 1
     assert payload["notes_status"] == "empty"
     assert payload["voice"] == "pulse"
-    assert "Land one actor-authored durable note now" in payload["next_step"]
+    assert "Land one short actor-authored note now" in payload["next_step"]
 
 
 def test_actor_status_guides_pending_actor_with_notes_and_evidence(
@@ -1571,8 +1590,39 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
     assert payload["status"] == "pending"
     assert payload["notes_status"] == "present"
     assert payload["artifact_count"] == 1
-    assert "durable narration and shared evidence" in payload["next_step"]
+    assert "actor-authored narration and shared evidence" in payload["next_step"]
     assert "gotta actor signoff" in payload["next_step"]
+
+
+def test_actor_notes_projection_describes_notes_as_canonical_narration(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+
+    rendered = render_actor_notes_markdown(
+        root,
+        claude,
+        label=sessionlib._actor_label(claude, work_dir=root),
+        status_payload=sessionlib._actor_status_payload(root, claude),
+    )
+
+    assert "canonical actor-authored narration surface" in rendered
+    assert "short one-line notes are valid" in rendered
+    assert "`LOGS.md` remains procedural/system trace" in rendered
+
+
+def test_logs_projection_describes_logs_as_procedural_trace(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    rendered = render_logs_markdown(root, [])
+
+    assert "procedural/system trace" in rendered
+    assert "Prefer `gotta notes ...` for actor-authored narration." in rendered
 
 
 def test_actor_recent_activity_carries_cross_actor_author(

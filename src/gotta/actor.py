@@ -213,12 +213,12 @@ def supervisor_stop_message(
     if cleaned_summary:
         message += f" ({cleaned_summary})"
     suffix = (
-        ". Stop new retrieval, append one final durable note, and sign off ASAP with "
+        ". Stop new retrieval, append one final short note, and sign off ASAP with "
         if (
             requested_mode == SUPERVISOR_GRACEFUL_STOP_MODE
             and requested_status == SUPERVISOR_GRACEFUL_STOP_STATUS
         )
         else ". Any further activity may be discarded. Stop new retrieval, append one "
-        + "final durable note, and sign off ASAP with "
+        + "final short note, and sign off ASAP with "
     )
     return message + suffix + f"`gotta actor signoff {normalize_actor_name(actor_name)} --summary ...`."
