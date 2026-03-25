@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gotta"
-version = "0.25.0"
+version = "0.26.0"
 description = "Session-rooted CLI for evidence acquisition, operational memory, durable continuity, and linked peer workflows"
 readme = "README.md"
 requires-python = ">=3.10"
