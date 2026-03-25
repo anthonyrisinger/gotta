@@ -35,6 +35,7 @@ CANONICAL_LOCATOR_RE = re.compile(
     r"|gsheets:[A-Za-z0-9_-]+"
     r"|slack:thread:[A-Za-z0-9]+:(?:\d{16}|\d{10}\.\d{6})"
     r"|slack:channel:[A-Za-z0-9]+"
+    r"|slack:doc:[A-Za-z0-9]+:[A-Za-z0-9]+"
     r"|slack:workspace:[A-Za-z0-9._-]+"
     r"|artifact:[A-Za-z0-9._-]+@[a-f0-9]{12}"
     r"|content:[a-f0-9]{64}"

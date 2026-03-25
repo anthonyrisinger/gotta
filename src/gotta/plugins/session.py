@@ -204,10 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manifest.add_argument("--plugin")
     manifest.add_argument("--locator")
+    manifest.add_argument("--match")
     manifest.add_argument("--limit", type=int, default=100)
     manifest.add_argument("--offset", type=int, default=0)
     manifest.add_argument("--all", action="store_true")
     manifest.add_argument("--output", choices=["json", "text"], default="text")
+    timeline.add_argument("--match")
     timeline.add_argument("--limit", type=int, default=100)
     timeline.add_argument("--offset", type=int, default=0)
     timeline.add_argument("--all", action="store_true")
@@ -220,10 +222,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     graph.add_argument(
         "--output",
-        choices=["mermaid", "json"],
+        choices=["mermaid", "json", "text"],
         default="mermaid",
-        help="render the content graph as Mermaid or structured JSON",
+        help="render the content graph as Mermaid, text, or structured JSON",
     )
+    graph.add_argument("--match")
     analyze.add_argument(
         "--output",
         choices=["text", "mermaid", "markdown", "json"],
@@ -259,6 +262,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--all", action="store_true")
     scan.add_argument("--output", choices=["json", "text"], default="text")
     leads.add_argument("target", nargs="?")
+    leads.add_argument("--match")
     leads.add_argument("--limit", type=int, default=100)
     leads.add_argument("--offset", type=int, default=0)
     leads.add_argument("--all", action="store_true")
@@ -347,6 +351,42 @@ def _paging_summary_line(
     if next_offset is not None:
         parts.append(f"next {next_offset}")
     return "; ".join(parts)
+
+
+def _match_filter_text(raw: object) -> str:
+    return str(raw or "").strip()
+
+
+def _iter_match_strings(value: object):
+    if value is None:
+        return
+    if isinstance(value, dict):
+        for nested in value.values():
+            yield from _iter_match_strings(nested)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for nested in value:
+            yield from _iter_match_strings(nested)
+        return
+    text = str(value).strip()
+    if text:
+        yield text
+
+
+def _match_any(raw_query: object, *values: object) -> bool:
+    query = _match_filter_text(raw_query).casefold()
+    if not query:
+        return True
+    for value in values:
+        for text in _iter_match_strings(value):
+            if query in text.casefold():
+                return True
+    return False
+
+
+def _match_suffix(raw_query: object) -> str:
+    query = _match_filter_text(raw_query)
+    return f"; match {query!r}" if query else ""
 
 
 def _binding_detail(record: dict[str, object]) -> str:
@@ -564,6 +604,25 @@ def _filter_manifest_entries(
     return filtered
 
 
+def _manifest_entry_matches(entry: dict[str, object], match: str) -> bool:
+    return _match_any(
+        match,
+        entry.get("canonical_locator"),
+        entry.get("locator"),
+        entry.get("preferred_name"),
+        entry.get("plugin"),
+        entry.get("plugins"),
+        entry.get("actor"),
+        entry.get("actors"),
+        entry.get("locators"),
+        entry.get("artifactKinds"),
+        entry.get("artifactKind"),
+        entry.get("artifact_locator"),
+        entry.get("content_locator"),
+        entry.get("visibility_basis"),
+    )
+
+
 def _manifest_entry_sort_key(entry: dict[str, object]) -> tuple[str, str, str]:
     return (
         entry.get("fetched_at", ""),
@@ -741,6 +800,7 @@ def _manifest_payload(
     plugin: str = "",
     actor: str = "",
     locator: str = "",
+    match: str = "",
     limit: int = 20,
     offset: int = 0,
     include_all: bool = False,
@@ -752,6 +812,9 @@ def _manifest_payload(
         locator=locator,
     )
     entries = _aggregate_manifest_entries(raw_entries)
+    match_filter = _match_filter_text(match)
+    if match_filter:
+        entries = [entry for entry in entries if _manifest_entry_matches(entry, match_filter)]
     ordered = sorted(entries, key=_manifest_entry_sort_key, reverse=True)
     discovery_count, evidence_count = _artifact_kind_counts(ordered)
     paged, paging = _paginate_items(
@@ -803,18 +866,20 @@ def _manifest_payload(
         }
         for entry in paged
     ]
+    fetch_record_count = sum(int(entry.get("fetchCount") or 0) for entry in ordered)
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
         "entryCount": len(entries),
-        "fetchRecordCount": len(raw_entries),
+        "fetchRecordCount": fetch_record_count,
         **paging,
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
         "pluginFilter": plugin,
         "actorFilter": actor,
         "locatorFilter": locator,
+        "matchFilter": match_filter,
         "entries": rendered_entries,
     }
 
@@ -1318,21 +1383,45 @@ def _timeline_payload(
     offset: int = 0,
     include_all: bool = False,
     mode: str = "acquired",
+    match: str = "",
 ) -> dict[str, object]:
     normalized_mode = _normalize_timeline_mode(mode)
     local_events, activity_paths = _local_activity_timeline_events(dirs)
     primary_activity_path = (
         activity_paths[0] if activity_paths else str(activity_log_path(dirs.session_dir))
     )
+    match_filter = _match_filter_text(match)
     if normalized_mode != "acquired":
         snapshots = scan_content_store(dirs.content_dir)
         events: list[dict[str, object]] = []
         coverage_gap_count = 0
         for snapshot in snapshots:
             locator = snapshot_locator(snapshot)
+            source_payload = {
+                "plugin": str(snapshot.metadata.get("plugin", "")).strip() or "unknown-plugin",
+                "actor": _rendered_actor(
+                    snapshot.metadata.get("actor"),
+                    session_root=dirs.session_dir,
+                ),
+                "target_actor": str(snapshot.metadata.get("target_actor") or "").strip(),
+                "locator": locator,
+                "preferred_name": snapshot_display_name(snapshot),
+                "event_kind": "source",
+            }
             source_time, source_field = _source_timestamp_for_mode(snapshot, normalized_mode)
             if not source_time:
-                if _counts_as_source_coverage_gap(snapshot):
+                if _counts_as_source_coverage_gap(snapshot) and (
+                    not match_filter
+                    or _match_any(
+                        match_filter,
+                        source_payload.get("actor"),
+                        source_payload.get("target_actor"),
+                        source_payload.get("plugin"),
+                        source_payload.get("locator"),
+                        source_payload.get("preferred_name"),
+                        source_payload.get("event_kind"),
+                    )
+                ):
                     coverage_gap_count += 1
                 continue
             fetched_at = snapshot.events[-1].timestamp if snapshot.events else ""
@@ -1345,14 +1434,6 @@ def _timeline_payload(
                     "source_created_at": source_timestamps.get("source_created_at", ""),
                     "source_updated_at": source_timestamps.get("source_updated_at", ""),
                     "source_published_at": source_timestamps.get("source_published_at", ""),
-                    "plugin": str(snapshot.metadata.get("plugin", "")).strip() or "unknown-plugin",
-                    "actor": _rendered_actor(
-                        snapshot.metadata.get("actor"),
-                        session_root=dirs.session_dir,
-                    ),
-                    "target_actor": str(snapshot.metadata.get("target_actor") or "").strip(),
-                    "locator": locator,
-                    "preferred_name": snapshot_display_name(snapshot),
                     "checksum": snapshot.digest,
                     "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
                     "content_locator": content_locator(snapshot.digest),
@@ -1362,7 +1443,7 @@ def _timeline_payload(
                     ),
                     "fetched_at": fetched_at,
                     "follow_command": _follow_command(locator, checksum=snapshot.digest),
-                    "event_kind": "source",
+                    **source_payload,
                     **_resolved_visibility_metadata(
                         dict(snapshot.metadata),
                         provider=str(snapshot.metadata.get("plugin") or ""),
@@ -1374,6 +1455,23 @@ def _timeline_payload(
             )
         if normalized_mode == "best-effort":
             events.extend(local_events)
+        if match_filter:
+            events = [
+                item
+                for item in events
+                if _match_any(
+                    match_filter,
+                    item.get("actor"),
+                    item.get("target_actor"),
+                    item.get("plugin"),
+                    item.get("locator"),
+                    item.get("preferred_name"),
+                    item.get("detail"),
+                    item.get("surface"),
+                    item.get("event_kind"),
+                    item.get("source_time_field"),
+                )
+            ]
         ordered = sorted(
             events,
             key=lambda item: (
@@ -1389,7 +1487,7 @@ def _timeline_payload(
             include_all=include_all,
             default_tail_window=True,
         )
-        discovery_count, evidence_count = _artifact_kind_counts(paged)
+        discovery_count, evidence_count = _artifact_kind_counts(ordered)
         return {
             "sessionDir": str(dirs.session_dir),
             "contentDir": str(dirs.content_dir),
@@ -1403,6 +1501,7 @@ def _timeline_payload(
             **paging,
             "discoveryArtifactCount": discovery_count,
             "evidenceArtifactCount": evidence_count,
+            "matchFilter": match_filter,
             "events": paged,
         }
     manifest_events = [
@@ -1447,6 +1546,22 @@ def _timeline_payload(
             str(item.get("checksum") or ""),
         ),
     )
+    if match_filter:
+        events = [
+            item
+            for item in events
+            if _match_any(
+                match_filter,
+                item.get("actor"),
+                item.get("target_actor"),
+                item.get("plugin"),
+                item.get("locator"),
+                item.get("preferred_name"),
+                item.get("detail"),
+                item.get("surface"),
+                item.get("event_kind"),
+            )
+        ]
     paged, paging = _paginate_items(
         events,
         limit=limit,
@@ -1454,7 +1569,7 @@ def _timeline_payload(
         include_all=include_all,
         default_tail_window=True,
     )
-    discovery_count, evidence_count = _artifact_kind_counts(paged)
+    discovery_count, evidence_count = _artifact_kind_counts(events)
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -1468,6 +1583,7 @@ def _timeline_payload(
         **paging,
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
+        "matchFilter": match_filter,
         "events": paged,
     }
 
@@ -1501,7 +1617,7 @@ def _no_leads_next_step(*, has_artifacts: bool) -> str:
     )
 
 
-def _graph_payload(dirs) -> dict[str, object]:
+def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
     entries = _manifest_entries(dirs)
     snapshot_by_digest = {
         snapshot.digest: snapshot for snapshot in scan_content_store(dirs.content_dir)
@@ -1513,10 +1629,15 @@ def _graph_payload(dirs) -> dict[str, object]:
     source_variants: dict[str, set[tuple[str, str]]] = {}
     source_artifact_kinds: dict[str, set[str]] = {}
     source_visibility: dict[str, dict[str, object]] = {}
+    source_plugins: dict[str, set[str]] = {}
+    source_actors: dict[str, set[str]] = {}
+    content_plugins: dict[str, set[str]] = {}
+    content_actors: dict[str, set[str]] = {}
     for entry in entries:
         source = entry.get("canonical_locator") or entry.get("locator") or "unknown"
         checksum = entry.get("checksum") or ""
         plugin = entry.get("plugin") or "unknown"
+        actor = str(entry.get("actor") or "").strip()
         if not checksum:
             continue
         source_to_content.setdefault(source, set()).add(checksum)
@@ -1527,6 +1648,11 @@ def _graph_payload(dirs) -> dict[str, object]:
         kind = _artifact_kind(entry.get("artifact_kind"))
         if kind:
             source_artifact_kinds.setdefault(source, set()).add(kind)
+        source_plugins.setdefault(str(source), set()).add(str(plugin))
+        if actor:
+            source_actors.setdefault(str(source), set()).add(actor)
+            content_actors.setdefault(str(checksum), set()).add(actor)
+        content_plugins.setdefault(str(checksum), set()).add(str(plugin))
         source_visibility[source] = best_visibility_metadata(
             source_visibility.get(source, {}),
             _resolved_visibility_metadata(
@@ -1599,23 +1725,79 @@ def _graph_payload(dirs) -> dict[str, object]:
         }
         for (source, checksum, plugin), count in sorted(edge_counts.items())
     ]
+    match_filter = _match_filter_text(match)
+    if match_filter:
+        matched_sources = {
+            str(source["locator"])
+            for source in sources
+            if _match_any(
+                match_filter,
+                source["locator"],
+                source.get("artifactKind"),
+                source.get("artifactKinds"),
+                source.get("variants"),
+                source_plugins.get(str(source["locator"]), set()),
+                source_actors.get(str(source["locator"]), set()),
+            )
+        }
+        matched_content = {
+            str(item["checksum"])
+            for item in content
+            if _match_any(
+                match_filter,
+                item["checksum"],
+                item["preferredName"],
+                item["contentLocator"],
+                item["artifactLocator"],
+                item.get("artifactKind"),
+                content_plugins.get(str(item["checksum"]), set()),
+                content_actors.get(str(item["checksum"]), set()),
+            )
+        }
+        matched_edges = {
+            (str(edge["source"]), str(edge["checksum"]), str(edge["plugin"]))
+            for edge in edges
+            if _match_any(
+                match_filter,
+                edge["source"],
+                edge["checksum"],
+                edge["plugin"],
+                content_names.get(str(edge["checksum"]), ""),
+            )
+        }
+        kept_sources = matched_sources.union(source for source, _checksum, _plugin in matched_edges)
+        kept_content = matched_content.union(checksum for _source, checksum, _plugin in matched_edges)
+        sources = [item for item in sources if str(item["locator"]) in kept_sources]
+        content = [item for item in content if str(item["checksum"]) in kept_content]
+        edges = [
+            edge
+            for edge in edges
+            if str(edge["source"]) in kept_sources and str(edge["checksum"]) in kept_content
+        ]
     empty = not sources and not content and not edges
     discovery_count = sum(1 for item in content if item.get("artifactKind") == "discovery")
     evidence_count = sum(1 for item in content if item.get("artifactKind") == "evidence")
+    next_step = _topology_next_step(
+        discovery_count=discovery_count,
+        evidence_count=evidence_count,
+    )
+    if match_filter and empty:
+        next_step = (
+            f"No graph nodes matched {match_filter!r}. Clear `--match` or choose a "
+            "different locator, actor, plugin, or keyword."
+        )
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
+        "matchFilter": match_filter,
         "sourceCount": len(sources),
         "contentCount": len(content),
         "edgeCount": len(edges),
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
         "empty": empty,
-        "nextStep": _topology_next_step(
-            discovery_count=discovery_count,
-            evidence_count=evidence_count,
-        ),
+        "nextStep": next_step,
         "sources": sources,
         "content": content,
         "edges": edges,
@@ -1684,6 +1866,64 @@ def _render_mermaid(payload: dict[str, object]) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
+
+
+def _render_graph_text(payload: dict[str, object]) -> str:
+    lines = [
+        f"session: {payload['sessionDir']}",
+        f"manifest: {payload['manifestPath']}",
+        (
+            "graph: "
+            f"{payload['sourceCount']} sources, "
+            f"{payload['contentCount']} content nodes, "
+            f"{payload['edgeCount']} edges"
+            f"{_match_suffix(payload.get('matchFilter'))}"
+        ),
+        (
+            "artifacts: "
+            f"discovery {payload['discoveryArtifactCount']}, "
+            f"evidence {payload['evidenceArtifactCount']}"
+        ),
+    ]
+    if payload.get("nextStep"):
+        lines.append(f"next: {payload['nextStep']}")
+    if payload.get("sources"):
+        lines.append("sources:")
+        for source in payload["sources"]:
+            bits = [f"{int(source.get('contentCount') or 0)} content"]
+            if source.get("artifactKinds"):
+                bits.append(",".join(str(value) for value in source.get("artifactKinds") or []))
+            if bool(source.get("variant")):
+                bits.append(f"variants {int(source.get('variantCount') or 0)}")
+            lines.append(f"  - {source['locator']} ({'; '.join(bits)})")
+            lines.append(f"    follow: `{source['followCommand']}`")
+    if payload.get("content"):
+        lines.append("content:")
+        for item in payload["content"]:
+            bits = [str(item["checksum"])[:12], f"{int(item.get('sourceCount') or 0)} sources"]
+            if item.get("artifactKind"):
+                bits.append(str(item["artifactKind"]))
+            lines.append(f"  - {item['preferredName']} ({'; '.join(bits)})")
+            lines.append(
+                "    stored: "
+                + ", ".join(
+                    part
+                    for part in (
+                        f"`{item.get('artifactLocator')}`" if item.get("artifactLocator") else "",
+                        f"`{item.get('contentLocator')}`" if item.get("contentLocator") else "",
+                    )
+                    if part
+                )
+            )
+    if payload.get("edges"):
+        lines.append("edges:")
+        for edge in payload["edges"]:
+            label = str(edge["plugin"])
+            count = int(edge.get("count") or 0)
+            if count > 1:
+                label = f"{label} x{count}"
+            lines.append(f"  - {edge['source']} -> {edge['checksum'][:12]} ({label})")
     return "\n".join(lines)
 
 
@@ -2107,6 +2347,7 @@ def _leads_payload(
     dirs,
     *,
     target: str = "",
+    match: str = "",
     limit: int = 100,
     offset: int = 0,
     include_all: bool = False,
@@ -2126,14 +2367,38 @@ def _leads_payload(
         if str(edge.get("sourceChecksum", "")) in selected_digests
     ]
     lead_sources = aggregate_lead_sources(edge_records)
+    match_filter = _match_filter_text(match)
+    if match_filter:
+        lead_sources = [
+            lead
+            for lead in lead_sources
+            if _match_any(
+                match_filter,
+                lead.get("locator"),
+                lead.get("followCommand"),
+                lead.get("provider"),
+                lead.get("kind"),
+                lead.get("exampleRaw"),
+                lead.get("contexts"),
+                lead.get("relationKinds"),
+                lead.get("artifactLocators"),
+                lead.get("contentLocators"),
+                lead.get("searchOrigins"),
+            )
+        ]
     paged_sources, paging = _paginate_items(
         lead_sources,
         limit=limit,
         offset=offset,
         include_all=include_all,
     )
+    selected_lead_locators = {
+        str(lead.get("locator") or "").strip() for lead in lead_sources if str(lead.get("locator") or "").strip()
+    }
     selected_edges_by_checksum: dict[str, list[dict[str, object]]] = {}
     for edge in edge_records:
+        if selected_lead_locators and str(edge.get("targetLocator") or "").strip() not in selected_lead_locators:
+            continue
         selected_edges_by_checksum.setdefault(str(edge["sourceChecksum"]), []).append(edge)
     artifacts = []
     for snapshot in selected:
@@ -2141,6 +2406,8 @@ def _leads_payload(
             selected_edges_by_checksum.get(snapshot.digest, []),
             key=edge_best_first_sort_key,
         )
+        if match_filter and not edges:
+            continue
         artifacts.append(
             {
                 "checksum": snapshot.digest,
@@ -2164,20 +2431,21 @@ def _leads_payload(
     materialized_count = sum(1 for source in lead_sources if bool(source["materialized"]))
     discovery_count = sum(1 for item in artifacts if item.get("artifactKind") == "discovery")
     evidence_count = sum(1 for item in artifacts if item.get("artifactKind") == "evidence")
-    empty = not selected
+    empty = not artifacts and not lead_sources
     next_step = (
         _topology_next_step(discovery_count=discovery_count, evidence_count=evidence_count)
-        if empty
+        if empty and not match_filter and not selected
         else _no_leads_next_step(has_artifacts=bool(selected))
-        if not lead_sources
+        if not lead_sources and not match_filter and selected
         else ""
     )
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "target": target.strip(),
+        "matchFilter": match_filter,
         "limit": max(limit, 0),
-        "artifactCount": len(selected),
+        "artifactCount": len(artifacts),
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
         "leadCount": len(lead_sources),
@@ -3712,9 +3980,12 @@ def _render_search_origins(lead: dict[str, object]) -> str:
 def cmd_graph(args: argparse.Namespace) -> int:
     dirs = resolve_dirs(_options_from_args(args), create=False)
     _require_started_session(dirs)
-    payload = _graph_payload(dirs)
+    payload = _graph_payload(dirs, match=str(args.match or ""))
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    if args.output == "text":
+        print(_render_graph_text(payload))
         return 0
     print(_render_mermaid(payload))
     return 0
@@ -3726,6 +3997,7 @@ def cmd_leads(args: argparse.Namespace) -> int:
     payload = _leads_payload(
         dirs,
         target=args.target or "",
+        match=str(args.match or ""),
         limit=max(args.limit, 0),
         offset=max(args.offset, 0),
         include_all=bool(args.all),
@@ -3746,6 +4018,7 @@ def cmd_leads(args: argparse.Namespace) -> int:
         f"{payload['leadCount']} total (showing {payload['shownCount']}; "
         f"materialized {payload['materializedLeadCount']}, "
         f"unmaterialized {payload['unmaterializedLeadCount']})"
+        f"{_match_suffix(payload.get('matchFilter'))}"
     )
     print(
         _paging_summary_line(
@@ -3843,6 +4116,7 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         plugin=args.plugin or "",
         actor=args.actor or "",
         locator=args.locator or "",
+        match=str(args.match or ""),
         limit=args.limit,
         offset=max(args.offset, 0),
         include_all=bool(args.all),
@@ -3857,6 +4131,7 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         f"showing {payload['shownCount']}; "
         f"discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
+        f"{_match_suffix(payload.get('matchFilter'))}"
     )
     print(
         _paging_summary_line(
@@ -3928,6 +4203,7 @@ def cmd_timeline(args: argparse.Namespace) -> int:
         offset=max(args.offset, 0),
         include_all=bool(args.all),
         mode=args.mode,
+        match=str(args.match or ""),
     )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -3945,6 +4221,7 @@ def cmd_timeline(args: argparse.Namespace) -> int:
         f"{payload['eventCount']} total "
         f"(discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
+        f"{_match_suffix(payload.get('matchFilter'))}"
     )
     print(
         _paging_summary_line(

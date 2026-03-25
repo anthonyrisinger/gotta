@@ -25,7 +25,7 @@ from typing import Any
 from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.dispatch import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
-from gotta.project import pretty_json
+from gotta.project import html_markdown, html_text, pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
 from gotta.source import (
     derive_source_metadata_from_payload,
@@ -49,6 +49,7 @@ from gotta.providers.slack import (
     slack_api_post,
     slack_auth_path,
     slack_auth_test,
+    slack_web_get,
 )
 
 DEFAULT_RECENT_LOOKBACK = "3w"
@@ -64,12 +65,17 @@ CANONICAL_ARCHIVE_DIRNAME = "archive"
 MAX_SYNC_WINDOW = dt.timedelta(weeks=6)
 THREAD_HYDRATION_HALF_WINDOW = dt.timedelta(weeks=3)
 PERMALINK_RE = re.compile(
-    r"https://(?P<workspace>[^/.]+)\.slack\.com/archives/"
+    r"https://(?P<workspace>[^/.]+)(?:\.enterprise)?\.slack\.com/archives/"
     r"(?P<channel>[A-Z0-9]+)(?:/p(?P<pnum>[0-9]{16}))?"
+)
+DOC_URL_RE = re.compile(
+    r"https://(?P<workspace>[^/.]+)(?:\.enterprise)?\.slack\.com/docs/"
+    r"(?P<team>[A-Z0-9]+)/(?P<doc>[A-Z0-9]+)"
 )
 ARCHIVE_PATH_RE = re.compile(
     r"/archives/(?P<channel>[A-Z0-9]+)(?:/p(?P<pnum>[0-9]{16}))?"
 )
+DOC_PATH_RE = re.compile(r"/docs/(?P<team>[A-Z0-9]+)/(?P<doc>[A-Z0-9]+)")
 CHANNEL_ID_RE = re.compile(r"^[CDG][A-Z0-9]{8,}$")
 THREAD_COLON_RE = re.compile(r"^(?P<channel>[A-Z0-9]+):(?P<ts>[0-9]{10}\.[0-9]{6})$")
 THREAD_TS_RE = re.compile(r"^[0-9]{10}\.[0-9]{6}$")
@@ -95,6 +101,8 @@ class SlackRef:
     kind: str
     channel_id: str
     thread_ts: str | None = None
+    team_id: str | None = None
+    doc_id: str | None = None
     url: str | None = None
 
 
@@ -276,6 +284,8 @@ def canonical_locator(argv: list[str]) -> str:
         return f"slack:workspace:{workspace}" if workspace else "slack:status"
     if args.command == "get":
         ref = resolve_slack_ref(args.ref, workspace=args.workspace)
+        if ref.kind == "doc" and ref.team_id and ref.doc_id:
+            return f"slack:doc:{ref.team_id}:{ref.doc_id}"
         if ref.kind == "thread" and ref.thread_ts:
             return f"slack:thread:{ref.channel_id}:{ref.thread_ts.replace('.', '')}"
         return f"slack:channel:{ref.channel_id}"
@@ -291,6 +301,8 @@ def preferred_name(argv: list[str], options: object) -> str:
         return f"slack-workspace-{workspace}.{_output_extension(args.output)}"
     if args.command == "get":
         ref = resolve_slack_ref(args.ref, workspace=args.workspace)
+        if ref.kind == "doc" and ref.doc_id:
+            return f"{ref.doc_id}.html"
         if ref.kind == "thread" and ref.thread_ts:
             return f"p{ref.thread_ts.replace('.', '')}.json"
         return f"{ref.channel_id}.json"
@@ -306,6 +318,13 @@ def preferred_name(argv: list[str], options: object) -> str:
 def route_target(target: str) -> list[str] | None:
     if (
         target.startswith("https://")
+        and (".slack.com/docs/" in target or ".enterprise.slack.com/docs/" in target)
+    ):
+        if any(char.isspace() for char in target):
+            return None
+        return ["get", strip_http_url_fragment(target)]
+    if (
+        target.startswith("https://")
         and ".slack.com/archives/" in target
     ) or ("enterprise.slack.com" in target and "archives" in target):
         if any(char.isspace() for char in target):
@@ -319,6 +338,8 @@ def route_target(target: str) -> list[str] | None:
     if target.startswith("slack:channel:"):
         _, _, channel_id = target.split(":", 2)
         return ["get", channel_id]
+    if target.startswith("slack:doc:"):
+        return ["get", target]
     if target.startswith("slack:search "):
         return query_route(
             "search",
@@ -1035,6 +1056,105 @@ def canonical_message_url(
     return f"{permalink}?{query}"
 
 
+def canonical_doc_url(workspace: str, team_id: str, doc_id: str) -> str:
+    return f"https://{workspace}.slack.com/docs/{team_id}/{doc_id}"
+
+
+def _render_doc_markdown(data: bytes) -> bytes:
+    projected = html_markdown(data)
+    if projected is not None:
+        return projected
+    return html_text(data)
+
+
+def _doc_shell_reason(data: bytes, *, final_url: str) -> str:
+    text = data.decode("utf-8", errors="ignore").casefold()
+    url = final_url.casefold()
+    markers = (
+        ("unsupported browser", "Slack returned its unsupported-browser shell"),
+        ("sign in to slack", "Slack returned its sign-in shell"),
+        ("slack is your productivity platform", "Slack returned a workspace shell instead of document content"),
+        ("download slack for desktop", "Slack returned a browser/app shell instead of document content"),
+    )
+    for needle, reason in markers:
+        if needle in text:
+            return reason
+    if "unsupported_browser" in url or "/signin" in url:
+        return "Slack redirected to a non-document shell"
+    return ""
+
+
+def _doc_download_url(file_payload: dict[str, Any]) -> str:
+    for key in ("url_private_download", "url_private"):
+        value = str(file_payload.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _fetch_slack_doc(
+    ref: SlackRef,
+    *,
+    interactive_ok: bool,
+    timeout_seconds: int = DEFAULT_LIVE_SEARCH_TIMEOUT_SECONDS,
+) -> tuple[bytes, dict[str, Any]]:
+    if not ref.team_id or not ref.doc_id:
+        raise ToolError("invalid Slack doc locator; expected team and doc identifiers")
+    auth_state, _path = ensure_live_search_auth(ref.workspace, interactive_ok=interactive_ok)
+    file_payload = slack_api_post(
+        ref.workspace,
+        auth_state,
+        "files.info",
+        data={"file": ref.doc_id},
+        timeout_seconds=timeout_seconds,
+    ).get("file")
+    if not isinstance(file_payload, dict):
+        raise ToolError(
+            f"Slack doc {ref.team_id}:{ref.doc_id} could not be resolved through files.info."
+        )
+    download_url = _doc_download_url(file_payload)
+    if not download_url:
+        raise ToolError(
+            f"Slack doc {ref.team_id}:{ref.doc_id} does not expose a downloadable body."
+        )
+    url = ref.url or canonical_doc_url(ref.workspace, ref.team_id, ref.doc_id)
+    payload = slack_web_get(
+        ref.workspace,
+        auth_state,
+        download_url,
+        timeout_seconds=timeout_seconds,
+    )
+    body = bytes(payload.get("body") or b"")
+    final_url = str(payload.get("url") or download_url)
+    shell_reason = _doc_shell_reason(body, final_url=final_url)
+    if shell_reason:
+        raise ToolError(
+            f"Slack doc {ref.team_id}:{ref.doc_id} could not be rendered natively: "
+            f"{shell_reason}."
+        )
+    return body, {
+        "workspace": ref.workspace,
+        "kind": "doc",
+        "teamId": ref.team_id,
+        "docId": ref.doc_id,
+        "url": str(file_payload.get("permalink") or url),
+        "contentType": str(payload.get("contentType") or ""),
+        "retrieval": "live_auth_files_info_download",
+    }
+
+
+def _doc_meta_from_capture(capture: Capture) -> dict[str, Any]:
+    return {
+        "workspace": str(capture.meta.get("workspace") or ""),
+        "kind": "doc",
+        "teamId": str(capture.meta.get("team_id") or ""),
+        "docId": str(capture.meta.get("doc_id") or ""),
+        "url": str(capture.meta.get("url") or ""),
+        "contentType": str(capture.meta.get("content_type") or ""),
+        "retrieval": str(capture.meta.get("retrieval") or "live_auth_files_info_download"),
+    }
+
+
 def normalize_pnum(pnum: str) -> str:
     if len(pnum) != 16:
         raise ToolError(
@@ -1079,6 +1199,18 @@ def parse_slack_ref(raw: str, *, workspace: str) -> SlackRef:
                 thread_ts=thread_ts,
                 url=canonical_thread_url(workspace, channel_id, thread_ts),
             )
+    if value.startswith("slack:doc:"):
+        _prefix, _kind, team_id, doc_id = (value.split(":", 3) + ["", "", "", ""])[:4]
+        if team_id and doc_id:
+            return SlackRef(
+                raw=raw,
+                workspace=workspace,
+                kind="doc",
+                channel_id="",
+                team_id=team_id,
+                doc_id=doc_id,
+                url=canonical_doc_url(workspace, team_id, doc_id),
+            )
 
     match = THREAD_COLON_RE.match(value)
     if match:
@@ -1110,6 +1242,20 @@ def parse_slack_ref(raw: str, *, workspace: str) -> SlackRef:
 
     for candidate in candidates:
         query_thread_ts = thread_ts_from_query(candidate)
+        doc_match = DOC_URL_RE.search(candidate)
+        if doc_match:
+            ref_workspace = doc_match.group("workspace")
+            team_id = doc_match.group("team")
+            doc_id = doc_match.group("doc")
+            return SlackRef(
+                raw=raw,
+                workspace=ref_workspace,
+                kind="doc",
+                channel_id="",
+                team_id=team_id,
+                doc_id=doc_id,
+                url=canonical_doc_url(ref_workspace, team_id, doc_id),
+            )
         match = PERMALINK_RE.search(candidate)
         if match:
             ref_workspace = match.group("workspace")
@@ -1152,6 +1298,19 @@ def parse_slack_ref(raw: str, *, workspace: str) -> SlackRef:
                 kind="channel",
                 channel_id=channel_id,
                 url=canonical_thread_url(workspace, channel_id),
+            )
+        doc_path_match = DOC_PATH_RE.search(candidate)
+        if doc_path_match:
+            team_id = doc_path_match.group("team")
+            doc_id = doc_path_match.group("doc")
+            return SlackRef(
+                raw=raw,
+                workspace=workspace,
+                kind="doc",
+                channel_id="",
+                team_id=team_id,
+                doc_id=doc_id,
+                url=canonical_doc_url(workspace, team_id, doc_id),
             )
 
     raise ToolError(
@@ -3487,8 +3646,21 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_get(args: argparse.Namespace) -> int:
-    ensure_workspace_auth(args.workspace, interactive_ok=is_interactive())
     ref = resolve_slack_ref(args.ref, workspace=args.workspace)
+    if ref.kind == "doc":
+        html_bytes, meta = _fetch_slack_doc(ref, interactive_ok=is_interactive())
+        if args.output in {"json", "meta"}:
+            print_json(meta)
+        elif args.output == "messages":
+            raise ToolError(
+                "`gotta slack get ... --output messages` is only supported for channel and thread reads; "
+                "Slack docs support markdown, text, json, or meta."
+            )
+        elif args.output == "markdown":
+            sys.stdout.buffer.write(_render_doc_markdown(html_bytes))
+        else:
+            sys.stdout.buffer.write(html_text(html_bytes))
+        return 0
     ensure_workspace_auth(ref.workspace, interactive_ok=is_interactive())
     window = resolve_channel_window(args)
     if ref.kind == "thread" and args.pull_recent:
@@ -3676,6 +3848,24 @@ def capture(argv: list[str], _options: object) -> Capture:
                 },
             )
         raise NotImplementedError("slack capture does not support this command")
+    ref = resolve_slack_ref(args.ref, workspace=args.workspace)
+    if ref.kind == "doc":
+        html_bytes, meta = _fetch_slack_doc(ref, interactive_ok=is_interactive())
+        return Capture(
+            data=html_bytes,
+            name=f"{ref.doc_id}.html" if ref.doc_id else preferred_name(argv, object()),
+            type="text/html",
+            meta={
+                "projector": "slack",
+                "slack_kind": "doc",
+                "workspace": ref.workspace,
+                "team_id": ref.team_id or "",
+                "doc_id": ref.doc_id or "",
+                "url": str(meta.get("url") or ref.url or ""),
+                "content_type": str(meta.get("contentType") or ""),
+                "retrieval": str(meta.get("retrieval") or "live_auth_files_info_download"),
+            },
+        )
     captured_args = argparse.Namespace(**vars(args))
     captured_args.output = "json"
     with capture_stdout() as captured:
@@ -3683,7 +3873,6 @@ def capture(argv: list[str], _options: object) -> Capture:
     if code != 0:
         detail = captured.getvalue().decode("utf-8", errors="replace").strip()
         raise RuntimeError(detail or "slack get capture failed")
-    ref = resolve_slack_ref(args.ref, workspace=args.workspace)
     name = (
         f"p{ref.thread_ts.replace('.', '')}.json"
         if ref.kind == "thread" and ref.thread_ts
@@ -3718,6 +3907,22 @@ def project(argv: list[str], capture: Capture) -> bytes:
         if args.output == "links":
             return render_search_links(payload).encode("utf-8")
         return render_search_markdown(payload).encode("utf-8")
+    if kind == "doc":
+        if not argv:
+            return _render_doc_markdown(capture.data)
+        args = _parse_cli(argv)
+        if args.command != "get":
+            return capture.data
+        if args.output in {"json", "meta"}:
+            return json_bytes(_doc_meta_from_capture(capture))
+        if args.output == "messages":
+            raise ToolError(
+                "`gotta slack get ... --output messages` is only supported for channel and thread reads; "
+                "Slack docs support markdown, text, json, or meta."
+            )
+        if args.output == "markdown":
+            return _render_doc_markdown(capture.data)
+        return html_text(capture.data)
     envelope = json.loads(capture.data.decode("utf-8"))
     if not argv:
         return render_markdown(envelope).encode("utf-8")
@@ -4302,9 +4507,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "get",
-        help="fetch one Slack thread or read one channel from the cached workspace archive",
+        help="fetch one Slack thread/doc or read one channel from the native Slack surfaces",
     )
-    p.add_argument("ref", help="Slack thread/channel URL, channel ID, or thread colon notation")
+    p.add_argument(
+        "ref",
+        help="Slack thread/channel/doc URL, channel ID, canonical doc locator, or thread colon notation",
+    )
     p.add_argument("--workspace", default=default_workspace())
     p.add_argument(
         "--output",

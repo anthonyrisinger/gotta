@@ -329,6 +329,58 @@ def slack_api_post(
     return payload
 
 
+def slack_web_get(
+    workspace: str,
+    auth_state: dict[str, Any],
+    url: str,
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    token = str(auth_state.get("token") or "").strip()
+    cookies = auth_state.get("cookies")
+    if not token or not isinstance(cookies, list):
+        raise SlackError(
+            f"missing Slack live auth for {workspace}. run "
+            f"`gotta slack auth --workspace {workspace}`."
+        )
+    request = urllib.request.Request(url, method="GET")
+    request.add_header("Cookie", cookie_header(cookies))
+    request.add_header(
+        "Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    )
+    request.add_header(
+        "User-Agent",
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/134.0.0.0 Safari/537.36"
+        ),
+    )
+    request.add_header("Accept-Language", "en-US,en;q=0.9")
+    request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("User-Actor", "gotta/slack")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return {
+                "body": response.read(),
+                "url": response.geturl() or url,
+                "contentType": response.headers.get("Content-Type", ""),
+            }
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            retry_after = exc.headers.get("Retry-After", "").strip()
+            raise SlackError(
+                "Slack live doc fetch is rate limited"
+                + (f"; retry after {retry_after}s" if retry_after else "")
+                + ". Retry later."
+            ) from exc
+        body = exc.read().decode("utf-8", errors="replace")
+        raise SlackError(f"Slack doc fetch failed with HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise SlackError(f"Slack doc fetch failed: {exc.reason}") from exc
+
+
 def slack_auth_test(workspace: str, auth_state: dict[str, Any]) -> dict[str, Any]:
     return slack_api_post(workspace, auth_state, "auth.test", data={}, timeout_seconds=10)
 

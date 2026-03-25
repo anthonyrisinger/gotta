@@ -554,6 +554,20 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
     )
     assert (
         dispatch.canonical_locator(
+            "slack",
+            ["get", "https://example.slack.com/docs/T12345678/F12345678"],
+        )
+        == "slack:doc:T12345678:F12345678"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "read",
+            ["https://example.slack.com/docs/T12345678/F12345678"],
+        )
+        == "slack:doc:T12345678:F12345678"
+    )
+    assert (
+        dispatch.canonical_locator(
             "gdrive",
             ["get", "https://drive.google.com/file/d/drive-file-123/view?usp=sharing"],
         )
@@ -1703,6 +1717,13 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
     assert plugin_api.get_plugin("slack").route_target(
         "slack:thread:C12345678:1773085070240949"
     ) == ["get", "C12345678:1773085070.240949"]
+    assert plugin_api.get_plugin("slack").route_target(
+        "https://example.slack.com/docs/T12345678/F12345678#fragment"
+    ) == ["get", "https://example.slack.com/docs/T12345678/F12345678"]
+    assert plugin_api.get_plugin("slack").route_target("slack:doc:T12345678:F12345678") == [
+        "get",
+        "slack:doc:T12345678:F12345678",
+    ]
     assert plugin_api.get_plugin("slack").route_target("slack:search Architecture") == [
         "search",
         "Architecture",

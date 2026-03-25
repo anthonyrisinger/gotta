@@ -149,6 +149,9 @@ def _canonicalize_github_url(value: str) -> str:
 
 def _canonicalize_slack_ref(value: str) -> str:
     parsed = urllib.parse.urlparse(value)
+    doc_match = re.search(r"/docs/([^/]+)/([^/]+)", parsed.path)
+    if doc_match:
+        return f"slack:doc:{doc_match.group(1)}:{doc_match.group(2)}"
     match = re.search(r"/archives/([^/]+)(?:/p(\d+))?", parsed.path)
     if not match:
         return f"slack:{value}"

@@ -1590,8 +1590,8 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
     assert payload["status"] == "pending"
     assert payload["notes_status"] == "present"
     assert payload["artifact_count"] == 1
-    assert "actor-authored narration and shared evidence" in payload["next_step"]
-    assert "gotta actor signoff" in payload["next_step"]
+    assert "new evidence landed after the last short note" in payload["next_step"]
+    assert "Land a short note now" in payload["next_step"]
 
 
 def test_actor_notes_projection_describes_notes_as_canonical_narration(
@@ -2415,6 +2415,66 @@ def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
     analyze_output = capsys.readouterr().out
     assert "Discovery artifacts are present, but no evidence artifacts exist yet." in analyze_output
     assert "focus: use `gotta session analyze --focus <locator|keyword>" in analyze_output
+
+
+def test_session_graph_match_prunes_to_matching_subgraph_and_supports_text_output(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"# Generic Item\n\nReference.\n",
+        dirs=dirs,
+        preferred_name="generic-item.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "artifact_kind": "evidence",
+            "locator": "get GEN-1",
+            "canonical_locator": "jira:GEN-1",
+            "actor": "generic-actor",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"# Generic Page\n\nReference.\n",
+        dirs=dirs,
+        preferred_name="generic-page.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "artifact_kind": "evidence",
+            "locator": "get 202",
+            "canonical_locator": "confluence:202",
+            "actor": "generic-actor",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert (
+        session.main(
+            ["graph", "--session", str(local_root), "--match", "jira", "--output", "json"]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matchFilter"] == "jira"
+    assert payload["sourceCount"] == 1
+    assert payload["contentCount"] == 1
+    assert payload["edgeCount"] == 1
+    assert payload["sources"][0]["locator"] == "jira:GEN-1"
+
+    assert (
+        session.main(
+            ["graph", "--session", str(local_root), "--match", "jira", "--output", "text"]
+        )
+        == 0
+    )
+    rendered = capsys.readouterr().out
+    assert "match 'jira'" in rendered
+    assert "jira:GEN-1" in rendered
+    assert "confluence:202" not in rendered
 
 
 def test_session_analyze_defaults_to_text_overview_with_middle_sections(
@@ -3289,6 +3349,52 @@ def test_session_leads_orders_best_first_without_quality_thresholds(
     assert "suppressedLeadCount" not in payload
 
 
+def test_session_leads_match_filters_surviving_leads_without_reordering_them(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        (
+            "# GEN-1\n\n"
+            "Depends on GEN-2.\n"
+            "Runbook: https://docs.example.test/runbook\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="GEN-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get GEN-1",
+            "canonical_locator": "jira:GEN-1",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "leads",
+                "--session",
+                str(local_root),
+                "--match",
+                "runbook",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["matchFilter"] == "runbook"
+    assert payload["leadCount"] == 1
+    assert payload["artifactCount"] == 1
+    assert payload["leadSources"][0]["locator"] == "https://docs.example.test/runbook"
+
+
 def test_session_leads_shows_low_signal_only_case_without_hiding_it(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -3849,6 +3955,59 @@ def test_session_manifest_accepts_stdout_flag_for_uniformity(
     assert payload["entryCount"] == 1
 
 
+def test_session_manifest_match_filters_rows_before_paging(
+    tmp_path: Path, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"north",
+        dirs=dirs,
+        preferred_name="north-ledger.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "GEN-1",
+            "canonical_locator": "jira:GEN-1",
+            "actor": "generic-actor-a",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"south",
+        dirs=dirs,
+        preferred_name="south-runbook.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "locator": "202",
+            "canonical_locator": "confluence:202",
+            "actor": "generic-actor-b",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    assert (
+        session.main(
+            [
+                "manifest",
+                "--session",
+                str(local_root),
+                "--match",
+                "south",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matchFilter"] == "south"
+    assert payload["entryCount"] == 1
+    assert payload["fetchRecordCount"] == 1
+    assert payload["entries"][0]["canonical_locator"] == "confluence:202"
+
+
 def test_session_manifest_falls_back_to_content_locator_when_canonical_missing(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -3950,6 +4109,111 @@ def test_session_timeline_accepts_stdout_flag_for_uniformity(
     assert session.main(["timeline", "--session", str(local_root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["eventCount"] == 1
+
+
+def test_session_timeline_match_filters_events_before_paging(
+    tmp_path: Path, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"north",
+        dirs=dirs,
+        preferred_name="north.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "GEN-1",
+            "canonical_locator": "jira:GEN-1",
+            "actor": "generic-actor-a",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"south",
+        dirs=dirs,
+        preferred_name="south.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "locator": "202",
+            "canonical_locator": "confluence:202",
+            "actor": "generic-actor-b",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    assert (
+        session.main(
+            [
+                "timeline",
+                "--session",
+                str(local_root),
+                "--match",
+                "south",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matchFilter"] == "south"
+    assert payload["eventCount"] == 1
+    assert payload["events"][0]["locator"] == "confluence:202"
+    assert payload["events"][0]["plugin"] == "confluence"
+
+
+def test_session_timeline_match_filters_coverage_gaps_in_source_modes(
+    tmp_path: Path, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"north content",
+        dirs=dirs,
+        preferred_name="north-gap.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "GEN-11",
+            "canonical_locator": "jira:GEN-11",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"south content",
+        dirs=dirs,
+        preferred_name="south-gap.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "locator": "909",
+            "canonical_locator": "confluence:909",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    assert (
+        session.main(
+            [
+                "timeline",
+                "--session",
+                str(local_root),
+                "--mode",
+                "created",
+                "--match",
+                "south",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matchFilter"] == "south"
+    assert payload["eventCount"] == 0
+    assert payload["coverageGapCount"] == 1
 
 
 def test_session_timeline_default_limit_keeps_latest_window(

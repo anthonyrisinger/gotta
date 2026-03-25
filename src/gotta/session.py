@@ -1421,7 +1421,7 @@ def _seed_session_files(
         create_todo_item(
             session_dir,
             section="Status",
-            text="Append a first short note as soon as the main actor lands a strong anchor, then keep landing short notes after each material evidence wave.",
+            text="Append a first short note as soon as the main actor lands a strong anchor, then append another short note after the first substantive evidence wave and before final synthesis/signoff.",
         )
         create_todo_item(
             session_dir,
@@ -1447,7 +1447,7 @@ def _seed_session_files(
             bootstrap_lines.append("Imported `VOICE.md`")
         bootstrap_lines.append("Seeded as the procedural/system trace for this session")
         bootstrap_lines.append(
-            "Keep actor-authored narration in `NOTES.md`; one-line notes after strong anchors and evidence waves are expected."
+            "Keep actor-authored narration in `NOTES.md`; one-line notes after strong anchors, substantive evidence waves, and final synthesis/signoff are expected."
         )
         append_log_record(session_dir, message="\n".join(bootstrap_lines))
         sync_logs_projection(session_dir)
@@ -2212,13 +2212,28 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     voice_setup = voice == "setup"
     voice_pulse = voice == "pulse"
     progress_stale = bool(progress.get("progress_stale"))
+    last_note_at = str(note_summary.get("last_note_at") or "")
+    last_artifact_at = str(evidence.get("last_artifact_at") or "")
+    needs_note_refresh = bool(
+        evidence_live and last_artifact_at and (not last_note_at or last_artifact_at > last_note_at)
+    )
     low_signal_progress = (
         bool(runtime_live)
         and progress_stale
         and int(evidence.get("artifact_count") or 0) == 0
     )
     if derived_status == "closing":
-        if notes_ready:
+        if notes_ready and needs_note_refresh:
+            next_step = (
+                "actor close-out is pending while the runtime is still live, and new "
+                "actor-attributed evidence landed after the last short note. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Land one final short note now so the close-out reflects the latest evidence, "
+                "then wait for runtime exit before treating the terminal disposition as authoritative."
+                + request_note
+                + runtime_note
+            )
+        elif notes_ready:
             next_step = (
                 "actor close-out is pending while the runtime is still live. "
                 + (evidence_note + " " if evidence_note else "")
@@ -2259,7 +2274,17 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + runtime_note
             )
     elif derived_status == "producing_evidence":
-        if notes_ready:
+        if notes_ready and needs_note_refresh:
+            next_step = (
+                "actor is still active and producing evidence artifacts, and new evidence landed "
+                "after the last short note. "
+                + (evidence_note + " " if evidence_note else "")
+                + "Land a short note now so the latest evidence wave has durable actor narration, "
+                f"then recheck `gotta actor status {_normalize_actor_name(actor_name)}` shortly."
+                + request_note
+                + runtime_note
+            )
+        elif notes_ready:
             next_step = (
                 "actor is still active and producing evidence artifacts. "
                 + (evidence_note + " " if evidence_note else "")
@@ -2299,6 +2324,15 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + request_note
                 + runtime_note
             )
+    elif derived_status in {"starting", "active"} and notes_ready and needs_note_refresh:
+        next_step = (
+            "actor is still active and new actor-attributed evidence landed after the last short "
+            "note. "
+            + (evidence_note + " " if evidence_note else "")
+            + "Land a short note now so the current evidence wave is narrated before close-out."
+            + request_note
+            + runtime_note
+        )
     elif derived_status in {"starting", "active"} and notes_ready:
         next_step = (
             "actor is still active and actor voice is present. "
@@ -2356,7 +2390,12 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             + request_note
         )
     elif derived_status == "completed" and (notes_ready or evidence_live):
-        if notes_ready:
+        if notes_ready and needs_note_refresh:
+            next_step = (
+                "actor run is complete, but new actor-attributed evidence landed after the last "
+                "short note. Land one short note now, then record durable sign-off intentionally."
+            )
+        elif notes_ready:
             next_step = (
                 "actor run is complete; inspect NOTES.md plus the shared evidence web, then record "
                 "durable sign-off with "
@@ -2384,6 +2423,14 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "actor was manually marked failed, but evidence already landed in shared state. "
             + evidence_note
             + " Keep or reject that evidence intentionally instead of assuming it vanished."
+        )
+    elif derived_status in {"pending", "bound"} and notes_ready and evidence_live and needs_note_refresh:
+        next_step = (
+            "actor already has actor-authored narration and shared evidence, but new evidence "
+            "landed after the last short note. "
+            + (evidence_note + " " if evidence_note else "")
+            + "Land a short note now, then keep landing short notes after each substantive "
+            "evidence wave so review, handoff, and session-wide inspection surfaces stay current."
         )
     elif derived_status in {"pending", "bound"} and notes_ready and evidence_live:
         next_step = (

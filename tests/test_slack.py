@@ -347,6 +347,129 @@ def test_resolve_slack_ref_accepts_canonical_thread_locator() -> None:
     assert ref.url == "https://demo.slack.com/archives/C12345678/p1773075428384009"
 
 
+def test_resolve_slack_ref_accepts_doc_url_and_canonical_locator() -> None:
+    url_ref = slack.resolve_slack_ref(
+        "https://example.slack.com/docs/T12345678/F12345678",
+        workspace="",
+    )
+    locator_ref = slack.resolve_slack_ref(
+        "slack:doc:T12345678:F12345678",
+        workspace="example",
+    )
+
+    assert url_ref.kind == "doc"
+    assert url_ref.workspace == "example"
+    assert url_ref.team_id == "T12345678"
+    assert url_ref.doc_id == "F12345678"
+    assert url_ref.url == "https://example.slack.com/docs/T12345678/F12345678"
+    assert locator_ref.kind == "doc"
+    assert locator_ref.url == "https://example.slack.com/docs/T12345678/F12345678"
+
+
+def test_cmd_get_doc_uses_live_auth_and_renders_markdown(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        slack,
+        "ensure_workspace_auth",
+        lambda workspace, interactive_ok: (_ for _ in ()).throw(
+            AssertionError("doc reads should not require slackdump workspace auth")
+        ),
+    )
+    monkeypatch.setattr(
+        slack,
+        "ensure_live_search_auth",
+        lambda workspace, interactive_ok: ({"token": "x", "cookies": [{"name": "d", "value": "cookie"}]}, Path("/tmp/slack-auth.json")),
+    )
+    api_calls: list[tuple[str, dict[str, str]]] = []
+    calls: list[str] = []
+
+    def fake_api_post(
+        workspace: str,
+        auth_state: dict[str, object],
+        method: str,
+        *,
+        data: dict[str, str],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        api_calls.append((method, data))
+        return {
+            "ok": True,
+            "file": {
+                "id": "F12345678",
+                "mimetype": "application/vnd.slack-docs",
+                "filetype": "quip",
+                "mode": "quip",
+                "permalink": "https://example.slack.com/docs/T12345678/F12345678",
+                "url_private_download": "https://files.slack.com/files-pri/T12345678-F12345678/download/canvas",
+            },
+        }
+
+    def fake_web_get(workspace: str, auth_state: dict[str, object], url: str, *, timeout_seconds: int):
+        calls.append(url)
+        return {
+            "body": b"<html><body><h1>Generic Doc</h1><p>Generic body.</p></body></html>",
+            "url": url,
+            "contentType": "text/html; charset=utf-8",
+        }
+
+    monkeypatch.setattr(slack, "slack_api_post", fake_api_post)
+    monkeypatch.setattr(slack, "slack_web_get", fake_web_get)
+    monkeypatch.setattr(slack, "html_markdown", lambda data: b"# Generic Doc\n\nGeneric body.\n")
+
+    assert (
+        slack.main(
+            [
+                "get",
+                "https://example.slack.com/docs/T12345678/F12345678",
+                "--output",
+                "markdown",
+            ]
+        )
+        == 0
+    )
+
+    rendered = capsys.readouterr().out
+    assert api_calls == [("files.info", {"file": "F12345678"})]
+    assert calls == ["https://files.slack.com/files-pri/T12345678-F12345678/download/canvas"]
+    assert "# Generic Doc" in rendered
+    assert "Generic body." in rendered
+
+
+def test_slack_doc_capture_fails_closed_on_shell_html(monkeypatch) -> None:
+    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack,
+        "ensure_live_search_auth",
+        lambda workspace, interactive_ok: ({"token": "x", "cookies": [{"name": "d", "value": "cookie"}]}, Path("/tmp/slack-auth.json")),
+    )
+    monkeypatch.setattr(
+        slack,
+        "slack_api_post",
+        lambda workspace, auth_state, method, data, timeout_seconds: {
+            "ok": True,
+            "file": {
+                "id": "F12345678",
+                "mimetype": "application/vnd.slack-docs",
+                "filetype": "quip",
+                "mode": "quip",
+                "permalink": "https://example.slack.com/docs/T12345678/F12345678",
+                "url_private_download": "https://files.slack.com/files-pri/T12345678-F12345678/download/canvas",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        slack,
+        "slack_web_get",
+        lambda workspace, auth_state, url, timeout_seconds: {
+            "body": b"<html><body>unsupported browser</body></html>",
+            "url": url,
+            "contentType": "text/html",
+        },
+    )
+
+    with pytest.raises(slack.ToolError, match="could not be rendered natively"):
+        slack.capture(["get", "https://example.slack.com/docs/T12345678/F12345678"], object())
+
+
 def test_render_markdown_never_degrades_channel_label_to_bare_hash() -> None:
     envelope = {
         "workspace": "demo",
