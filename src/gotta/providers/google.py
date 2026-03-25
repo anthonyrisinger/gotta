@@ -547,29 +547,57 @@ def parse_sheet_ref(raw: str) -> tuple[str, str]:
     raise GoogleError(f"could not parse Google Sheets spreadsheet ID from input: {raw}")
 
 
+def _drive_api_url(
+    *segments: str,
+    params: dict[str, str] | None = None,
+    supports_all_drives: bool = False,
+    include_items_from_all_drives: bool = False,
+) -> str:
+    base = GOOGLE_DRIVE_API_URL.rstrip("/")
+    if segments:
+        encoded_segments = [urllib.parse.quote(segment, safe="") for segment in segments]
+        base = "/".join([base, *encoded_segments])
+    query_params: dict[str, str] = {}
+    if params:
+        query_params.update(params)
+    if supports_all_drives:
+        query_params["supportsAllDrives"] = "true"
+    if include_items_from_all_drives:
+        query_params["includeItemsFromAllDrives"] = "true"
+    if not query_params:
+        return base
+    return f"{base}?{urllib.parse.urlencode(query_params)}"
+
+
 def drive_file_meta(
     access_token: str,
     file_id: str,
     *,
     fields: str = DEFAULT_DRIVE_FIELDS,
 ) -> dict[str, Any]:
-    url = (
-        f"{GOOGLE_DRIVE_API_URL}/{urllib.parse.quote(file_id)}"
-        f"?fields={urllib.parse.quote(fields, safe=',()')}"
+    url = _drive_api_url(
+        file_id,
+        params={"fields": fields},
+        supports_all_drives=True,
     )
     return google_json(url, access_token)
 
 
 def drive_export(access_token: str, file_id: str, mime_type: str) -> bytes:
-    url = (
-        f"{GOOGLE_DRIVE_API_URL}/{urllib.parse.quote(file_id)}/export"
-        f"?mimeType={urllib.parse.quote(mime_type, safe='')}"
+    url = _drive_api_url(
+        file_id,
+        "export",
+        params={"mimeType": mime_type},
     )
     return google_bytes(url, access_token)
 
 
 def drive_download_bytes(access_token: str, file_id: str) -> bytes:
-    url = f"{GOOGLE_DRIVE_API_URL}/{urllib.parse.quote(file_id)}?alt=media"
+    url = _drive_api_url(
+        file_id,
+        params={"alt": "media"},
+        supports_all_drives=True,
+    )
     return google_bytes(url, access_token)
 
 
@@ -578,15 +606,17 @@ def escape_drive_query(value: str) -> str:
 
 
 def drive_search_files(access_token: str, q: str, *, limit: int, fields: str) -> list[dict[str, Any]]:
-    params = urllib.parse.urlencode(
-        {
+    url = _drive_api_url(
+        params={
             "q": q,
             "pageSize": str(limit),
             "orderBy": "modifiedTime desc",
             "fields": f"files({fields})",
-        }
+        },
+        supports_all_drives=True,
+        include_items_from_all_drives=True,
     )
-    payload = google_json(f"{GOOGLE_DRIVE_API_URL}?{params}", access_token)
+    payload = google_json(url, access_token)
     files = payload.get("files")
     if not isinstance(files, list):
         raise GoogleError("unexpected Google Drive search response: missing files list")

@@ -716,7 +716,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gotta gsheets",
         description=(
             "Read-only Google Sheets helper. Uses shared Google OAuth state and "
-            "the Sheets/Drive APIs for spreadsheet-first retrieval."
+            "the Sheets/Drive APIs for spreadsheet-first retrieval, including "
+            "accessible shared-drive spreadsheets."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)

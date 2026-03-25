@@ -834,7 +834,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gotta gdrive",
         description=(
             "Read-only Google Drive helper. Uses shared Google OAuth state and "
-            "the Drive API for file metadata, document export, and binary download."
+            "the Drive API for file metadata, document export, binary download, "
+            "and accessible shared-drive content."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)

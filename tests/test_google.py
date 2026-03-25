@@ -62,6 +62,85 @@ def test_parse_drive_ref_rejects_unstructured_input() -> None:
         google.parse_drive_ref("not a valid drive ref")
 
 
+def test_drive_file_meta_includes_shared_drive_support(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_google_json(url: str, _access_token: str) -> dict[str, object]:
+        captured["url"] = url
+        return {"id": "file-123"}
+
+    monkeypatch.setattr(google, "google_json", fake_google_json)
+
+    payload = google.drive_file_meta("token", "file-123", fields="id,name")
+
+    parsed = urllib.parse.urlparse(captured["url"])
+    query = urllib.parse.parse_qs(parsed.query)
+    assert payload == {"id": "file-123"}
+    assert parsed.path.endswith("/file-123")
+    assert query["fields"] == ["id,name"]
+    assert query["supportsAllDrives"] == ["true"]
+
+
+def test_drive_export_uses_only_documented_parameters(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_google_bytes(url: str, _access_token: str) -> bytes:
+        captured["url"] = url
+        return b"<p>Generic document</p>"
+
+    monkeypatch.setattr(google, "google_bytes", fake_google_bytes)
+
+    payload = google.drive_export("token", "doc-123", "text/html")
+
+    parsed = urllib.parse.urlparse(captured["url"])
+    query = urllib.parse.parse_qs(parsed.query)
+    assert payload == b"<p>Generic document</p>"
+    assert parsed.path.endswith("/doc-123/export")
+    assert query["mimeType"] == ["text/html"]
+    assert "supportsAllDrives" not in query
+
+
+def test_drive_download_bytes_includes_shared_drive_support(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_google_bytes(url: str, _access_token: str) -> bytes:
+        captured["url"] = url
+        return b"generic-bytes"
+
+    monkeypatch.setattr(google, "google_bytes", fake_google_bytes)
+
+    payload = google.drive_download_bytes("token", "file-123")
+
+    parsed = urllib.parse.urlparse(captured["url"])
+    query = urllib.parse.parse_qs(parsed.query)
+    assert payload == b"generic-bytes"
+    assert parsed.path.endswith("/file-123")
+    assert query["alt"] == ["media"]
+    assert query["supportsAllDrives"] == ["true"]
+
+
+def test_drive_search_files_includes_shared_drive_flags(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_google_json(url: str, _access_token: str) -> dict[str, object]:
+        captured["url"] = url
+        return {"files": []}
+
+    monkeypatch.setattr(google, "google_json", fake_google_json)
+
+    payload = google.drive_search_files("token", "name contains 'generic'", limit=7, fields="id,name")
+
+    parsed = urllib.parse.urlparse(captured["url"])
+    query = urllib.parse.parse_qs(parsed.query)
+    assert payload == []
+    assert parsed.path.endswith("/files")
+    assert query["q"] == ["name contains 'generic'"]
+    assert query["pageSize"] == ["7"]
+    assert query["supportsAllDrives"] == ["true"]
+    assert query["includeItemsFromAllDrives"] == ["true"]
+    assert "corpora" not in query
+
+
 def test_google_status_payload_reports_missing_session(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(google, "TOKEN_FILE", tmp_path / "oauth.json")
     monkeypatch.setattr(google, "CONFIG_FILE", tmp_path / "gotta.toml")
@@ -259,6 +338,25 @@ def test_gdocs_search_reports_gdocs_as_source(monkeypatch) -> None:
     assert payload["source"] == "gdocs"
 
 
+def test_gdrive_search_reports_google_drive_as_source(monkeypatch) -> None:
+    monkeypatch.setattr(gdrive, "ensure_google_session", lambda **kwargs: {"access_token": "token"})
+    monkeypatch.setattr(
+        gdrive,
+        "drive_search_files",
+        lambda *args, **kwargs: [
+            {
+                "id": "file-123",
+                "name": "Generic File",
+                "webViewLink": "https://drive.google.com/file/d/file-123/view",
+            }
+        ],
+    )
+
+    payload = gdrive.search_files("token", "generic", mode="title", limit=5, mime_type="")
+
+    assert payload["source"] == "google-drive"
+
+
 def test_gdocs_search_markdown_uses_docs_specific_heading() -> None:
     rendered = gdocs.render_search_markdown(
         {
@@ -360,6 +458,34 @@ def test_gdocs_get_markdown_includes_metadata_header(monkeypatch, capsys) -> Non
     assert "# Body" in captured.out
 
 
+def test_gdrive_get_reads_textlike_content_from_accessible_shared_drive_file(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(gdrive, "is_interactive", lambda: False)
+    monkeypatch.setattr(
+        gdrive,
+        "ensure_google_session",
+        lambda **kwargs: {"access_token": "token"},
+    )
+    monkeypatch.setattr(
+        gdrive,
+        "drive_file_meta",
+        lambda access_token, file_id, fields: {
+            "id": file_id,
+            "name": "Generic Notes",
+            "mimeType": "text/plain",
+            "webViewLink": "https://drive.google.com/file/d/file-123/view",
+        },
+    )
+    monkeypatch.setattr(gdrive, "drive_download_bytes", lambda access_token, file_id: b"generic body\n")
+
+    result = gdrive.main(["get", "file-123", "--output", "markdown"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.out == "generic body\n"
+
+
 def test_gsheets_search_reports_gsheets_as_source(monkeypatch) -> None:
     monkeypatch.setattr(
         gsheets,
@@ -435,6 +561,60 @@ def test_gsheets_summary_includes_created_and_modified() -> None:
 
     assert "- **Created:** 2026-01-08T17:19:19.520Z" in rendered
     assert "- **Modified:** 2026-01-08T18:49:54.309Z" in rendered
+
+
+def test_gsheets_build_preview_bundle_merges_drive_metadata_for_accessible_shared_drive_sheet(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        gsheets,
+        "sheets_spreadsheet_meta",
+        lambda access_token, spreadsheet_id: {
+            "spreadsheetId": spreadsheet_id,
+            "properties": {"title": "Generic Sheet"},
+            "sheets": [
+                {
+                    "properties": {
+                        "title": "Overview",
+                        "gridProperties": {"rowCount": 4, "columnCount": 2},
+                    }
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        gsheets,
+        "drive_file_meta",
+        lambda access_token, spreadsheet_id, fields: {
+            "createdTime": "2026-01-08T17:19:19.520Z",
+            "modifiedTime": "2026-01-08T18:49:54.309Z",
+            "webViewLink": "https://docs.google.com/spreadsheets/d/sheet-123/edit",
+            "owners": [{"displayName": "Morgan Example"}],
+        },
+    )
+    monkeypatch.setattr(
+        gsheets,
+        "sheets_values",
+        lambda access_token, spreadsheet_id, a1_range: {
+            "range": "Overview!A1:B4",
+            "values": [["Name", "Value"], ["Status", "Open"]],
+        },
+    )
+
+    bundle = gsheets.build_preview_bundle(
+        "token",
+        "sheet-123",
+        sheet_name="",
+        a1_range=None,
+        rows=4,
+        cols=2,
+    )
+
+    assert bundle["url"] == "https://docs.google.com/spreadsheets/d/sheet-123/edit"
+    assert bundle["meta"]["createdTime"] == "2026-01-08T17:19:19.520Z"
+    assert bundle["meta"]["modifiedTime"] == "2026-01-08T18:49:54.309Z"
+    assert bundle["meta"]["owners"] == [{"displayName": "Morgan Example"}]
+    assert bundle["previews"][0]["range"] == "Overview!A1:B4"
 
 
 def test_gdrive_summary_includes_created_and_modified() -> None:

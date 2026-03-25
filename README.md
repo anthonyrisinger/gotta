@@ -302,9 +302,10 @@ scaffolding unless they intentionally materialize durable evidence.
 - stored content rereads by artifact or digest
 
 This surface is broader than search. It is the acquisition layer for the
-session's evidence web. Slack threads, GitHub pages, Jira issues, Google docs,
-Grafana dashboards, Confluence pages, and Granola notes all become reopenable
-session artifacts rather than transient terminal output.
+session's evidence web. Slack threads, GitHub pages, Jira issues, Google docs
+and Drive files, accessible shared-drive documents, Grafana dashboards,
+Confluence pages, and Granola notes all become reopenable session artifacts
+rather than transient terminal output.
 
 Granola extends that same model to personal notes and transcripts through the
 local desktop session and Granola's APIs, so meeting notes and transcripts

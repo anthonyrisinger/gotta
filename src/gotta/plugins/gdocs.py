@@ -605,7 +605,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gotta gdocs",
         description=(
             "Read-only Google Docs helper. Uses shared Google OAuth state and "
-            "the Docs/Drive APIs for document-first retrieval."
+            "the Docs/Drive APIs for document-first retrieval, including "
+            "accessible shared-drive documents."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
