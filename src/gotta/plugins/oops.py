@@ -14,7 +14,7 @@ from gotta.content import (
     resolve_dirs,
     session_is_initialized,
     session_relative_path,
-    stdin_has_readable_text,
+    stdin_has_meaningful_text,
 )
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta import session as session_plugin
@@ -27,14 +27,34 @@ from gotta.friction import (
     oops_surface_path,
 )
 
-OOPS_ACTIONS = {"append", "extend", "list", "summary"}
+OOPS_ACTIONS = {"show", "append", "extend"}
+OOPS_LEGACY_READ_ACTIONS = {"list", "summary"}
+_APPEND_METADATA_FLAGS = (
+    "--surface",
+    "--command",
+    "--kind",
+    "--affordance",
+    "--workaround",
+    "--severity",
+    "--reproducibility",
+    "--resolution-state",
+)
 
 
-def _has_implicit_write_source(argv: list[str]) -> bool:
+def _has_explicit_write_source(argv: list[str]) -> bool:
     return any(
         token == "--stdin" or token == "--from-file" or token.startswith("--from-file=")
         for token in argv
-    ) or stdin_has_readable_text()
+    )
+
+
+def _argv_has_append_metadata(argv: list[str]) -> bool:
+    for index, token in enumerate(argv):
+        if any(token.startswith(f"{flag}=") for flag in _APPEND_METADATA_FLAGS):
+            return True
+        if token in _APPEND_METADATA_FLAGS and index + 1 < len(argv):
+            return True
+    return False
 
 
 def _has_append_metadata(args: argparse.Namespace) -> bool:
@@ -71,7 +91,7 @@ def _read_text_source(
         return sys.stdin.read()
     if inline is not None:
         return inline
-    if stdin_has_readable_text():
+    if stdin_has_meaningful_text():
         return sys.stdin.read()
     raise SystemExit(
         f"missing {input_name}; pass inline text, use --stdin, use --from-file, or pipe stdin"
@@ -98,7 +118,7 @@ def _read_text_items_source(
         raw = sys.stdin.read()
     elif inline_items:
         raw = "\n".join(inline_items)
-    elif stdin_has_readable_text():
+    elif stdin_has_meaningful_text():
         raw = sys.stdin.read()
     else:
         raise SystemExit(
@@ -146,12 +166,12 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=command_name,
         description=(
-            "Append, extend, list, or summarize durable session speed bumps, "
-            "including suspected gotta bugs. Shared-session read paths summarize "
-            "all bound actor oops by default. "
-            "For literal prose or Markdown, prefer stdin, --stdin, or --from-file. "
-            "When explicit write input is present and no action is named, gotta treats the "
-            "command as `append`; otherwise spell `append` explicitly."
+            "Show or record durable session speed bumps, including suspected gotta bugs. "
+            "Bare `gotta oops` shows the friction ledger across the active session scope. "
+            "Bare multiword prose, real piped stdin, `--stdin`, and `--from-file` imply "
+            "`append` when no read action is named. "
+            "Use `gotta oops show` for explicit reads and `gotta oops append ...` when you "
+            "want write intent to be unambiguous."
         ),
     )
     parser.add_argument("action", nargs="?")
@@ -214,9 +234,18 @@ def session_access_mode(argv: list[str]) -> str:
     action = positionals[0] if positionals else ""
     if action in {"append", "extend"}:
         return "write"
-    if action in {"list", "summary"}:
+    if action in {"show", "list", "summary"}:
         return "read"
-    if _has_implicit_write_source(argv):
+    if not action:
+        if _has_explicit_write_source(argv) or stdin_has_meaningful_text():
+            return "write"
+        return "read"
+    if (
+        _has_explicit_write_source(argv)
+        or stdin_has_meaningful_text()
+        or len(positionals) > 1
+        or (_argv_has_append_metadata(argv) and bool(positionals))
+    ):
         return "write"
     return "read"
 
@@ -255,23 +284,90 @@ def _aggregate_oops_records(
     return actor_ids, records
 
 
+def _explicit_read_redirect(action_token: str) -> SystemExit:
+    return SystemExit(
+        f"`gotta oops {action_token}` has been folded into `gotta oops show`; "
+        "use `gotta oops` or `gotta oops show`"
+    )
+
+
+def _read_write_conflict() -> SystemExit:
+    return SystemExit(
+        "`gotta oops show` is read-only; remove stdin/file input and inline prose, "
+        "or use `gotta oops append ...` to write"
+    )
+
+
+def _unknown_action(action_token: str) -> SystemExit:
+    return SystemExit(
+        f"unknown gotta oops action `{action_token}`; use `show`, `append`, or `extend`, "
+        "or pass multiword prose / real stdin to imply append"
+    )
+
+
+def _limited_records(records: list[dict[str, object]], *, limit: int) -> list[dict[str, object]]:
+    bounded = max(limit, 0)
+    if bounded == 0:
+        return list(records)
+    return records[:bounded]
+
+
+def _read_payload(
+    session_dir: Path,
+    actor_ids: list[str],
+    records: list[dict[str, object]],
+    *,
+    explicit_actor: str | None,
+    scoped_actor: str | None,
+    limit: int,
+) -> dict[str, object]:
+    limited = _limited_records(records, limit=limit)
+    payload: dict[str, object] = {
+        "session_root": str(session_dir),
+        "actor_count": len(actor_ids),
+        "actors": actor_ids,
+        "shown_count": len(limited),
+        "entries": limited,
+        **oops_summary(records),
+    }
+    if explicit_actor or scoped_actor:
+        payload["oops"] = str(oops_surface_path(session_dir))
+        payload["oops_log"] = str(oops_log_path(session_dir))
+    else:
+        payload["oops_surfaces"] = {
+            actor: str(oops_surface_path(session_plugin._actor_session_dir(session_dir, actor)))
+            for actor in actor_ids
+        }
+        payload["oops_logs"] = {
+            actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
+            for actor in actor_ids
+        }
+    return payload
+
+
 def _resolved_action(args: argparse.Namespace) -> tuple[str, list[str]]:
     values = list(args.value or [])
     action_token = str(args.action or "").strip()
+    explicit_write_source = bool(args.from_file or args.use_stdin)
+    piped_text = stdin_has_meaningful_text()
+    has_inline_prose = bool(values)
+    has_append_metadata = _has_append_metadata(args) and bool(action_token or values)
+    if action_token in OOPS_LEGACY_READ_ACTIONS:
+        raise _explicit_read_redirect(action_token)
+    if action_token in {"show"}:
+        if explicit_write_source or piped_text or values:
+            raise _read_write_conflict()
+        return action_token, values
     if action_token in OOPS_ACTIONS:
         return action_token, values
-    has_write_source = bool(args.from_file or args.use_stdin or stdin_has_readable_text())
-    if action_token and (has_write_source or _has_append_metadata(args)):
+    if action_token and (explicit_write_source or has_append_metadata or has_inline_prose):
         values = [action_token, *values]
         return "append", values
-    if not action_token and has_write_source:
+    if not action_token and (explicit_write_source or piped_text):
         return "append", values
     if not action_token:
-        return "summary", values
-    raise SystemExit(
-        f"unknown gotta oops action `{action_token}`; use one of append, extend, list, summary, "
-        "or spell `gotta oops append ...` explicitly for bare inline prose"
-    )
+        return "show", values
+    raise _unknown_action(action_token)
 
 
 def cmd_oops(args: argparse.Namespace) -> int:
@@ -293,7 +389,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             )
         payload = _read_text_source(
             session_root=session_dir,
-            inline=(values[0] if values else None),
+            inline=(" ".join(values) if values else None),
             from_file=args.from_file,
             use_stdin=args.use_stdin,
             input_name="oops entry text",
@@ -385,66 +481,15 @@ def cmd_oops(args: argparse.Namespace) -> int:
                 "no actors bound for this session; bind one intentionally with "
                 + session_plugin._actor_bind_examples(prefix="gotta actor bind")
             )
-    records = sorted(records, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
-    if action == "list":
-        limited = records[: max(args.limit, 0)]
-        payload = {
-            "session_root": str(session_dir),
-            "actor_count": len(actor_ids),
-            "actors": actor_ids,
-            "shown_count": len(limited),
-            "entries": limited,
-            "entry_count": len(records),
-        }
-        if explicit_actor or scoped_actor:
-            payload["oops"] = str(oops_surface_path(session_dir))
-            payload["oops_log"] = str(oops_log_path(session_dir))
-        else:
-            payload["oops_surfaces"] = {
-                actor: str(oops_surface_path(session_plugin._actor_session_dir(session_dir, actor)))
-                for actor in actor_ids
-            }
-            payload["oops_logs"] = {
-                actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
-                for actor in actor_ids
-        }
-        if args.output == "json":
-            print(json.dumps(payload, indent=2, sort_keys=True))
-            return 0
-        if explicit_actor or scoped_actor:
-            print(f"oops: {oops_surface_path(session_dir)}")
-        else:
-            print(f"oops: session-wide across {len(actor_ids)} actor(s)")
-        print(f"entries: {payload['entry_count']} (showing {payload['shown_count']})")
-        for record in limited:
-            actor = str(record.get("actor") or "unknown-actor")
-            print(
-                "- "
-                f"{record.get('timestamp') or 'unknown-time'} "
-                f"[{actor}/{record.get('severity') or 'unknown'}] "
-                f"{record.get('kind') or 'general'} "
-                f"{record.get('surface') or 'unspecified'} :: "
-                f"{record.get('message') or ''}"
-            )
-        return 0
-
     payload = {
-        "session_root": str(session_dir),
-        "actor_count": len(actor_ids),
-        "actors": actor_ids,
-        **oops_summary(records),
-    }
-    if explicit_actor or scoped_actor:
-        payload["oops"] = str(oops_surface_path(session_dir))
-        payload["oops_log"] = str(oops_log_path(session_dir))
-    else:
-        payload["oops_surfaces"] = {
-            actor: str(oops_surface_path(session_plugin._actor_session_dir(session_dir, actor)))
-            for actor in actor_ids
-        }
-        payload["oops_logs"] = {
-            actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
-            for actor in actor_ids
+        **_read_payload(
+            session_dir,
+            actor_ids,
+            records,
+            explicit_actor=explicit_actor,
+            scoped_actor=scoped_actor,
+            limit=args.limit,
+        )
     }
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -453,13 +498,23 @@ def cmd_oops(args: argparse.Namespace) -> int:
         print(f"oops: {oops_surface_path(session_dir)}")
     else:
         print(f"oops: session-wide across {len(actor_ids)} actor(s)")
-    print(f"entries: {payload['entry_count']}")
+    print(f"entries: {payload['entry_count']} (showing {payload['shown_count']})")
     print(f"severity_counts: {payload['severity_counts']}")
     print(f"kind_counts: {payload['kind_counts']}")
     print(f"surface_counts: {payload['surface_counts']}")
     print(f"resolution_counts: {payload['resolution_counts']}")
     print(f"reproducibility_counts: {payload['reproducibility_counts']}")
     print(f"affordance_counts: {payload['affordance_counts']}")
+    for record in payload["entries"]:
+        actor = str(record.get("actor") or "unknown-actor")
+        print(
+            "- "
+            f"{record.get('timestamp') or 'unknown-time'} "
+            f"[{actor}/{record.get('severity') or 'unknown'}] "
+            f"{record.get('kind') or 'general'} "
+            f"{record.get('surface') or 'unspecified'} :: "
+            f"{record.get('message') or ''}"
+        )
     return 0
 
 

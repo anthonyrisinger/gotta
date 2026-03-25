@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import array
 import hashlib
 import io
 import json
@@ -14,6 +15,13 @@ import shlex
 import sys
 import tempfile
 from typing import Any
+
+try:
+    import fcntl
+    import termios
+except ImportError:  # pragma: no cover - platform-specific fallback
+    fcntl = None
+    termios = None
 
 from gotta.compat import UTC, datetime
 from gotta.actors import resolve_actor_context
@@ -626,7 +634,7 @@ def sh_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
-def stdin_has_readable_text() -> bool:
+def stdin_has_meaningful_text() -> bool:
     stream = sys.stdin
     try:
         if stream.isatty():
@@ -635,7 +643,11 @@ def stdin_has_readable_text() -> bool:
         return False
     if hasattr(stream, "getvalue"):
         try:
-            return bool(stream.getvalue())
+            value = stream.getvalue()
+            if not isinstance(value, str):
+                return bool(value)
+            cursor = stream.tell() if hasattr(stream, "tell") else 0
+            return len(value) > int(cursor)
         except Exception:
             return False
     try:
@@ -646,7 +658,26 @@ def stdin_has_readable_text() -> bool:
         readable, _, _ = select.select([fileno], [], [], 0)
     except (OSError, ValueError):
         return False
-    return bool(readable)
+    if not readable:
+        return False
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None and hasattr(buffer, "peek"):
+        try:
+            return bool(buffer.peek(1))
+        except Exception:
+            pass
+    if fcntl is not None and termios is not None:
+        try:
+            available = array.array("i", [0])
+            fcntl.ioctl(fileno, termios.FIONREAD, available, True)
+            return bool(available[0])
+        except Exception:
+            pass
+    return False
+
+
+def stdin_has_readable_text() -> bool:
+    return stdin_has_meaningful_text()
 
 
 def session_member_path(root: Path, raw: str) -> Path:

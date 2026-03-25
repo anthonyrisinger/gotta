@@ -38,7 +38,7 @@ from gotta.content import (
     shared_session_root,
     state_dir_path,
     state_env_path,
-    stdin_has_readable_text,
+    stdin_has_meaningful_text,
     session_surface_initialized,
     write_session_state,
 )
@@ -2732,7 +2732,7 @@ def _read_text_source(
         return sys.stdin.read()
     if inline is not None:
         return inline
-    if stdin_has_readable_text():
+    if stdin_has_meaningful_text():
         return sys.stdin.read()
     raise SystemExit(
         f"missing {input_name}; pass inline text, use --stdin, use --from-file, or pipe stdin"
@@ -2759,7 +2759,7 @@ def _read_text_items_source(
         raw = sys.stdin.read()
     elif inline_items:
         raw = "\n".join(inline_items)
-    elif stdin_has_readable_text():
+    elif stdin_has_meaningful_text():
         raw = sys.stdin.read()
     else:
         raise SystemExit(

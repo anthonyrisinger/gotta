@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -29,6 +31,35 @@ def initialize_session(root: Path) -> None:
     assert session_plugin.main(["init", "--session", str(root)]) == 0
 
 
+def _run_oops_subprocess(
+    argv: list[str],
+    *,
+    stdin_text: str | None = None,
+    closed_stdin: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys; "
+            "from gotta.plugins import oops; "
+            "raise SystemExit(oops.main(sys.argv[1:]))"
+        ),
+        *argv,
+    ]
+    kwargs: dict[str, object] = {
+        "cwd": repo_root,
+        "capture_output": True,
+        "text": True,
+    }
+    if closed_stdin:
+        kwargs["stdin"] = subprocess.DEVNULL
+    else:
+        kwargs["input"] = stdin_text
+    return subprocess.run(command, **kwargs)
+
+
 def _projection_entry_count(path: Path) -> int:
     return sum(
         1
@@ -41,7 +72,8 @@ def test_oops_help_all_is_top_level(capsys) -> None:
     assert oops.main(["--help-all"]) == 0
     output = capsys.readouterr().out
     assert "usage: gotta oops" in output
-    assert "Append, extend, list, or summarize durable session speed bumps," in output
+    assert "Show or record durable session speed bumps" in output
+    assert "Bare multiword prose, real piped stdin, `--stdin`, and `--from-file` imply" in output
 
 
 def test_oops_is_session_rooted_and_canonical(tmp_path: Path, capsys) -> None:
@@ -65,10 +97,11 @@ def test_oops_is_session_rooted_and_canonical(tmp_path: Path, capsys) -> None:
     )
     capsys.readouterr()
 
-    assert oops.main(["summary", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["session_root"] == str(root.resolve())
     assert payload["entry_count"] == 1
+    assert payload["shown_count"] == 1
     assert payload["kind_counts"]["routing"] == 1
     assert payload["surface_counts"]["read"] == 1
     assert (root / "state" / "oops.jsonl").exists()
@@ -106,7 +139,7 @@ def test_oops_append_supports_from_file(tmp_path: Path, capsys) -> None:
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert "Literal `gotta todo append` friction" in payload["entries"][0]["message"]
@@ -141,7 +174,7 @@ def test_oops_append_resolves_from_file_relative_to_session(
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert payload["entries"][0]["message"] == "Session-relative oops payload"
@@ -170,7 +203,7 @@ def test_oops_append_supports_from_file_dash_for_stdin(tmp_path: Path, monkeypat
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert payload["entries"][0]["message"] == "stdin-backed oops payload"
@@ -198,7 +231,7 @@ def test_oops_append_supports_stdin_flag(tmp_path: Path, monkeypatch, capsys) ->
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert payload["entries"][0]["message"] == "explicit stdin oops payload"
@@ -227,7 +260,7 @@ def test_oops_write_only_inputs_imply_append_when_action_is_omitted(
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert payload["entries"][0]["message"] == "implicit stdin oops payload"
@@ -251,11 +284,38 @@ def test_oops_inline_prose_implies_append_when_action_is_omitted(tmp_path: Path,
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert payload["entries"][0]["message"] == "minimal oops test"
     assert payload["entries"][0]["surface"] == "session-bootstrap"
+
+
+def test_oops_multiword_prose_implies_append_without_metadata(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+
+    assert oops.main(["--session", str(root), "generic", "issue"]) == 0
+    capsys.readouterr()
+
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry_count"] == 1
+    assert payload["entries"][0]["message"] == "generic issue"
+
+
+def test_oops_single_unknown_token_without_write_intent_fails(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        oops.main(["--session", str(root), "generic"])
+    assert "unknown gotta oops action `generic`" in str(exc.value)
+
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry_count"] == 0
 
 
 def test_oops_unknown_action_still_fails_instead_of_appending(tmp_path: Path, capsys) -> None:
@@ -267,9 +327,22 @@ def test_oops_unknown_action_still_fails_instead_of_appending(tmp_path: Path, ca
         oops.main(["--session", str(root), "smmary"])
     assert "unknown gotta oops action `smmary`" in str(exc.value)
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 0
+
+
+@pytest.mark.parametrize("legacy_action", ["summary", "list"])
+def test_oops_legacy_read_actions_redirect_to_show(
+    tmp_path: Path, capsys, legacy_action: str
+) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        oops.main([legacy_action, "--session", str(root)])
+    assert f"`gotta oops {legacy_action}` has been folded into `gotta oops show`" in str(exc.value)
 
 
 def test_oops_read_defaults_to_all_bound_actors_and_actor_filters_narrow(
@@ -322,18 +395,17 @@ def test_oops_read_defaults_to_all_bound_actors_and_actor_filters_narrow(
     )
     capsys.readouterr()
 
-    assert oops.main(["summary", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["actor_count"] == 2
     assert payload["entry_count"] == 2
+    assert payload["shown_count"] == 2
     assert set(payload["actors"]) == {codex, claude}
     assert set(payload["oops_logs"]) == {codex, claude}
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
-    listed = json.loads(capsys.readouterr().out)
-    assert {entry["actor"] for entry in listed["entries"]} == {codex, claude}
+    assert {entry["actor"] for entry in payload["entries"]} == {codex, claude}
 
-    assert oops.main(["summary", "--session", str(root), "--actor", claude, "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--actor", claude, "--output", "json"]) == 0
     filtered = json.loads(capsys.readouterr().out)
     assert filtered["actor_count"] == 1
     assert filtered["actors"] == [claude]
@@ -389,17 +461,12 @@ def test_oops_read_on_actor_root_defaults_to_session_wide(
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(actor_root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(actor_root), "--output", "json"]) == 0
     listed = json.loads(capsys.readouterr().out)
     assert listed["actor_count"] == 2
     assert set(listed["actors"]) == {claude, codex}
     assert {entry["actor"] for entry in listed["entries"]} == {claude, codex}
-
-    assert oops.main(["summary", "--session", str(actor_root), "--output", "json"]) == 0
-    summary = json.loads(capsys.readouterr().out)
-    assert summary["actor_count"] == 2
-    assert set(summary["actors"]) == {claude, codex}
-    assert summary["entry_count"] == 2
+    assert listed["shown_count"] == 2
 
 
 def test_oops_append_uses_projection_append_hot_path_when_surface_exists(
@@ -494,11 +561,98 @@ def test_oops_extend_supports_multiple_entries(tmp_path: Path, capsys) -> None:
     )
     capsys.readouterr()
 
-    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     messages = [entry["message"] for entry in payload["entries"]]
     assert "First friction seam" in messages
     assert "Second friction seam" in messages
+
+
+def test_oops_bare_and_actor_reads_ignore_closed_stdin_without_mutating(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+    assert actor.main(["bind", "Helper", "--session", str(root)]) == 0
+    capsys.readouterr()
+    helper = sessionlib._resolve_bound_actor_name(root, "helper")
+
+    assert oops.main(["append", "root friction", "--session", str(root)]) == 0
+    capsys.readouterr()
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, helper)
+    assert oops.main(["append", "actor friction", "--session", str(root), "--actor", helper]) == 0
+    capsys.readouterr()
+
+    root_before = (root / "state" / "oops.jsonl").read_text(encoding="utf-8")
+    actor_root = sessionlib._session_dir(explicit_session=str(root), explicit_actor=helper)
+    actor_before = (actor_root / "state" / "oops.jsonl").read_text(encoding="utf-8")
+
+    bare = _run_oops_subprocess(["--session", str(root)], closed_stdin=True)
+    assert bare.returncode == 0
+    assert "entries:" in bare.stdout
+    assert "appended oops entry" not in bare.stdout
+    assert (root / "state" / "oops.jsonl").read_text(encoding="utf-8") == root_before
+
+    scoped = _run_oops_subprocess(["--session", str(actor_root)], closed_stdin=True)
+    assert scoped.returncode == 0
+    assert "entries:" in scoped.stdout
+    assert "appended oops entry" not in scoped.stdout
+    assert (actor_root / "state" / "oops.jsonl").read_text(encoding="utf-8") == actor_before
+
+
+def test_oops_show_rejects_write_inputs_and_piped_stdin(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
+    payload_path = tmp_path / "friction.txt"
+    initialize_session(root)
+    assert oops.main(["append", "existing friction", "--session", str(root)]) == 0
+    capsys.readouterr()
+    payload_path.write_text("file-backed friction\n", encoding="utf-8")
+    before = (root / "state" / "oops.jsonl").read_text(encoding="utf-8")
+
+    piped = _run_oops_subprocess(
+        ["show", "--session", str(root)],
+        stdin_text="friction from stdin\n",
+    )
+    assert piped.returncode == 1
+    assert "`gotta oops show` is read-only" in piped.stderr
+    assert (root / "state" / "oops.jsonl").read_text(encoding="utf-8") == before
+
+    with pytest.raises(SystemExit) as exc:
+        oops.main(["show", "--session", str(root), "--stdin"])
+    assert "`gotta oops show` is read-only" in str(exc.value)
+
+    with pytest.raises(SystemExit) as exc:
+        oops.main(["show", "--session", str(root), "--from-file", str(payload_path)])
+    assert "`gotta oops show` is read-only" in str(exc.value)
+
+
+def test_oops_real_piped_stdin_still_implies_append(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+    capsys.readouterr()
+
+    result = _run_oops_subprocess(["--session", str(root)], stdin_text="piped friction\n")
+    assert result.returncode == 0
+    assert "appended oops entry" in result.stdout
+
+    assert oops.main(["show", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry_count"] == 1
+    assert payload["entries"][0]["message"] == "piped friction"
+
+
+def test_oops_show_limit_zero_means_all_entries(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+
+    assert oops.main(["append", "first friction", "--session", str(root)]) == 0
+    assert oops.main(["append", "second friction", "--session", str(root)]) == 0
+    capsys.readouterr()
+
+    assert oops.main(["show", "--session", str(root), "--limit", "0", "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry_count"] == 2
+    assert payload["shown_count"] == 2
 
 
 def test_foreign_writer_cannot_append_actor_oops(

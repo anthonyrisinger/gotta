@@ -26,7 +26,7 @@ The name is a modal verb of necessity. Every subcommand reads as a natural
 English sentence expressing what needs to happen:
 
 - `gotta read` — I have to read this
-- `gotta oops` — I have to record this friction
+- `gotta oops` — I have to inspect or record this friction
 - `gotta session analyze` — I have to analyze the session
 - `gotta want` — I have to express what I want
 - `gotta todo append` — I have to track this work
@@ -521,6 +521,11 @@ a single chat transcript.
 ## `oops` As Canonical Alignment
 
 `gotta oops` is a first-class operator surface.
+
+Bare `gotta oops` shows the friction ledger. `gotta oops show` is the explicit
+read form. `gotta oops append ...` and `gotta oops extend ...` write new
+entries. Bare prose, real piped stdin, `--stdin`, and `--from-file` still imply
+`append` when no read action is named.
 
 Use it to record:
 
