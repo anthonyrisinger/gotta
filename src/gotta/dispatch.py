@@ -106,6 +106,8 @@ def print_usage() -> int:
         file=sys.stderr,
     )
     print("", file=sys.stderr)
+    print("global flags: `--quiet`, `--full-output`", file=sys.stderr)
+    print("", file=sys.stderr)
     print("use `gotta --help-all` for recursive command help", file=sys.stderr)
     print("", file=sys.stderr)
     print("available plugins:", file=sys.stderr)
@@ -285,7 +287,6 @@ class CapturedStream(io.TextIOBase):
 class EmittedOutput:
     data: bytes
     format: str
-    interactive: bool
     output_budget_applied: bool
     output_truncated: bool
     truncate_reason: str
@@ -334,6 +335,17 @@ def _strip_quiet_flag(argv: list[str]) -> tuple[bool, list[str]]:
             continue
         cleaned.append(token)
     return quiet, cleaned
+
+
+def _strip_full_output_flag(argv: list[str]) -> tuple[bool, list[str]]:
+    full_output = False
+    cleaned: list[str] = []
+    for token in argv:
+        if token == "--full-output":
+            full_output = True
+            continue
+        cleaned.append(token)
+    return full_output, cleaned
 
 
 def _requested_output_format(plugin: str, argv: list[str], data: bytes) -> str:
@@ -517,7 +529,7 @@ def emit_budgeted_output(
     data: bytes,
     *,
     output_format: str,
-    interactive: bool,
+    budget_output: bool,
     follow_command: str = "",
 ) -> EmittedOutput:
     normalized = output_format if output_format in {"json", "raw", "markdown", "mermaid"} else "text"
@@ -526,7 +538,6 @@ def emit_budgeted_output(
         return EmittedOutput(
             data=data,
             format=normalized,
-            interactive=interactive,
             output_budget_applied=False,
             output_truncated=False,
             truncate_reason="",
@@ -539,16 +550,15 @@ def emit_budgeted_output(
         payload = _json_value(data)
         compact = (
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            if interactive and payload is not None
+            if budget_output and payload is not None
             else data
         )
-        if interactive and len(compact) > OUTPUT_BUDGET_BYTE_LIMIT and payload is not None:
+        if budget_output and len(compact) > OUTPUT_BUDGET_BYTE_LIMIT and payload is not None:
             emitted = _json_preview_envelope(payload, follow_command=follow_command)
             _emit_captured(emitted)
             return EmittedOutput(
                 data=emitted,
                 format=normalized,
-                interactive=interactive,
                 output_budget_applied=True,
                 output_truncated=True,
                 truncate_reason="bytes",
@@ -561,8 +571,7 @@ def emit_budgeted_output(
         return EmittedOutput(
             data=compact,
             format=normalized,
-            interactive=interactive,
-            output_budget_applied=interactive,
+            output_budget_applied=budget_output,
             output_truncated=False,
             truncate_reason="",
             original_bytes=len(compact),
@@ -575,7 +584,6 @@ def emit_budgeted_output(
         return EmittedOutput(
             data=data,
             format="raw",
-            interactive=interactive,
             output_budget_applied=False,
             output_truncated=False,
             truncate_reason="",
@@ -587,7 +595,7 @@ def emit_budgeted_output(
     text = data.decode("utf-8", errors="replace")
     original_lines = _count_lines(text)
     original_bytes = len(text.encode("utf-8"))
-    if interactive:
+    if budget_output:
         emitted, truncated, reason, _original_bytes, _original_lines = _truncate_text_output(
             text,
             follow_command=follow_command,
@@ -600,8 +608,7 @@ def emit_budgeted_output(
     return EmittedOutput(
         data=emitted,
         format=normalized,
-        interactive=interactive,
-        output_budget_applied=interactive,
+        output_budget_applied=budget_output,
         output_truncated=truncated,
         truncate_reason=reason,
         original_bytes=original_bytes,
@@ -609,10 +616,6 @@ def emit_budgeted_output(
         original_lines=original_lines,
         emitted_lines=_count_lines(emitted.decode("utf-8", errors="replace")),
     )
-
-
-def _command_text(plugin: str, argv: list[str]) -> str:
-    return shlex.join(["gotta", plugin, *argv])
 
 
 def _result_follow_command(result: Materialization | None) -> str:
@@ -624,30 +627,30 @@ def _result_follow_command(result: Materialization | None) -> str:
 
 def _receipt_payload(
     *,
-    plugin: str,
-    argv: list[str],
     emitted: EmittedOutput,
     result: Materialization | None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "command": _command_text(plugin, argv),
-        "outputFormat": emitted.format,
-        "interactive": emitted.interactive,
-        "outputBudgetApplied": emitted.output_budget_applied,
-        "outputTruncated": emitted.output_truncated,
-        "truncateReason": emitted.truncate_reason or None,
-        "budget": {
-            "lineLimit": OUTPUT_BUDGET_LINE_LIMIT,
-            "byteLimit": OUTPUT_BUDGET_BYTE_LIMIT,
-        },
-        "originalBytes": emitted.original_bytes,
-        "emittedBytes": emitted.emitted_bytes,
-    }
-    if emitted.original_lines is not None:
-        payload["originalLines"] = emitted.original_lines
-    if emitted.emitted_lines is not None:
-        payload["emittedLines"] = emitted.emitted_lines
+    payload: dict[str, Any] = {}
+    if emitted.output_truncated:
+        payload.update(
+            {
+                "outputFormat": emitted.format,
+                "outputBudgetApplied": emitted.output_budget_applied,
+                "outputTruncated": True,
+                "truncateReason": emitted.truncate_reason or None,
+                "budget": {
+                    "lineLimit": OUTPUT_BUDGET_LINE_LIMIT,
+                    "byteLimit": OUTPUT_BUDGET_BYTE_LIMIT,
+                },
+                "originalBytes": emitted.original_bytes,
+                "emittedBytes": emitted.emitted_bytes,
+            }
+        )
+        if emitted.original_lines is not None:
+            payload["originalLines"] = emitted.original_lines
+        if emitted.emitted_lines is not None:
+            payload["emittedLines"] = emitted.emitted_lines
     if result is not None:
         payload["artifactKind"] = str(result.artifact_kind or "").strip() or "content"
         payload["artifactLocator"] = artifact_locator(result.name_link.name, result.digest)
@@ -659,7 +662,7 @@ def _receipt_payload(
 
 
 def _emit_receipt(payload: dict[str, Any], *, quiet: bool) -> None:
-    if quiet or os.environ.get(SUPPRESS_RECEIPTS_ENV) == "1":
+    if not payload or quiet or os.environ.get(SUPPRESS_RECEIPTS_ENV) == "1":
         return
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")), file=sys.stderr)
 
@@ -692,6 +695,18 @@ def _emit_captured(data: bytes) -> None:
         return
     sys.stdout.write(data.decode("utf-8", errors="replace"))
     sys.stdout.flush()
+
+
+def _emit_captured_stderr(data: bytes) -> None:
+    if not data:
+        return
+    buffer = getattr(sys.stderr, "buffer", None)
+    if buffer is not None:
+        buffer.write(data)
+        sys.stderr.flush()
+        return
+    sys.stderr.write(data.decode("utf-8", errors="replace"))
+    sys.stderr.flush()
 
 
 def _json_value(data: bytes) -> Any | None:
@@ -1017,22 +1032,22 @@ def _runtime_dirs(options: CommonOptions, *, access: str) -> ResolvedDirs:
     return resolve_dirs(options, create=False)
 
 
-def _emit_sessionless_notice(resolved: ResolvedInvocation) -> None:
+def _sessionless_notice_bytes(resolved: ResolvedInvocation) -> bytes:
     if os.environ.get("GOTTA_AMBIENT_SESSIONLESS", "") != "1":
-        return
+        return b""
     if not sys.stderr.isatty():
-        return
+        return b""
     if resolved.artifact_intent == "discovery":
-        print(
-            "ran sessionless; bind or pass `--session <session-id>` to store this as a discovery artifact",
-            file=sys.stderr,
-        )
-        return
+        return (
+            "ran sessionless; bind or pass `--session <session-id>` to store this as a "
+            "discovery artifact\n"
+        ).encode("utf-8")
     if resolved.artifact_intent == "evidence":
-        print(
-            "ran sessionless; bind or pass `--session <session-id>` to store this as an evidence artifact",
-            file=sys.stderr,
-        )
+        return (
+            "ran sessionless; bind or pass `--session <session-id>` to store this as an "
+            "evidence artifact\n"
+        ).encode("utf-8")
+    return b""
 
 
 def _should_emit_receipt(plugin: str, argv: list[str]) -> bool:
@@ -1072,6 +1087,7 @@ def _receipt_extra(
 
 def run_plugin(plugin: str, argv: list[str]) -> int:
     quiet, argv = _strip_quiet_flag(argv)
+    full_output, argv = _strip_full_output_flag(argv)
     if plugin == "session":
         options = CommonOptions()
         cleaned = argv
@@ -1102,13 +1118,14 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         return die(str(exc), code=1)
     access = session_access_mode(plugin, cleaned)
     spec = plugin_spec(plugin)
-    interactive_stdout = bool(getattr(sys.stdout, "isatty", lambda: False)())
     follow_command = ""
     runtime_dirs: ResolvedDirs | None = None
+    budget_output = not full_output
 
     def emit_success(
         stdout_data: bytes,
         *,
+        stderr_data: bytes = b"",
         result: Materialization | None = None,
         dirs: ResolvedDirs | None = None,
     ) -> int:
@@ -1117,14 +1134,14 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         emitted = emit_budgeted_output(
             stdout_data,
             output_format=_requested_output_format(plugin, cleaned, stdout_data),
-            interactive=interactive_stdout,
+            budget_output=budget_output,
             follow_command=follow_command,
         )
+        if stderr_data and not quiet:
+            _emit_captured_stderr(stderr_data)
         if _should_emit_receipt(plugin, cleaned):
             _emit_receipt(
                 _receipt_payload(
-                    plugin=plugin,
-                    argv=cleaned,
                     emitted=emitted,
                     result=result,
                     extra=_receipt_extra(plugin, cleaned, dirs=dirs),
@@ -1139,7 +1156,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         emit_budgeted_output(
             stdout_data,
             output_format=_requested_output_format(plugin, cleaned, stdout_data),
-            interactive=interactive_stdout,
+            budget_output=budget_output,
         )
 
     if not resolved.should_materialize:
@@ -1151,26 +1168,22 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
                 return die(str(exc))
             with scoped_runtime_env(runtime_dirs):
                 with capture_stdout(preserve_tty=True) as stdout_capture, capture_stderr(
-                    preserve_tty=True,
-                    passthrough=not quiet,
+                    preserve_tty=True
                 ) as stderr_capture:
                     code = _run_callable(runner, cleaned)
         else:
             with capture_stdout(preserve_tty=True) as stdout_capture, capture_stderr(
-                preserve_tty=True,
-                passthrough=not quiet,
+                preserve_tty=True
             ) as stderr_capture:
                 code = _run_callable(runner, cleaned)
-        if code == 0 and not quiet:
-            _emit_sessionless_notice(resolved)
         stderr_data = stderr_capture.getvalue()
-        if quiet and code != 0 and stderr_data:
-            sys.stderr.buffer.write(stderr_data)
-            sys.stderr.flush()
         stdout_data = stdout_capture.getvalue()
         if code == 0:
-            return emit_success(stdout_data, dirs=runtime_dirs)
+            if not quiet:
+                stderr_data += _sessionless_notice_bytes(resolved)
+            return emit_success(stdout_data, stderr_data=stderr_data, dirs=runtime_dirs)
         replay_stdout(stdout_data)
+        _emit_captured_stderr(stderr_data)
         return code
 
     try:
@@ -1188,8 +1201,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         try:
             with scoped_runtime_env(runtime_dirs):
                 with capture_stderr(
-                    preserve_tty=True,
-                    passthrough=not quiet,
+                    preserve_tty=True
                 ) as stderr_capture:
                     capture, display = _captured_execution(plugin, cleaned, options)
         except NotImplementedError:
@@ -1210,15 +1222,16 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
                 )
             except ContentError as exc:
                 return die(str(exc), code=1)
-            stderr_data = stderr_capture.getvalue()
-            if quiet and stderr_data:
-                stderr_data = b""
-            return emit_success(display, result=result, dirs=runtime_dirs)
+            return emit_success(
+                display,
+                stderr_data=stderr_capture.getvalue(),
+                result=result,
+                dirs=runtime_dirs,
+            )
 
     with scoped_runtime_env(runtime_dirs):
         with capture_stdout(preserve_tty=True) as stdout_capture, capture_stderr(
-            preserve_tty=True,
-            passthrough=not quiet,
+            preserve_tty=True
         ) as stderr_capture:
             code = _run_callable(runner, cleaned)
     data = stdout_capture.getvalue()
@@ -1228,9 +1241,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             result = _materialize_invocation(resolved, data, options=options, dirs=runtime_dirs)
         except ContentError as exc:
             return die(str(exc), code=1)
-        return emit_success(data, result=result, dirs=runtime_dirs)
-    if quiet and stderr_data:
-        sys.stderr.buffer.write(stderr_data)
-        sys.stderr.flush()
+        return emit_success(data, stderr_data=stderr_data, result=result, dirs=runtime_dirs)
     replay_stdout(data)
+    _emit_captured_stderr(stderr_data)
     return code

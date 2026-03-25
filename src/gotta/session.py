@@ -1421,6 +1421,11 @@ def _seed_session_files(
         create_todo_item(
             session_dir,
             section="Status",
+            text="Append a first short note as soon as the main actor lands a strong anchor, then keep landing short notes after each material evidence wave.",
+        )
+        create_todo_item(
+            session_dir,
+            section="Status",
             text="Decide whether to bind an actor with `gotta actor bind ...` and actually consult them if it helps.",
         )
         sync_todo_projection(session_dir)
@@ -1441,6 +1446,9 @@ def _seed_session_files(
         if voice_src:
             bootstrap_lines.append("Imported `VOICE.md`")
         bootstrap_lines.append("Seeded as the procedural/system trace for this session")
+        bootstrap_lines.append(
+            "Keep actor-authored narration in `NOTES.md`; one-line notes after strong anchors and evidence waves are expected."
+        )
         append_log_record(session_dir, message="\n".join(bootstrap_lines))
         sync_logs_projection(session_dir)
 
@@ -2390,8 +2398,9 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "non-note signal is present through friction or shared evidence, but no short actor "
             "note has landed yet. "
             + (evidence_note + " " if evidence_note else "")
-            + "Land one short actor-authored note now so review, handoff, and session-wide "
-            "inspection surfaces have durable actor voice."
+            + "Land one short actor-authored note now, then keep landing short notes after each "
+            "material evidence wave so review, handoff, and session-wide inspection surfaces have "
+            "continuous actor voice."
         )
     elif derived_status in {"pending", "bound"} and notes_ready:
         next_step = (
@@ -2410,8 +2419,9 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "actor-attributed evidence is already live in the shared session web, but actor voice is "
             "still missing. "
             + (evidence_note + " " if evidence_note else "")
-            + "Land one short actor-authored note now so review, handoff, and session-wide "
-            "inspection surfaces have actor voice instead of evidence-only state."
+            + "Land one short actor-authored note now, then keep landing short notes as the story "
+            "moves so review, handoff, and session-wide inspection surfaces have actor voice "
+            "instead of evidence-only state."
         )
     else:
         next_step = ""

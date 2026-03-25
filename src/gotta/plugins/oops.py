@@ -27,6 +27,30 @@ from gotta.friction import (
     oops_surface_path,
 )
 
+OOPS_ACTIONS = {"append", "extend", "list", "summary"}
+
+
+def _has_implicit_write_source(argv: list[str]) -> bool:
+    return any(
+        token == "--stdin" or token == "--from-file" or token.startswith("--from-file=")
+        for token in argv
+    ) or stdin_has_readable_text()
+
+
+def _has_append_metadata(args: argparse.Namespace) -> bool:
+    return any(
+        (
+            str(args.surface or "").strip(),
+            str(args.command or "").strip(),
+            str(args.kind or "").strip(),
+            str(args.affordance or "").strip(),
+            str(args.workaround or "").strip(),
+            str(args.severity or "").strip(),
+            str(args.reproducibility or "").strip() != "unknown",
+            str(args.resolution_state or "").strip() != "open",
+        )
+    )
+
 
 def _read_text_source(
     *,
@@ -125,10 +149,12 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
             "Append, extend, list, or summarize durable session speed bumps, "
             "including suspected gotta bugs. Shared-session read paths summarize "
             "all bound actor oops by default. "
-            "For literal prose or Markdown, prefer stdin, --stdin, or --from-file."
+            "For literal prose or Markdown, prefer stdin, --stdin, or --from-file. "
+            "When explicit write input is present and no action is named, gotta treats the "
+            "command as `append`; otherwise spell `append` explicitly."
         ),
     )
-    parser.add_argument("action", nargs="?", choices=["append", "extend", "list", "summary"])
+    parser.add_argument("action", nargs="?")
     parser.add_argument("value", nargs="*")
     session_plugin.add_target_args(parser)
     parser.add_argument(
@@ -185,8 +211,14 @@ def session_access_mode(argv: list[str]) -> str:
             "--limit",
         ),
     )
-    action = positionals[0] if positionals else "summary"
-    return "write" if action in {"append", "extend"} else "read"
+    action = positionals[0] if positionals else ""
+    if action in {"append", "extend"}:
+        return "write"
+    if action in {"list", "summary"}:
+        return "read"
+    if _has_implicit_write_source(argv):
+        return "write"
+    return "read"
 
 
 def _aggregate_oops_records(
@@ -223,8 +255,27 @@ def _aggregate_oops_records(
     return actor_ids, records
 
 
+def _resolved_action(args: argparse.Namespace) -> tuple[str, list[str]]:
+    values = list(args.value or [])
+    action_token = str(args.action or "").strip()
+    if action_token in OOPS_ACTIONS:
+        return action_token, values
+    has_write_source = bool(args.from_file or args.use_stdin or stdin_has_readable_text())
+    if action_token and (has_write_source or _has_append_metadata(args)):
+        values = [action_token, *values]
+        return "append", values
+    if not action_token and has_write_source:
+        return "append", values
+    if not action_token:
+        return "summary", values
+    raise SystemExit(
+        f"unknown gotta oops action `{action_token}`; use one of append, extend, list, summary, "
+        "or spell `gotta oops append ...` explicitly for bare inline prose"
+    )
+
+
 def cmd_oops(args: argparse.Namespace) -> int:
-    action = args.action or "summary"
+    action, values = _resolved_action(args)
     if action == "append":
         session_dir = session_plugin._session_dir(
             explicit_session=getattr(args, "session", None),
@@ -242,7 +293,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             )
         payload = _read_text_source(
             session_root=session_dir,
-            inline=(args.value[0] if args.value else None),
+            inline=(values[0] if values else None),
             from_file=args.from_file,
             use_stdin=args.use_stdin,
             input_name="oops entry text",
@@ -279,7 +330,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             )
         entries = _read_text_items_source(
             session_root=session_dir,
-            inline_items=list(args.value or []),
+            inline_items=values,
             from_file=args.from_file,
             use_stdin=args.use_stdin,
             input_name="oops entry text",

@@ -73,7 +73,7 @@ def test_emit_budgeted_output_truncates_interactive_text_with_footer(monkeypatch
     emitted = dispatch.emit_budgeted_output(
         payload,
         output_format="text",
-        interactive=True,
+        budget_output=True,
         follow_command="gotta read artifact:demo@abc123",
     )
     captured = capsys.readouterr()
@@ -91,7 +91,7 @@ def test_emit_budgeted_output_emits_json_preview_envelope_for_interactive_json(c
     emitted = dispatch.emit_budgeted_output(
         json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
         output_format="json",
-        interactive=True,
+        budget_output=True,
         follow_command="gotta read artifact:demo@abc123",
     )
     rendered = json.loads(capsys.readouterr().out)
@@ -108,7 +108,7 @@ def test_emit_budgeted_output_keeps_json_preview_valid_with_long_follow_command(
     emitted = dispatch.emit_budgeted_output(
         json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
         output_format="json",
-        interactive=True,
+        budget_output=True,
         follow_command="x" * 20000,
     )
     raw = capsys.readouterr().out.encode("utf-8")
@@ -972,9 +972,23 @@ def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
     captured = capsys.readouterr()
 
     assert captured.out == "hello\n"
-    receipt = json.loads(captured.err)
-    assert "artifactLocator" not in receipt
-    assert receipt["outputFormat"] == "text"
+    assert captured.err == ""
+
+
+def test_emit_budgeted_output_skips_default_budget_with_full_output_escape(capsys) -> None:
+    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode("utf-8")
+
+    emitted = dispatch.emit_budgeted_output(
+        payload,
+        output_format="text",
+        budget_output=False,
+        follow_command="gotta read artifact:demo@abc123",
+    )
+    captured = capsys.readouterr()
+
+    assert emitted.output_budget_applied is False
+    assert emitted.output_truncated is False
+    assert captured.out == payload.decode("utf-8")
 
 
 def test_run_plugin_read_section_miss_returns_clean_error_for_local_view(

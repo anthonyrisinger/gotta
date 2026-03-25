@@ -204,6 +204,74 @@ def test_oops_append_supports_stdin_flag(tmp_path: Path, monkeypatch, capsys) ->
     assert payload["entries"][0]["message"] == "explicit stdin oops payload"
 
 
+def test_oops_write_only_inputs_imply_append_when_action_is_omitted(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+    monkeypatch.setattr(oops.sys, "stdin", io.StringIO("implicit stdin oops payload\n"))
+
+    assert (
+        oops.main(
+            [
+                "--session",
+                str(root),
+                "--stdin",
+                "--surface",
+                "logs",
+                "--kind",
+                "input-shape",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry_count"] == 1
+    assert payload["entries"][0]["message"] == "implicit stdin oops payload"
+
+
+def test_oops_inline_prose_implies_append_when_action_is_omitted(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+
+    assert (
+        oops.main(
+            [
+                "--session",
+                str(root),
+                "--surface",
+                "session-bootstrap",
+                "minimal oops test",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry_count"] == 1
+    assert payload["entries"][0]["message"] == "minimal oops test"
+    assert payload["entries"][0]["surface"] == "session-bootstrap"
+
+
+def test_oops_unknown_action_still_fails_instead_of_appending(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "session-root"
+    initialize_session(root)
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        oops.main(["--session", str(root), "smmary"])
+    assert "unknown gotta oops action `smmary`" in str(exc.value)
+
+    assert oops.main(["list", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry_count"] == 0
+
+
 def test_oops_read_defaults_to_all_bound_actors_and_actor_filters_narrow(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
