@@ -1085,6 +1085,10 @@ def _receipt_extra(
     return {}
 
 
+def _streams_live(plugin: str, argv: list[str]) -> bool:
+    return plugin == "actor" and bool(argv) and argv[0] == "launch"
+
+
 def run_plugin(plugin: str, argv: list[str]) -> int:
     quiet, argv = _strip_quiet_flag(argv)
     full_output, argv = _strip_full_output_flag(argv)
@@ -1158,6 +1162,17 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             output_format=_requested_output_format(plugin, cleaned, stdout_data),
             budget_output=budget_output,
         )
+
+    if not resolved.should_materialize and _streams_live(plugin, cleaned):
+        if access != "none" and (options.session_dir or options.content_dir or options.actor):
+            try:
+                runtime_dirs = _runtime_dirs(options, access=access)
+                require_operational_session(runtime_dirs)
+            except ContentError as exc:
+                return die(str(exc))
+            with scoped_runtime_env(runtime_dirs):
+                return _run_callable(runner, cleaned)
+        return _run_callable(runner, cleaned)
 
     if not resolved.should_materialize:
         if access != "none" and (options.session_dir or options.content_dir or options.actor):

@@ -121,6 +121,33 @@ def test_emit_budgeted_output_keeps_json_preview_valid_with_long_follow_command(
     assert rendered["truncateReason"] == "bytes"
 
 
+def test_run_plugin_actor_launch_streams_live_without_buffered_capture(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    def fake_runner(_argv: list[str]) -> int:
+        print("launch stdout")
+        print("launch stderr", file=sys.stderr, flush=True)
+        return 0
+
+    def fake_resolve_invocation(_plugin: str, _argv: list[str], _options: content.CommonOptions):
+        return SimpleNamespace(should_materialize=False, artifact_intent="none")
+
+    def forbidden_capture(*_args, **_kwargs):
+        raise AssertionError("actor launch should bypass buffered capture")
+
+    monkeypatch.setattr(dispatch, "load_plugin_runner", lambda _plugin: fake_runner)
+    monkeypatch.setattr(dispatch, "resolve_invocation", fake_resolve_invocation)
+    monkeypatch.setattr(dispatch, "session_access_mode", lambda _plugin, _argv: "none")
+    monkeypatch.setattr(dispatch, "capture_stdout", forbidden_capture)
+    monkeypatch.setattr(dispatch, "capture_stderr", forbidden_capture)
+
+    assert dispatch.run_plugin("actor", ["launch", "helper", "--session", str(tmp_path / "session")]) == 0
+    captured = capsys.readouterr()
+
+    assert "launch stdout" in captured.out
+    assert "launch stderr" in captured.err
+
+
 def test_session_access_mode_tracks_artifact_bearing_surfaces() -> None:
     assert dispatch.session_access_mode("jira", ["search", "platform"]) == "ambient"
     assert dispatch.session_access_mode("jira", ["status"]) == "none"

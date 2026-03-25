@@ -1025,6 +1025,7 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
         "the actor. Wait for actor voice. Do not pair another agent into this actor; "
         "bind and launch a sibling actor for parallel work.",
         file=sys.stderr,
+        flush=True,
     )
     stop_event = threading.Event()
     heartbeat = _with_heartbeat(work_root, actor_name, stop_event)
