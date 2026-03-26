@@ -28,6 +28,7 @@ from gotta.actor import (
     SUPERVISOR_GRACEFUL_STOP_STATUS,
     actor_session_root,
     require_writer,
+    writer_name,
 )
 from gotta import session as session_plugin
 from gotta.session import (
@@ -169,7 +170,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - if you materially expanded the evidence web since your last note, append a new short note before requesting completion or sign-off
         - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final short note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
         - session-rooted `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
-        - if session-rooted `gotta ...` commands warn that the supervisor has checked your notes repeatedly, treat that as live pulse feedback and answer it with one short note if real progress exists
+        - if actor-local `gotta ...` commands warn that the supervisor has checked your notes repeatedly, treat that as live pulse feedback and answer it with one short note if real progress exists
         - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
         - append running notes with `gotta notes append --stdin`; add `--actor {actor_name}` only when you are intentionally targeting this actor from another bound root
@@ -524,8 +525,9 @@ def _session_root(args: argparse.Namespace) -> Path:
     )
     if root is None or not session_is_initialized(root):
         raise SystemExit(
-            "start or bind a session first with `gotta ...` or bootstrap one "
-            "manually with `gotta session init --session \"$WS\"`"
+            "start or bind a session first with `gotta ...`. Stable interactive "
+            "contexts scaffold their deterministic session on first session-aware "
+            "use; `gotta session init --session \"$WS\"` remains the manual exact-root path."
         )
     return root.resolve()
 
@@ -962,6 +964,13 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
         raise SystemExit(f"unknown actor: {actor_name}")
     model = str(actor.get("model") or "")
     resume_uuid = str(actor.get("resume_uuid") or "")
+    launcher_actor = writer_name()
+    launched_by = (
+        launcher_actor
+        if launcher_actor in set(session_plugin._selected_actor_ids(work_root))
+        and launcher_actor != actor_name
+        else ""
+    )
     repo_root = str(state.get(SESSION_REPO_ENV) or "").strip()
     actor_dir = actor_session_root(work_root, actor_name)
     copilot_config_dir = _actor_copilot_config_dir(work_root, actor_name)
@@ -996,6 +1005,8 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
         {
             "status": "starting",
             "started_at": started_at,
+            "launched_at": started_at,
+            "launched_by": launched_by,
             "heartbeat_at": started_at,
             "pid": proc.pid,
             "model": model,

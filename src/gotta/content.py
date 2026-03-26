@@ -559,8 +559,9 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
         raise ContentError(
             "missing shared content context; gotta needs a session root and content root. "
             "Set GOTTA_SESSION_DIR / GOTTA_SESSION_CONTENT_DIR, pass --session/--content-dir, "
-            "or use `gotta ...` so gotta can bind or create the correct session "
-            "for you. For low-level manual bootstrap, use `gotta session init \"$WS\"`."
+            "or use `gotta ...` so gotta can bind or scaffold the correct session "
+            "for you. For the low-level manual exact-root path, use "
+            "`gotta session init \"$WS\"`."
         )
 
     if create:

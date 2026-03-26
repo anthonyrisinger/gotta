@@ -437,18 +437,19 @@ This split is deliberate:
 - operational truth stays append-only and durable
 - the CLI renders readable output from canonical state on demand
 
-`gotta session init` scaffolds the target session and adopts it for the current
-runtime context. Future commands in that same context should resolve there
-ambiently. For shared-topology sessions, other contexts should reuse the shared
-session id with `--session <shared-session-id>` or `gotta session bind
-<shared-session-id>`. Exact-root reuse with `--session <session-root>` or
+In stable interactive contexts, the first session-aware `gotta` command
+implicitly scaffolds and adopts the deterministic session for that context.
+Future commands in that same context resolve there ambiently. `gotta session
+init` remains the manual exact-root path when you want to scaffold one specific
+root intentionally. For shared-topology sessions, other contexts should reuse
+the shared session id with `--session <shared-session-id>` or `gotta session
+bind <shared-session-id>`. Exact-root reuse with `--session <session-root>` or
 `gotta session bind '<session-root>'` is the low-level path for non-shared
 roots or intentionally reusing one concrete actor root.
 
 Examples:
 
 ```bash
-gotta session init
 gotta want --stdin <<'EOF'
 Queue retry context review.
 EOF

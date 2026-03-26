@@ -285,8 +285,9 @@ def _require_started_session(dirs) -> None:
     state_file = _state_file(dirs.session_dir)
     if not session_is_initialized(dirs.session_dir):
         raise ContentError(
-            "start or bind a session first with `gotta ...` or bootstrap one with "
-            "`gotta session init`; "
+            "start or bind a session first with `gotta ...`. Stable interactive "
+            "contexts scaffold their deterministic session on first session-aware "
+            "use; `gotta session init` remains the manual exact-root path; "
             f"missing {state_file}"
         )
 
@@ -4627,7 +4628,12 @@ def main(argv: list[str]) -> int:
         ):
             parser.exit(
                 status=2,
-                message="start or bind a session first with `gotta ...` or `gotta session init`\n",
+                message=(
+                    "start or bind a session first with `gotta ...`. Stable interactive "
+                    "contexts scaffold their deterministic session on first "
+                    "session-aware use; `gotta session init` remains the manual "
+                    "exact-root path.\n"
+                ),
             )
         parser.exit(status=2, message=f"{exc}\n")
     return 2

@@ -1020,9 +1020,10 @@ def _captured_execution(
 def require_operational_session(dirs: ResolvedDirs) -> None:
     if not session_is_initialized(dirs.session_dir):
         raise ContentError(
-            "start or bind a session first with `gotta ...` or bootstrap one "
-            "manually with `gotta session init --session <root>` before running "
-            "operational commands"
+            "start or bind a session first with `gotta ...` before running "
+            "operational commands. Stable interactive contexts scaffold their "
+            "deterministic session on first session-aware use; "
+            "`gotta session init --session <root>` remains the manual exact-root path."
         )
 
 

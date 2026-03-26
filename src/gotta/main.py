@@ -246,6 +246,32 @@ def _actor_note_check_warning(root: Path) -> str:
     return supervisor_note_check_message(actor_name, status_payload=payload)
 
 
+def _should_emit_actor_note_check_warning(
+    *,
+    argv: list[str],
+    root: Path,
+    requested_root: Path | None,
+    acting_actor: str,
+    explicit_actor: str | None,
+) -> bool:
+    actor_name = session_actor(root)
+    if not actor_name:
+        return False
+    if topology.normalize_identity(acting_actor) != actor_name:
+        return False
+    plugin_name = argv[0] if argv else ""
+    if plugin_name == "session":
+        return False
+    if explicit_actor:
+        return topology.normalize_identity(explicit_actor) == actor_name
+    if requested_root is not None:
+        if topology.parse_shared_session_root(requested_root) is not None:
+            return False
+        if (requested_root / "actors").is_dir():
+            return False
+    return True
+
+
 def _iter_session_roots(base_dir: Path) -> list[Path]:
     if not base_dir.exists():
         return []
@@ -757,6 +783,7 @@ def main(argv: list[str] | None = None) -> int:
                 "this command requires an existing session; run `gotta session bind` "
                 "first or pass `--session <session-id>`"
             )
+        requested_root = root
         if session_access == "ambient" and root is not None and not session_is_initialized(root):
             if explicit_target:
                 return die(
@@ -764,6 +791,13 @@ def main(argv: list[str] | None = None) -> int:
                     "target session; bind an actor there first or pass `--actor <actor>`"
                 )
             root = None
+        scaffold_created = False
+        if auto_bootstrap and root is not None and session_access in {"read", "ambient"}:
+            root, scaffold_created = _ensure_scaffolded_session(
+                root,
+                context_id=context_id,
+                context_source=context_source,
+            )
         if session_access == "read" and not session_is_initialized(root):
             existing = _existing_actor_root_for_session(
                 root,
@@ -774,7 +808,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             if existing is not None:
                 root = existing
-        scaffold_created = False
         if session_access == "read":
             if not session_is_initialized(root):
                 return die(
@@ -822,7 +855,13 @@ def main(argv: list[str] | None = None) -> int:
                 warning = _actor_stop_warning(root)
                 if warning:
                     print(warning, file=sys.stderr)
-                else:
+                elif _should_emit_actor_note_check_warning(
+                    argv=normalized,
+                    root=root,
+                    requested_root=requested_root,
+                    acting_actor=acting_actor,
+                    explicit_actor=explicit_actor,
+                ):
                     pulse_warning = _actor_note_check_warning(root)
                     if pulse_warning:
                         print(pulse_warning, file=sys.stderr)

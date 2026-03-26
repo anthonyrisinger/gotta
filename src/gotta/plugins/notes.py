@@ -185,7 +185,6 @@ def main(argv: list[str] | None = None) -> int:
         actor_payloads: dict[str, dict[str, object]] = {}
         entries: list[dict[str, object]] = []
         for actor_name in actor_ids:
-            session_plugin._record_note_check(work_dir, actor_name)
             status = session_plugin._actor_status_payload(work_dir, actor_name)
             actor_payloads[actor_name] = actor_notes_payload(
                 work_dir,

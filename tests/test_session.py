@@ -386,8 +386,56 @@ def test_actor_launch_records_immediate_launcher_heartbeat(
     payload = sessionlib._actor_status_payload(actor_root, claude)
     assert payload["notes_status"] == "present"
     assert payload["voice"] == "setup"
+    assert payload["launched_at"]
+    assert payload.get("launched_by", "") == ""
     assert "already is the actor" in captured.err
     assert "Do not pair another agent into this actor" in captured.err
+
+
+def test_actor_launch_records_passive_launcher_provenance(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude", "Scout")
+    claude = _actor_id(root, "claude")
+    scout = _actor_id(root, "scout")
+
+    class FakeProc:
+        pid = 4242
+        stdout = io.StringIO("")
+        stderr = io.StringIO("")
+
+        def wait(self) -> int:
+            return 0
+
+    class FakeThread:
+        def join(self, timeout: float | None = None) -> None:
+            if timeout is None:
+                return None
+            return None
+
+    monkeypatch.setattr(
+        actor.session_plugin,
+        "_actor_launch_blockers",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(actor, "_actor_prompt", lambda **_kwargs: "prompt")
+    monkeypatch.setattr(
+        actor,
+        "_spawn_actor_process",
+        lambda *_args, **_kwargs: FakeProc(),
+    )
+    monkeypatch.setattr(actor, "_with_heartbeat", lambda *_args, **_kwargs: FakeThread())
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, scout)
+
+    assert actor.main(["launch", claude, "--session", str(root)]) == 0
+    capsys.readouterr()
+
+    payload = sessionlib._actor_status_payload(root, claude)
+    assert payload["launched_by"] == scout
+    assert payload["launched_at"]
 
 
 def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
@@ -1657,7 +1705,7 @@ def test_notes_show_does_not_count_self_reads(
     assert status["last_note_check_by"] == ""
 
 
-def test_session_wide_notes_show_counts_each_foreign_actor_once(
+def test_session_wide_notes_show_does_not_increment_actor_note_check_counters(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -1672,8 +1720,8 @@ def test_session_wide_notes_show_counts_each_foreign_actor_once(
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["actor_count"] == 2
-    assert sessionlib._actor_status_payload(root, scout)["note_checks_since_update"] == 1
-    assert sessionlib._actor_status_payload(root, beacon)["note_checks_since_update"] == 1
+    assert sessionlib._actor_status_payload(root, scout)["note_checks_since_update"] == 0
+    assert sessionlib._actor_status_payload(root, beacon)["note_checks_since_update"] == 0
 
 
 def test_actor_status_preserves_note_read_pulse_when_low_signal_progress_is_active(
