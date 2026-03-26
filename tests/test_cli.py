@@ -118,21 +118,11 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
         ["jira", "status"],
         ["slack", "status"],
         ["grafana", "status"],
-        ["confluence", "search", "platform"],
-        ["gdocs", "search", "platform"],
-        ["gdrive", "search", "platform"],
         ["grafana", "datasources"],
-        ["grafana", "search", "--type", "dash-db"],
-        ["grafana", "search", "platform"],
         ["grafana", "query", "--datasource", "prom-main", "sum(up)"],
-        ["granola", "search", "platform"],
-        ["gsheets", "search", "platform"],
-        ["github", "search", "platform"],
-        ["jira", "search", "platform"],
-        ["slack", "search", "platform"],
     ],
 )
-def test_main_provider_status_surfaces_do_not_create_session(
+def test_main_non_session_provider_surfaces_do_not_create_session(
     tmp_path: Path, monkeypatch, capsys, argv: list[str]
 ) -> None:
     seen: list[tuple[list[str], str]] = []
@@ -153,7 +143,113 @@ def test_main_provider_status_surfaces_do_not_create_session(
     assert not (tmp_path / "session").exists()
 
 
-def test_main_read_retrieval_runs_sessionless_without_creating_session(
+@pytest.mark.parametrize(
+    ("env_name", "context_id", "context_source"),
+    [
+        ("CODEX_THREAD_ID", "thread-123", "codex_thread"),
+        ("TERM_SESSION_ID", "term-session-1", "terminal_session"),
+    ],
+)
+def test_main_stable_fingerprint_read_retrieval_auto_bootstraps_session(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    env_name: str,
+    context_id: str,
+    context_source: str,
+) -> None:
+    seen: list[tuple[list[str], str, str, str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append(
+            (
+                list(inner_argv or []),
+                os.environ.get("GOTTA_SESSION_DIR", ""),
+                os.environ.get("GOTTA_CONTEXT_ID", ""),
+                os.environ.get("GOTTA_CONTEXT_SOURCE", ""),
+            )
+        )
+        return 0
+
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("TERM_SESSION_ID", raising=False)
+    monkeypatch.setenv(env_name, context_id)
+
+    assert cli.main(["read", "https://example.com/manual.txt"]) == 0
+
+    captured = capsys.readouterr()
+    session_root = _grouped_root(tmp_path / "session", context_id)
+    assert seen == [
+        (
+            ["read", "https://example.com/manual.txt"],
+            str(session_root),
+            context_id,
+            context_source,
+        )
+    ]
+    assert "created a new gotta session" in captured.err
+    assert (session_root / "state" / "env").exists()
+
+
+def test_main_stable_fingerprint_local_relative_read_stays_sessionless(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "README.md").write_text("local doc\n", encoding="utf-8")
+
+    assert cli.main(["read", "README.md"]) == 2
+
+    captured = capsys.readouterr()
+    assert "requires an active or explicit session root" in captured.err
+    assert captured.out == ""
+    assert not (tmp_path / "session").exists()
+
+
+def test_main_stable_fingerprint_local_absolute_read_stays_sessionless(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    local_file = tmp_path / "README.md"
+    local_file.write_text("local doc\n", encoding="utf-8")
+
+    assert cli.main(["read", str(local_file)]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "local doc\n"
+    assert captured.err == ""
+    assert not (tmp_path / "session").exists()
+
+
+def test_main_fallback_fingerprint_read_retrieval_remains_sessionless(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append((list(inner_argv or []), os.environ.get("GOTTA_SESSION_DIR", "")))
+        return 0
+
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("TERM_SESSION_ID", raising=False)
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["read", "https://example.com/manual.txt"]) == 0
+
+    captured = capsys.readouterr()
+    assert seen == [(["read", "https://example.com/manual.txt"], "")]
+    assert captured.err == ""
+    assert not (tmp_path / "session").exists()
+
+
+def test_main_stable_fingerprint_provider_search_auto_bootstraps_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     seen: list[tuple[list[str], str]] = []
@@ -166,12 +262,13 @@ def test_main_read_retrieval_runs_sessionless_without_creating_session(
     monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["read", "https://example.com/manual.txt"]) == 0
+    assert cli.main(["github", "search", "platform"]) == 0
 
     captured = capsys.readouterr()
-    assert seen == [(["read", "https://example.com/manual.txt"], "")]
-    assert captured.err == ""
-    assert not (tmp_path / "session").exists()
+    session_root = _grouped_root(tmp_path / "session", "thread-123")
+    assert seen == [(["github", "search", "platform"], str(session_root))]
+    assert "created a new gotta session" in captured.err
+    assert (session_root / "state" / "env").exists()
 
 
 def test_main_ambient_provider_search_materializes_discovery_in_bound_session(
@@ -572,8 +669,66 @@ def test_main_dispatches_direct_plugin_args_inside_bound_session(
         ["actor", "status"],
     ],
 )
-def test_main_read_only_session_surfaces_without_bound_session_fail_without_creating_session(
+def test_main_read_only_session_surfaces_auto_bootstrap_for_stable_fingerprint(
     tmp_path: Path, monkeypatch, capsys, argv: list[str]
+) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append((list(inner_argv or []), os.environ.get("GOTTA_SESSION_DIR", "")))
+        return 0
+
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(argv) == 0
+
+    captured = capsys.readouterr()
+    session_root = _grouped_root(tmp_path / "session", "thread-123")
+    assert seen == [(argv, str(session_root))]
+    assert "created a new gotta session" in captured.err
+    assert (session_root / "state" / "env").exists()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["oops"],
+        ["logs"],
+        ["todo"],
+        ["want"],
+        ["goal"],
+        ["session", "show"],
+        ["actor", "status"],
+    ],
+)
+def test_main_read_only_session_surfaces_stay_sessionless_for_fallback_fingerprint(
+    tmp_path: Path, monkeypatch, capsys, argv: list[str]
+) -> None:
+    seen: list[list[str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append(list(inner_argv or []))
+        return 0
+
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("TERM_SESSION_ID", raising=False)
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(argv) == 2
+
+    captured = capsys.readouterr()
+    assert "this command requires an existing session" in captured.err
+    assert seen == []
+    assert not (tmp_path / "session").exists()
+
+
+def test_main_stable_fingerprint_does_not_replace_explicit_session_target(
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     seen: list[list[str]] = []
 
@@ -585,11 +740,25 @@ def test_main_read_only_session_surfaces_without_bound_session_fail_without_crea
     monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(argv) == 2
+    explicit_root = tmp_path / "other-session"
+    assert cli.main(["todo", "--session", str(explicit_root)]) == 2
 
     captured = capsys.readouterr()
-    assert "this command requires an existing session" in captured.err
+    assert "session references must be an absolute path" in captured.err
     assert seen == []
+    assert not (tmp_path / "session").exists()
+
+
+def test_main_explicit_actor_requires_existing_session_before_resolution(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["notes", "--actor", "helper"]) == 2
+
+    captured = capsys.readouterr()
+    assert "explicit actor targeting requires an existing session" in captured.err
     assert not (tmp_path / "session").exists()
 
 
@@ -701,30 +870,25 @@ def test_main_help_and_bare_gotta_are_discoverable_without_creating_session(
     assert not (tmp_path / "session").exists()
 
 
-def test_main_session_show_and_doctor_require_an_existing_session(
+def test_main_session_show_and_doctor_auto_bootstrap_for_stable_fingerprint(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     registry = tmp_path / "session"
     _set_default_session_root(monkeypatch, registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["session", "show"]) == 2
-    first_err = capsys.readouterr().err
-    assert "this command requires an existing session" in first_err
-    assert not registry.exists()
-
-    assert cli.main(["session", "bind"]) == 0
-    capsys.readouterr()
-
     assert cli.main(["session", "show"]) == 0
-    show_output = capsys.readouterr().out
     session_root = _grouped_root(registry, "thread-123")
-    assert show_output.strip() == str(session_root.resolve())
+    first = capsys.readouterr()
+    assert first.out.strip() == str(session_root.resolve())
+    assert "created a new gotta session" in first.err
     assert (session_root / "state" / "env").exists()
     assert (session_root / "content").is_dir()
 
     assert cli.main(["session", "doctor"]) == 0
-    doctor_output = json.loads(capsys.readouterr().out)
+    second = capsys.readouterr()
+    assert "created a new gotta session" not in second.err
+    doctor_output = json.loads(second.out)
     assert doctor_output["session"]["sessionRoot"] == str(session_root.resolve())
     assert doctor_output["session"]["initialized"] is True
     assert doctor_output["runtime"]["contextId"] == "thread-123"

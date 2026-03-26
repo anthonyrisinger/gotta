@@ -283,8 +283,16 @@ gotta slack search "handoff failure"
 gotta read https://github.com/org/repo/blob/main/README.md
 ```
 
-Direct provider `status`, `search`, and `get` surfaces operate without session
-scaffolding unless they intentionally materialize durable evidence.
+Stable interactive fingerprints like Codex threads and terminal sessions
+automatically adopt their deterministic default session on the first
+session-aware command that actually targets session state or acquires
+remote/provider evidence. Provider `search`, provider `get`, remote/provider
+`read`, and read-only session surfaces all auto-bootstrap there. Plain local
+reads stay sessionless, and explicit `--actor` targeting still requires an
+existing session because actor selection is session topology, not session
+creation. Fallback synthetic fingerprints remain conservative and can still
+use provider surfaces sessionlessly until a session is explicitly bound or
+created.
 
 `gotta read` is the canonical retrieval entrypoint. It supports:
 
@@ -418,8 +426,10 @@ Inside this topology:
 
 Read-only session-rooted surfaces such as `gotta oops`, `gotta logs`,
 `gotta todo`, `gotta want`, `gotta goal`, `gotta actor status`, and
-`gotta session show` require either an existing bound session or an explicit
-`--session <session-id>`.
+`gotta session show` auto-bootstrap the deterministic default session for
+stable interactive fingerprints like Codex threads and terminal sessions.
+Fallback synthetic fingerprints still require either an existing bound session
+or an explicit `--session <session-id>`.
 
 This split is deliberate:
 

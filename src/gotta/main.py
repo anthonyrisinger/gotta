@@ -167,6 +167,7 @@ _AMBIENT_SESSIONLESS_ENV = "GOTTA_AMBIENT_SESSIONLESS"
 
 _SESSION_LOCK_TIMEOUT_SECONDS = 5.0
 _SESSION_LOCK_SLEEP_SECONDS = 0.05
+_AUTO_BOOTSTRAP_CONTEXT_SOURCES = {"codex_thread", "terminal_session"}
 
 
 @contextmanager
@@ -512,6 +513,30 @@ def _active_identity(context_id: str) -> str:
     return _session_token(context_id)
 
 
+def _should_auto_bootstrap_session(
+    *,
+    argv: list[str],
+    context_source: str,
+    explicit_session: str | None,
+    session_access: SessionAccessMode,
+) -> bool:
+    if explicit_session:
+        return False
+    if session_access == "none":
+        return False
+    if context_source not in _AUTO_BOOTSTRAP_CONTEXT_SOURCES:
+        return False
+    if argv[:1] != ["read"]:
+        return True
+    try:
+        from gotta.target import resolve_read_target
+
+        resolved = resolve_read_target(argv[1:])
+    except SystemExit:
+        return False
+    return resolved.should_materialize
+
+
 def _is_nonbinding_help(argv: list[str]) -> bool:
     if not argv:
         return True
@@ -655,6 +680,14 @@ def main(argv: list[str] | None = None) -> int:
         explicit_actor = _explicit_actor_arg(normalized)
         explicit_target = bool(explicit_session or explicit_actor)
         session_access = _session_access_mode(normalized)
+        auto_bootstrap = _should_auto_bootstrap_session(
+            argv=normalized,
+            context_source=context_source,
+            explicit_session=explicit_session,
+            session_access=session_access,
+        )
+        created = False
+        bound_current_context = False
         init_command = plugin_name == "session" and len(normalized) >= 2 and normalized[1] == "init"
         if plugin_name == "session" and len(normalized) >= 2 and normalized[1] in {"bind"}:
             return _gotta_main(normalized)
@@ -702,12 +735,10 @@ def main(argv: list[str] | None = None) -> int:
             current = _prefer_bound_session_root()
             if current is None:
                 current = _resolve_existing_session_root(context_id, context_source)
-            if current is None and session_access == "write":
-                current, _created = _bind_session_root(context_id, context_source)
             if current is None:
                 return die(
-                    "this command requires an existing session; run `gotta session bind` "
-                    "first or pass `--session <session-id>`"
+                    "explicit actor targeting requires an existing session; run "
+                    "`gotta session bind` first or pass `--session <session-id>`"
                 )
             resolved_actor = session_plugin._resolve_bound_actor_name(
                 current,
@@ -716,11 +747,9 @@ def main(argv: list[str] | None = None) -> int:
             root = topology.session_root_for(session_id(current), resolved_actor)
         else:
             root = _prefer_bound_session_root()
-        created = False
-        bound_current_context = False
         if root is None:
             root = _resolve_existing_session_root(context_id, context_source)
-        if root is None and session_access == "write":
+        if root is None and (session_access == "write" or auto_bootstrap):
             root, created = _bind_session_root(context_id, context_source)
             bound_current_context = True
         if root is None and session_access != "ambient":
