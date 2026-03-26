@@ -18,6 +18,7 @@ from gotta.content import (
 )
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta import session as session_plugin
+from gotta import topology
 from gotta.friction import (
     append_oops_record,
     filtered_oops_records,
@@ -357,6 +358,16 @@ def _read_payload(
     return payload
 
 
+def _is_exact_session_root(work_dir: Path) -> bool:
+    resolved = work_dir.resolve()
+    return (
+        resolved.parent.name != "actors"
+        and topology.parse_grouped_session_root(resolved) is None
+        and topology.parse_shared_session_root(resolved) is None
+        and session_plugin.session_is_initialized(resolved)
+    )
+
+
 def _resolved_action(args: argparse.Namespace) -> tuple[str, list[str]]:
     values = list(args.value or [])
     action_token = str(args.action or "").strip()
@@ -489,10 +500,46 @@ def cmd_oops(args: argparse.Namespace) -> int:
             severity=args.severity or "",
         )
         if not actor_ids:
-            raise SystemExit(
-                "no actors bound for this session; bind one intentionally with "
-                + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+            if not _is_exact_session_root(session_dir):
+                raise SystemExit(
+                    "no actors bound for this session; bind one intentionally with "
+                    + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+                )
+            records = filtered_oops_records(
+                oops_records(session_dir),
+                surface=args.surface or "",
+                command=args.command or "",
+                kind=args.kind or "",
+                severity=args.severity or "",
             )
+            payload = {
+                "session_root": str(session_dir),
+                "actor_count": 0,
+                "actors": [],
+                "shown_count": len(_limited_records(records, limit=args.limit)),
+                "entries": _limited_records(records, limit=args.limit),
+                "state_path": str(oops_log_path(session_dir)),
+                "locator": session_plugin._native_surface_locator("oops"),
+                "follow_command": session_plugin._native_surface_follow_command("oops"),
+                **oops_summary(records),
+            }
+            if args.output == "json":
+                print(json.dumps(payload, indent=2, sort_keys=True))
+                return 0
+            print(f"oops: {payload['follow_command']}")
+            print(f"entries: {payload['entry_count']} (showing {payload['shown_count']})")
+            print(f"severity_counts: {payload['severity_counts']}")
+            print(f"kind_counts: {payload['kind_counts']}")
+            print(f"surface_counts: {payload['surface_counts']}")
+            print(f"resolution_counts: {payload['resolution_counts']}")
+            print(f"reproducibility_counts: {payload['reproducibility_counts']}")
+            print(f"affordance_counts: {payload['affordance_counts']}")
+            for record in payload["entries"]:
+                timestamp = str(record.get("timestamp") or "unknown-time")
+                actor = str(record.get("actor") or "session")
+                message = str(record.get("message") or "").strip() or "unspecified oops entry"
+                print(f"- `{timestamp}` [{actor}] {message}")
+            return 0
     payload = {
         **_read_payload(
             session_dir,

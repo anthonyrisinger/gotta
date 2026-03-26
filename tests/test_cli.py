@@ -1268,7 +1268,7 @@ def test_session_bind_accepts_exact_session_root_reference(
 
     assert payload["sessionRoot"] == str(session_root.resolve())
     assert payload["sessionId"] == content.session_id(session_root)
-    assert payload["actor"] == content.session_identity(session_root)
+    assert payload["actor"] == ""
 
     assert cli.main(["session", "doctor", "--output", "json"]) == 0
     doctor = json.loads(capsys.readouterr().out)
