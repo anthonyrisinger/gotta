@@ -526,8 +526,9 @@ def _session_root(args: argparse.Namespace) -> Path:
     if root is None or not session_is_initialized(root):
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
-            "contexts scaffold their deterministic session on first session-aware "
-            "use; `gotta session init --session \"$WS\"` remains the manual exact-root path."
+            "contexts adopt and scaffold their deterministic session on first "
+            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            "when you intentionally want to scaffold one exact root."
         )
     return root.resolve()
 
@@ -745,7 +746,10 @@ def _cmd_status(args: argparse.Namespace, work_root: Path, actor_name: str) -> i
 
 def _cmd_bind(work_root: Path, actor_names: list[str]) -> int:
     if not actor_names:
-        raise SystemExit("`gotta actor bind` requires at least one actor")
+        raise SystemExit(
+            "missing actor for `gotta actor bind`; use "
+            + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+        )
     results: list[str] = []
     for actor_name in actor_names:
         results.append(session_plugin._bind_actor(work_root, actor_name))

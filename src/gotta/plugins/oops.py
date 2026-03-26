@@ -156,8 +156,9 @@ def _resolve_session_root(*, explicit_session: str | None) -> Path:
     if not session_is_initialized(session_dir):
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
-            "contexts scaffold their deterministic session on first session-aware "
-            "use; `gotta session init --session \"$WS\"` remains the manual exact-root path."
+            "contexts adopt and scaffold their deterministic session on first "
+            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            "when you intentionally want to scaffold one exact root."
         )
     return session_dir
 

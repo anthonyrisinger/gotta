@@ -37,7 +37,6 @@ from gotta.content import (
     sh_quote,
     state_env_path,
     load_state_env_at_root,
-    write_text_atomic,
     write_session_state,
 )
 from gotta.helptext import is_long_help_request, print_long_help
@@ -65,6 +64,9 @@ TIMELINE_MODE_ALIASES = {
     "created": "created",
     "updated": "updated",
 }
+
+SUMMARY_BUCKET_LIMIT = 5
+GRAPH_TEXT_PREVIEW_LIMIT = 8
 
 TIMELINE_MODE_HELP = "chronology mode: acquired, created, updated, or best-effort"
 
@@ -286,8 +288,9 @@ def _require_started_session(dirs) -> None:
     if not session_is_initialized(dirs.session_dir):
         raise ContentError(
             "start or bind a session first with `gotta ...`. Stable interactive "
-            "contexts scaffold their deterministic session on first session-aware "
-            "use; `gotta session init` remains the manual exact-root path; "
+            "contexts adopt and scaffold their deterministic session on first "
+            "session-aware use. Use `gotta session init` only when you "
+            "intentionally want to scaffold one exact root; "
             f"missing {state_file}"
         )
 
@@ -775,6 +778,45 @@ def _artifact_kind_counts(records: list[dict[str, object]]) -> tuple[int, int]:
     return discovery, evidence
 
 
+def _top_count_records(
+    values: list[str],
+    *,
+    key: str,
+    limit: int = SUMMARY_BUCKET_LIMIT,
+) -> list[dict[str, object]]:
+    counter = Counter(value for value in values if value)
+    return [{key: label, "count": count} for label, count in counter.most_common(limit)]
+
+
+def _append_count_section(
+    lines: list[str],
+    *,
+    heading: str,
+    records: list[dict[str, object]],
+    key: str,
+) -> None:
+    if not records:
+        return
+    lines.append(f"{heading}:")
+    for record in records:
+        lines.append(f"  - {record[key]}: {int(record['count'])}")
+
+
+def _append_preview_heading(
+    lines: list[str],
+    *,
+    heading: str,
+    shown: int,
+    total: int,
+) -> None:
+    if total <= 0:
+        return
+    if shown >= total:
+        lines.append(f"{heading}:")
+        return
+    lines.append(f"{heading} (showing {shown} of {total}):")
+
+
 def _artifact_kind_label(record: dict[str, object]) -> str:
     return _artifact_kind(record.get("artifact_kind") or record.get("artifactKind"))
 
@@ -869,6 +911,24 @@ def _manifest_payload(
         for entry in paged
     ]
     fetch_record_count = sum(int(entry.get("fetchCount") or 0) for entry in ordered)
+    top_plugins = _top_count_records(
+        [
+            str(plugin_name).strip()
+            for entry in ordered
+            for plugin_name in list(entry.get("plugins") or [])
+            if str(plugin_name).strip()
+        ],
+        key="plugin",
+    )
+    top_actors = _top_count_records(
+        [
+            str(actor_name).strip()
+            for entry in ordered
+            for actor_name in list(entry.get("actors") or [])
+            if str(actor_name).strip()
+        ],
+        key="actor",
+    )
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -878,6 +938,8 @@ def _manifest_payload(
         **paging,
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
+        "topPlugins": top_plugins,
+        "topActors": top_actors,
         "pluginFilter": plugin,
         "actorFilter": actor,
         "locatorFilter": locator,
@@ -1488,6 +1550,14 @@ def _timeline_payload(
             default_tail_window=True,
         )
         discovery_count, evidence_count = _artifact_kind_counts(ordered)
+        top_plugins = _top_count_records(
+            [str(item.get("plugin") or "").strip() for item in ordered],
+            key="plugin",
+        )
+        top_actors = _top_count_records(
+            [str(item.get("actor") or "").strip() for item in ordered],
+            key="actor",
+        )
         return {
             "sessionDir": str(dirs.session_dir),
             "contentDir": str(dirs.content_dir),
@@ -1501,6 +1571,8 @@ def _timeline_payload(
             **paging,
             "discoveryArtifactCount": discovery_count,
             "evidenceArtifactCount": evidence_count,
+            "topPlugins": top_plugins,
+            "topActors": top_actors,
             "matchFilter": match_filter,
             "events": paged,
         }
@@ -1570,6 +1642,14 @@ def _timeline_payload(
         default_tail_window=True,
     )
     discovery_count, evidence_count = _artifact_kind_counts(events)
+    top_plugins = _top_count_records(
+        [str(item.get("plugin") or "").strip() for item in events],
+        key="plugin",
+    )
+    top_actors = _top_count_records(
+        [str(item.get("actor") or "").strip() for item in events],
+        key="actor",
+    )
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -1583,6 +1663,8 @@ def _timeline_payload(
         **paging,
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
+        "topPlugins": top_plugins,
+        "topActors": top_actors,
         "matchFilter": match_filter,
         "events": paged,
     }
@@ -1777,6 +1859,14 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
     empty = not sources and not content and not edges
     discovery_count = sum(1 for item in content if item.get("artifactKind") == "discovery")
     evidence_count = sum(1 for item in content if item.get("artifactKind") == "evidence")
+    top_providers = _top_count_records(
+        [_provider_name(str(item["locator"])) for item in sources],
+        key="provider",
+    )
+    top_artifact_kinds = _top_count_records(
+        [str(item.get("artifactKind") or "").strip() for item in content],
+        key="artifactKind",
+    )
     next_step = _topology_next_step(
         discovery_count=discovery_count,
         evidence_count=evidence_count,
@@ -1796,6 +1886,8 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
         "edgeCount": len(edges),
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
+        "topProviders": top_providers,
+        "topArtifactKinds": top_artifact_kinds,
         "empty": empty,
         "nextStep": next_step,
         "sources": sources,
@@ -1888,9 +1980,28 @@ def _render_graph_text(payload: dict[str, object]) -> str:
     ]
     if payload.get("nextStep"):
         lines.append(f"next: {payload['nextStep']}")
+    _append_count_section(
+        lines,
+        heading="top providers",
+        records=list(payload.get("topProviders") or []),
+        key="provider",
+    )
+    _append_count_section(
+        lines,
+        heading="top artifact kinds",
+        records=list(payload.get("topArtifactKinds") or []),
+        key="artifactKind",
+    )
     if payload.get("sources"):
-        lines.append("sources:")
-        for source in payload["sources"]:
+        sources = list(payload.get("sources") or [])
+        preview_sources = sources[:GRAPH_TEXT_PREVIEW_LIMIT]
+        _append_preview_heading(
+            lines,
+            heading="strongest sources",
+            shown=len(preview_sources),
+            total=len(sources),
+        )
+        for source in preview_sources:
             bits = [f"{int(source.get('contentCount') or 0)} content"]
             if source.get("artifactKinds"):
                 bits.append(",".join(str(value) for value in source.get("artifactKinds") or []))
@@ -1898,9 +2009,20 @@ def _render_graph_text(payload: dict[str, object]) -> str:
                 bits.append(f"variants {int(source.get('variantCount') or 0)}")
             lines.append(f"  - {source['locator']} ({'; '.join(bits)})")
             lines.append(f"    follow: `{source['followCommand']}`")
+        if len(sources) > len(preview_sources):
+            lines.append(
+                f"  - ... {len(sources) - len(preview_sources)} additional sources hidden in text view"
+            )
     if payload.get("content"):
-        lines.append("content:")
-        for item in payload["content"]:
+        content_items = list(payload.get("content") or [])
+        preview_content = content_items[:GRAPH_TEXT_PREVIEW_LIMIT]
+        _append_preview_heading(
+            lines,
+            heading="materialized anchors",
+            shown=len(preview_content),
+            total=len(content_items),
+        )
+        for item in preview_content:
             bits = [str(item["checksum"])[:12], f"{int(item.get('sourceCount') or 0)} sources"]
             if item.get("artifactKind"):
                 bits.append(str(item["artifactKind"]))
@@ -1917,13 +2039,24 @@ def _render_graph_text(payload: dict[str, object]) -> str:
                 )
             )
     if payload.get("edges"):
-        lines.append("edges:")
-        for edge in payload["edges"]:
+        edges = list(payload.get("edges") or [])
+        preview_edges = edges[:GRAPH_TEXT_PREVIEW_LIMIT]
+        _append_preview_heading(
+            lines,
+            heading="sample edges",
+            shown=len(preview_edges),
+            total=len(edges),
+        )
+        for edge in preview_edges:
             label = str(edge["plugin"])
             count = int(edge.get("count") or 0)
             if count > 1:
                 label = f"{label} x{count}"
             lines.append(f"  - {edge['source']} -> {edge['checksum'][:12]} ({label})")
+        if len(edges) > len(preview_edges):
+            lines.append(
+                f"  - ... {len(edges) - len(preview_edges)} additional edges hidden in text view"
+            )
     return "\n".join(lines)
 
 
@@ -1977,43 +2110,6 @@ def _render_variant_label(variant: tuple[str, str]) -> str:
     if subcommand == "default":
         return flavor
     return f"{subcommand}/{flavor}"
-
-
-def _analysis_output_paths(session_dir: Path) -> tuple[Path, Path, Path]:
-    return (
-        session_dir / "graph.mmd",
-        session_dir / "graph.json",
-        session_dir / "summary.json",
-    )
-
-
-def _semantic_output_paths(session_dir: Path) -> tuple[Path, Path]:
-    return (
-        session_dir / "semantic-graph.mmd",
-        session_dir / "semantic-graph.json",
-    )
-
-
-def _wrapped_markdown_path(mermaid_path: Path) -> Path:
-    return mermaid_path.with_name(mermaid_path.name + ".md")
-
-
-def _write_mermaid_artifact(path: Path, mermaid: str) -> None:
-    write_text_atomic(path, mermaid + "\n")
-    title = path.stem
-    lines = mermaid.splitlines()
-    if len(lines) >= 3 and lines[0].strip() == "---":
-        i = 1
-        while i < len(lines) and lines[i].strip() != "---":
-            if lines[i].startswith("title:"):
-                title = lines[i].split(":", 1)[1].strip() or title
-            i += 1
-        body_lines = lines[i + 1 :] if i < len(lines) else lines
-    else:
-        body_lines = lines
-    body = "\n".join(body_lines).rstrip() + "\n"
-    wrapped = f"# {title}\n\n```mermaid\n{body}```\n"
-    write_text_atomic(_wrapped_markdown_path(path), wrapped)
 
 
 def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
@@ -2432,6 +2528,19 @@ def _leads_payload(
     discovery_count = sum(1 for item in artifacts if item.get("artifactKind") == "discovery")
     evidence_count = sum(1 for item in artifacts if item.get("artifactKind") == "evidence")
     empty = not artifacts and not lead_sources
+    top_providers = _top_count_records(
+        [str(source.get("provider") or "").strip() for source in lead_sources],
+        key="provider",
+    )
+    top_relations = _top_count_records(
+        [
+            str(relation).strip()
+            for source in lead_sources
+            for relation in list(source.get("relationKinds") or [])
+            if str(relation).strip()
+        ],
+        key="relation",
+    )
     next_step = (
         _topology_next_step(discovery_count=discovery_count, evidence_count=evidence_count)
         if empty and not match_filter and not selected
@@ -2448,6 +2557,8 @@ def _leads_payload(
         "artifactCount": len(artifacts),
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
+        "topProviders": top_providers,
+        "topRelations": top_relations,
         "leadCount": len(lead_sources),
         **paging,
         "materializedLeadCount": materialized_count,
@@ -4035,6 +4146,24 @@ def cmd_leads(args: argparse.Namespace) -> int:
     )
     if int(payload["shownCount"]) == 0 and int(payload["totalCount"]) > 0:
         print("page: no results in this page window")
+    top_providers_lines: list[str] = []
+    _append_count_section(
+        top_providers_lines,
+        heading="top providers",
+        records=list(payload.get("topProviders") or []),
+        key="provider",
+    )
+    if top_providers_lines:
+        print("\n".join(top_providers_lines))
+    top_relation_lines: list[str] = []
+    _append_count_section(
+        top_relation_lines,
+        heading="top relations",
+        records=list(payload.get("topRelations") or []),
+        key="relation",
+    )
+    if top_relation_lines:
+        print("\n".join(top_relation_lines))
     if payload["nextStep"]:
         print(f"next: {payload['nextStep']}")
     if payload["leadSources"]:
@@ -4148,6 +4277,24 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     )
     if int(payload["shownCount"]) == 0 and int(payload["totalCount"]) > 0:
         print("page: no results in this page window")
+    top_plugins_lines: list[str] = []
+    _append_count_section(
+        top_plugins_lines,
+        heading="top plugins",
+        records=list(payload.get("topPlugins") or []),
+        key="plugin",
+    )
+    if top_plugins_lines:
+        print("\n".join(top_plugins_lines))
+    top_actors_lines: list[str] = []
+    _append_count_section(
+        top_actors_lines,
+        heading="top actors",
+        records=list(payload.get("topActors") or []),
+        key="actor",
+    )
+    if top_actors_lines:
+        print("\n".join(top_actors_lines))
     print("follow: pass any emitted locator directly to `gotta read <locator>`")
     for entry in payload["entries"]:
         fetched_at = str(entry.get("fetched_at", "")).strip() or "unknown-time"
@@ -4238,6 +4385,24 @@ def cmd_timeline(args: argparse.Namespace) -> int:
     )
     if int(payload["shownCount"]) == 0 and int(payload["totalCount"]) > 0:
         print("page: no results in this page window")
+    top_plugins_lines: list[str] = []
+    _append_count_section(
+        top_plugins_lines,
+        heading="top plugins",
+        records=list(payload.get("topPlugins") or []),
+        key="plugin",
+    )
+    if top_plugins_lines:
+        print("\n".join(top_plugins_lines))
+    top_actors_lines: list[str] = []
+    _append_count_section(
+        top_actors_lines,
+        heading="top actors",
+        records=list(payload.get("topActors") or []),
+        key="actor",
+    )
+    if top_actors_lines:
+        print("\n".join(top_actors_lines))
     for event in payload["events"]:
         actor_label = event["actor"]
         if event.get("target_actor") and event["target_actor"] != actor_label:
@@ -4299,55 +4464,10 @@ def cmd_timeline(args: argparse.Namespace) -> int:
 def cmd_analyze(args: argparse.Namespace) -> int:
     dirs = resolve_dirs(_options_from_args(args), create=False)
     _require_started_session(dirs)
-    graph_path, json_path, summary_path = _analysis_output_paths(dirs.session_dir)
-    semantic_graph_path, semantic_json_path = _semantic_output_paths(dirs.session_dir)
     payload = _analysis_payload(dirs)
     mermaid = _render_analysis_mermaid(payload)
     semantic_payload = _semantic_payload(dirs)
     semantic_mermaid = _render_semantic_mermaid(semantic_payload)
-    summary = {
-        "sessionDir": payload["sessionDir"],
-        "contentDir": payload["contentDir"],
-        "manifestPath": payload["manifestPath"],
-        "graphMermaidPath": str(graph_path),
-        "graphMermaidMarkdownPath": str(_wrapped_markdown_path(graph_path)),
-        "graphJsonPath": str(json_path),
-        "semanticGraphMermaidPath": str(semantic_graph_path),
-        "semanticGraphMermaidMarkdownPath": str(_wrapped_markdown_path(semantic_graph_path)),
-        "semanticGraphJsonPath": str(semantic_json_path),
-        "summaryPath": str(summary_path),
-        "contentCount": payload["contentCount"],
-        "sourceCount": payload["sourceCount"],
-        "sourceEdgeCount": payload["sourceEdgeCount"],
-        "revisionEdgeCount": payload["revisionEdgeCount"],
-        "discoveryArtifactCount": payload["discoveryArtifactCount"],
-        "evidenceArtifactCount": payload["evidenceArtifactCount"],
-        "collisionCount": payload["collisionCount"],
-        "collisions": payload["collisions"],
-        "duplicateMaterializationCount": payload["duplicateMaterializationCount"],
-        "duplicateMaterializations": payload["duplicateMaterializations"],
-        "variantCount": payload["variantCount"],
-        "variants": payload["variants"],
-        "leadSourceCount": payload["leadSourceCount"],
-        "leadEdgeCount": payload["leadEdgeCount"],
-        "materializedLeadSourceCount": payload["materializedLeadSourceCount"],
-        "unmaterializedLeadSourceCount": payload["unmaterializedLeadSourceCount"],
-        "semanticNodeCount": semantic_payload["nodeCount"],
-        "semanticEdgeCount": semantic_payload["edgeCount"],
-    }
-    if args.mode in {"lineage", "all"}:
-        _write_mermaid_artifact(graph_path, mermaid)
-        write_text_atomic(
-            json_path,
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        )
-    if args.mode in {"semantic", "all"}:
-        _write_mermaid_artifact(semantic_graph_path, semantic_mermaid)
-        write_text_atomic(
-            semantic_json_path,
-            json.dumps(semantic_payload, indent=2, sort_keys=True) + "\n",
-        )
-    write_text_atomic(summary_path, json.dumps(summary, indent=2, sort_keys=True) + "\n")
     focus_query = str(getattr(args, "focus", "") or "").strip()
     focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
     overview = _analysis_overview_payload(
@@ -4629,10 +4749,11 @@ def main(argv: list[str]) -> int:
             parser.exit(
                 status=2,
                 message=(
-                    "start or bind a session first with `gotta ...`. Stable interactive "
-                    "contexts scaffold their deterministic session on first "
-                    "session-aware use; `gotta session init` remains the manual "
-                    "exact-root path.\n"
+                    "start or bind a session first with `gotta ...`. Stable "
+                    "interactive contexts adopt and scaffold their deterministic "
+                    "session on first session-aware use. Use `gotta session "
+                    "init` only when you intentionally want to scaffold one exact "
+                    "root.\n"
                 ),
             )
         parser.exit(status=2, message=f"{exc}\n")

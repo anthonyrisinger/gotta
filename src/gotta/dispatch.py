@@ -78,7 +78,12 @@ def system_exit_status(exc: SystemExit, *, emit: bool = True) -> int:
 SUPPRESS_MATERIALIZATION_ENV = INVOCATION_SUPPRESS_MATERIALIZATION_ENV
 SUPPRESS_RECEIPTS_ENV = "GOTTA_SUPPRESS_RECEIPTS"
 OUTPUT_BUDGET_LINE_LIMIT = 256
-OUTPUT_BUDGET_BYTE_LIMIT = 10 * 1024
+OUTPUT_BUDGET_BYTE_LIMIT = 9728
+OUTPUT_BUDGET_HARD_BYTE_LIMIT = 10 * 1024
+OUTPUT_BUDGET_FLEX_BYTE_LIMIT = min(OUTPUT_BUDGET_HARD_BYTE_LIMIT - OUTPUT_BUDGET_BYTE_LIMIT, 256)
+OUTPUT_EMIT_BYTE_LIMIT = OUTPUT_BUDGET_BYTE_LIMIT + OUTPUT_BUDGET_FLEX_BYTE_LIMIT
+FOLLOW_COMMAND_CHAR_LIMIT = 192
+JSON_PREVIEW_CHAR_LIMIT = 256
 _HELP_TOKENS = {"-h", "--help", "--help-all"}
 
 
@@ -405,12 +410,69 @@ def _determine_truncate_reason(lines: list[str], *, max_lines: int, max_bytes: i
 
 
 def _truncation_footer(reason: str, follow_command: str) -> str:
+    clipped_follow = _display_follow_command(follow_command)
     follow = (
-        f"follow: {follow_command}"
-        if follow_command
+        f"follow: {clipped_follow}"
+        if clipped_follow
         else "rerun non-interactively for full output"
     )
     return f"[output truncated by {reason} budget; {follow}]\n"
+
+
+def _display_follow_command(command: str, *, limit: int = FOLLOW_COMMAND_CHAR_LIMIT) -> str:
+    normalized = str(command or "").strip()
+    if not normalized:
+        return ""
+    if len(normalized) <= limit:
+        return normalized
+    return ""
+
+
+def _decode_utf8_prefix(data: bytes) -> str:
+    candidate = data
+    while candidate:
+        try:
+            return candidate.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            candidate = candidate[: exc.start]
+    return ""
+
+
+def _find_boundary(
+    data: bytes,
+    *,
+    start: int,
+    stop: int,
+    reverse: bool = False,
+) -> int:
+    if stop <= start:
+        return -1
+    window = data[start:stop]
+    pairs: tuple[tuple[bytes, int], ...] = ((b"\n\n", 2), (b"\n", 1))
+    for marker, width in pairs:
+        index = window.rfind(marker) if reverse else window.find(marker)
+        if index != -1:
+            return start + index + width
+    indexes = range(len(window) - 1, -1, -1) if reverse else range(len(window))
+    for index in indexes:
+        byte = window[index]
+        if chr(byte).isspace():
+            return start + index + 1
+    return -1
+
+
+def _select_text_cutoff(data: bytes, *, soft_limit: int, hard_limit: int) -> int:
+    if len(data) <= soft_limit:
+        return len(data)
+    stop = min(len(data), hard_limit)
+    forward = _find_boundary(data, start=soft_limit, stop=stop, reverse=False)
+    if forward != -1:
+        return forward
+    backward_start = max(0, soft_limit - OUTPUT_BUDGET_FLEX_BYTE_LIMIT)
+    backward = _find_boundary(data, start=backward_start, stop=soft_limit, reverse=True)
+    if backward != -1:
+        return backward
+    return min(len(data), soft_limit)
 
 
 def _truncate_text_output(text: str, *, follow_command: str) -> tuple[bytes, bool, str, int, int]:
@@ -426,20 +488,19 @@ def _truncate_text_output(text: str, *, follow_command: str) -> tuple[bytes, boo
     ) or "bytes"
     footer = _truncation_footer(reason, follow_command)
     allowed_lines = max(OUTPUT_BUDGET_LINE_LIMIT - 1, 0)
-    allowed_bytes = max(OUTPUT_BUDGET_BYTE_LIMIT - len(footer.encode("utf-8")), 0)
-    kept: list[str] = []
-    used_bytes = 0
-    for line in lines:
-        encoded = line.encode("utf-8")
-        if len(kept) + 1 > allowed_lines:
-            break
-        if used_bytes + len(encoded) > allowed_bytes:
-            break
-        kept.append(line)
-        used_bytes += len(encoded)
-    body = "".join(kept)
+    footer_bytes = len(footer.encode("utf-8"))
+    soft_body_bytes = max(OUTPUT_BUDGET_BYTE_LIMIT - footer_bytes, 0)
+    hard_body_bytes = max(OUTPUT_EMIT_BYTE_LIMIT - footer_bytes, 0)
+    candidate = "".join(lines[:allowed_lines])
+    candidate_bytes = candidate.encode("utf-8")
+    cutoff = _select_text_cutoff(
+        candidate_bytes,
+        soft_limit=soft_body_bytes,
+        hard_limit=hard_body_bytes,
+    )
+    body = _decode_utf8_prefix(candidate_bytes[:cutoff])
     payload = (body + footer).encode("utf-8")
-    return payload[:OUTPUT_BUDGET_BYTE_LIMIT], True, reason, original_bytes, original_lines
+    return payload[:OUTPUT_EMIT_BYTE_LIMIT], True, reason, original_bytes, original_lines
 
 
 def _json_preview_summary(payload: Any) -> dict[str, Any]:
@@ -458,49 +519,43 @@ def _json_preview_summary(payload: Any) -> dict[str, Any]:
     return {"type": type(payload).__name__}
 
 
+def _output_budget_descriptor() -> dict[str, int]:
+    return {
+        "lineLimit": OUTPUT_BUDGET_LINE_LIMIT,
+        "byteLimit": OUTPUT_BUDGET_BYTE_LIMIT,
+        "byteFlexLimit": OUTPUT_BUDGET_FLEX_BYTE_LIMIT,
+    }
+
+
 def _json_preview_envelope(
     payload: Any,
     *,
     follow_command: str,
 ) -> bytes:
     compact = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    preview = compact[:512]
-    if len(compact) > 512:
+    preview = compact[:JSON_PREVIEW_CHAR_LIMIT]
+    if len(compact) > JSON_PREVIEW_CHAR_LIMIT:
         preview += "..."
     summary = _json_preview_summary(payload)
+    clipped_follow = _display_follow_command(follow_command)
     envelope: dict[str, Any] = {
         "outputTruncated": True,
         "requestedFormat": "json",
         "truncateReason": "bytes",
-        "budget": {
-            "lineLimit": OUTPUT_BUDGET_LINE_LIMIT,
-            "byteLimit": OUTPUT_BUDGET_BYTE_LIMIT,
-        },
+        "budget": _output_budget_descriptor(),
         "summary": summary,
         "preview": preview,
     }
-    if follow_command:
-        envelope["followCommand"] = follow_command
+    if clipped_follow:
+        envelope["followCommand"] = clipped_follow
     variants = (
         envelope,
         {**envelope, "preview": ""},
         {
-            **envelope,
-            "preview": "",
-            "followCommand": (
-                f"{follow_command[:256]}..." if follow_command and len(follow_command) > 256 else follow_command
-            ),
-        }
-        if follow_command
-        else {**envelope, "preview": ""},
-        {
             "outputTruncated": True,
             "requestedFormat": "json",
             "truncateReason": "bytes",
-            "budget": {
-                "lineLimit": OUTPUT_BUDGET_LINE_LIMIT,
-                "byteLimit": OUTPUT_BUDGET_BYTE_LIMIT,
-            },
+            "budget": _output_budget_descriptor(),
             "summary": {"type": str(summary.get("type") or type(payload).__name__)},
             "preview": "",
         },
@@ -510,10 +565,7 @@ def _json_preview_envelope(
         if len(data) <= OUTPUT_BUDGET_BYTE_LIMIT:
             return data
     fallback = {
-        "budget": {
-            "lineLimit": OUTPUT_BUDGET_LINE_LIMIT,
-            "byteLimit": OUTPUT_BUDGET_BYTE_LIMIT,
-        },
+        "budget": _output_budget_descriptor(),
         "outputTruncated": True,
         "requestedFormat": "json",
         "summary": {"type": "json"},
@@ -621,7 +673,7 @@ def emit_budgeted_output(
 def _result_follow_command(result: Materialization | None) -> str:
     if result is None:
         return ""
-    locator = artifact_locator(result.name_link.name, result.digest)
+    locator = content_locator(result.digest)
     return shlex.join(["gotta", "read", locator])
 
 
@@ -639,10 +691,7 @@ def _receipt_payload(
                 "outputBudgetApplied": emitted.output_budget_applied,
                 "outputTruncated": True,
                 "truncateReason": emitted.truncate_reason or None,
-                "budget": {
-                    "lineLimit": OUTPUT_BUDGET_LINE_LIMIT,
-                    "byteLimit": OUTPUT_BUDGET_BYTE_LIMIT,
-                },
+                "budget": _output_budget_descriptor(),
                 "originalBytes": emitted.original_bytes,
                 "emittedBytes": emitted.emitted_bytes,
             }
@@ -1021,9 +1070,10 @@ def require_operational_session(dirs: ResolvedDirs) -> None:
     if not session_is_initialized(dirs.session_dir):
         raise ContentError(
             "start or bind a session first with `gotta ...` before running "
-            "operational commands. Stable interactive contexts scaffold their "
-            "deterministic session on first session-aware use; "
-            "`gotta session init --session <root>` remains the manual exact-root path."
+            "operational commands. Stable interactive contexts adopt and "
+            "scaffold their deterministic session on first session-aware use. "
+            "Use `gotta session init --session <root>` only when you "
+            "intentionally want to scaffold one exact root."
         )
 
 
@@ -1067,22 +1117,6 @@ def _receipt_extra(
     *,
     dirs: ResolvedDirs | None,
 ) -> dict[str, Any]:
-    if plugin == "session" and argv[:1] == ["analyze"] and dirs is not None:
-        summary_path = dirs.session_dir / "summary.json"
-        if summary_path.exists():
-            try:
-                payload = json.loads(summary_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                return {}
-            if isinstance(payload, dict):
-                return payload
-    if plugin == "session" and argv[:1] == ["analyze"] and dirs is None:
-        try:
-            options, _cleaned = split_common_options(argv)
-            resolved_dirs = resolve_dirs(options, create=False)
-        except ContentError:
-            return {}
-        return _receipt_extra(plugin, argv, dirs=resolved_dirs)
     return {}
 
 

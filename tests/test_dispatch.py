@@ -82,7 +82,24 @@ def test_emit_budgeted_output_truncates_interactive_text_with_footer(monkeypatch
     assert emitted.truncate_reason == "lines"
     assert "output truncated by lines budget" in captured.out
     assert "gotta read artifact:demo@abc123" in captured.out
-    assert len(captured.out.encode("utf-8")) <= dispatch.OUTPUT_BUDGET_BYTE_LIMIT
+    assert len(captured.out.encode("utf-8")) <= dispatch.OUTPUT_EMIT_BYTE_LIMIT
+
+
+def test_emit_budgeted_output_omits_overlong_follow_command_in_text_footer(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode("utf-8")
+
+    dispatch.emit_budgeted_output(
+        payload,
+        output_format="text",
+        budget_output=True,
+        follow_command="gotta read " + ("x" * 500),
+    )
+    captured = capsys.readouterr()
+
+    assert "output truncated by lines budget" in captured.out
+    assert "follow: " not in captured.out
+    assert "rerun non-interactively for full output" in captured.out
 
 
 def test_emit_budgeted_output_emits_json_preview_envelope_for_interactive_json(capsys) -> None:
@@ -119,6 +136,17 @@ def test_emit_budgeted_output_keeps_json_preview_valid_with_long_follow_command(
     assert rendered["outputTruncated"] is True
     assert rendered["requestedFormat"] == "json"
     assert rendered["truncateReason"] == "bytes"
+    assert "followCommand" not in rendered
+    assert len(rendered.get("preview", "")) <= dispatch.JSON_PREVIEW_CHAR_LIMIT + 3
+
+
+def test_select_text_cutoff_can_use_flex_to_finish_paragraph(monkeypatch) -> None:
+    monkeypatch.setattr(dispatch, "OUTPUT_BUDGET_FLEX_BYTE_LIMIT", 16)
+
+    payload = ("A" * 71 + "\n\n" + "B" * 80).encode("utf-8")
+    cutoff = dispatch._select_text_cutoff(payload, soft_limit=70, hard_limit=86)
+
+    assert cutoff == 73
 
 
 def test_run_plugin_actor_launch_streams_live_without_buffered_capture(

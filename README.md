@@ -365,14 +365,14 @@ These surfaces intentionally compress the evidence web without severing it:
 - `leads` extracts explicit next reads from existing artifacts
 - `analyze` rebuilds cached session synthesis outputs from durable state
 
-`session analyze` always renders the requested `--output` format to stdout and
-still writes the durable analysis artifacts under the hood. Textual stdout is
-budgeted by default; pass `--full-output` to disable terminal budgeting.
-Successful operator surfaces emit a compact JSON receipt on stderr only when
-gotta has non-obvious side effects to report, such as truncation, artifact
-locators, or durable analysis outputs; pass `--quiet` to suppress informational
-stderr output. Raw Mermaid output requires `--mode lineage` or `--mode
-semantic`; use `--output markdown` for the combined two-graph bundle.
+`session analyze` always renders the requested `--output` format to stdout.
+Redirect stdout when you want a durable editor-visible graph or bundle. Textual
+stdout is budgeted by default; pass `--full-output` to disable terminal
+budgeting. Successful operator surfaces emit a compact JSON receipt on stderr
+only when gotta has non-obvious side effects to report, such as truncation or
+artifact locators; pass `--quiet` to suppress informational stderr output. Raw
+Mermaid output requires `--mode lineage` or `--mode semantic`; use `--output
+markdown` for the combined two-graph bundle.
 
 Empty `manifest`, `graph`, `leads`, and `analyze` output means the session has
 not materialized enough evidence yet.

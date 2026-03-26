@@ -500,7 +500,7 @@ def test_main_quiet_suppresses_success_receipt(
     assert captured.err == ""
 
 
-def test_main_session_analyze_emits_default_json_receipt(
+def test_main_session_analyze_emits_no_side_effect_receipt(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session-root"
@@ -524,9 +524,7 @@ def test_main_session_analyze_emits_default_json_receipt(
     captured = capsys.readouterr()
 
     assert captured.out.startswith("session:")
-    receipt = _last_stderr_json(captured.err)
-    assert receipt["sessionDir"] == str(root.resolve())
-    assert receipt["summaryPath"].endswith("summary.json")
+    assert captured.err == ""
 
 
 def test_main_ambient_provider_get_honors_explicit_actor_attribution(

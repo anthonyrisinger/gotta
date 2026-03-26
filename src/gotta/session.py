@@ -155,8 +155,9 @@ def _session_dir(
     if current is None:
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
-            "contexts scaffold their deterministic session on first session-aware "
-            "use; `gotta session init --session \"$WS\"` remains the manual exact-root path."
+            "contexts adopt and scaffold their deterministic session on first "
+            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            "when you intentionally want to scaffold one exact root."
         )
     if explicit_actor:
         current = _actor_session_dir(
@@ -166,14 +167,16 @@ def _session_dir(
     if not session_is_initialized(current):
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
-            "contexts scaffold their deterministic session on first session-aware "
-            "use; `gotta session init --session \"$WS\"` remains the manual exact-root path."
+            "contexts adopt and scaffold their deterministic session on first "
+            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            "when you intentionally want to scaffold one exact root."
         )
     if not session_surface_initialized(current):
         raise SystemExit(
             "this session exists but is not scaffolded yet. In stable interactive "
-            "contexts, first session-aware use should scaffold automatically; "
-            "`gotta session init` remains the manual exact-root path."
+            "contexts, first session-aware use should scaffold automatically. "
+            "Use `gotta session init` only when you intentionally want to "
+            "scaffold one exact root."
         )
     return current
 
@@ -198,8 +201,9 @@ def _shared_session_dir(
     if current is None:
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
-            "contexts scaffold their deterministic session on first session-aware "
-            "use; `gotta session init --session \"$WS\"` remains the manual exact-root path."
+            "contexts adopt and scaffold their deterministic session on first "
+            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            "when you intentionally want to scaffold one exact root."
         )
     return _group_session_root(current)
 

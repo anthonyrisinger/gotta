@@ -611,6 +611,21 @@ def test_actor_status_empty_guidance_points_to_actor_bind(
     assert "gotta actor bind Claude" in output
 
 
+def test_actor_bind_without_actor_teaches_canonical_usage(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+
+    with pytest.raises(SystemExit) as exc:
+        actor.main(["bind", "--session", str(root)])
+    err = str(exc.value)
+
+    assert "missing actor for `gotta actor bind`" in err
+    assert "gotta actor bind Claude" in err
+
+
 def test_actor_status_discovers_initialized_fingerprint_actors_missing_from_metadata(
     tmp_path: Path, capsys
 ) -> None:
@@ -2269,29 +2284,13 @@ def test_session_analyze_writes_summary_and_graph(tmp_path: Path, monkeypatch, c
     captured = capsys.readouterr()
     assert captured.out.startswith("session:")
     assert captured.err == ""
-    summary = json.loads((local_root / "summary.json").read_text(encoding="utf-8"))
-    assert summary["sessionDir"] == str(local_root.resolve())
-    assert summary["contentCount"] == 2
-    assert summary["revisionEdgeCount"] == 1
-    assert summary["semanticNodeCount"] >= 2
-    assert Path(summary["graphMermaidPath"]).read_text(encoding="utf-8").startswith("---")
-    graph_markdown = Path(summary["graphMermaidMarkdownPath"]).read_text(encoding="utf-8")
-    assert graph_markdown.startswith("# gotta session analysis\n\n```mermaid\n")
-    assert 'flowchart LR' in graph_markdown
-    assert summary["graphMermaidMarkdownPath"].endswith(".mmd.md")
-    graph_payload = json.loads(Path(summary["graphJsonPath"]).read_text(encoding="utf-8"))
-    semantic_payload = json.loads(
-        Path(summary["semanticGraphJsonPath"]).read_text(encoding="utf-8")
-    )
-    semantic_graph_markdown = Path(summary["semanticGraphMermaidMarkdownPath"]).read_text(
-        encoding="utf-8"
-    )
-    assert semantic_graph_markdown.startswith("# gotta semantic graph\n\n```mermaid\n")
-    assert summary["semanticGraphMermaidMarkdownPath"].endswith(".mmd.md")
-    assert graph_payload["sessionDir"] == str(local_root.resolve())
-    assert graph_payload["contentCount"] == 2
-    assert semantic_payload["nodeCount"] >= 2
-    assert any(edge["to"] != edge["from"] for edge in graph_payload["revisionEdges"])
+    assert not (local_root / "summary.json").exists()
+    assert not (local_root / "graph.json").exists()
+    assert not (local_root / "graph.mmd").exists()
+    assert not (local_root / "graph.mmd.md").exists()
+    assert not (local_root / "semantic-graph.json").exists()
+    assert not (local_root / "semantic-graph.mmd").exists()
+    assert not (local_root / "semantic-graph.mmd.md").exists()
     assert result.data_path.name == "data"
 
 
@@ -2454,9 +2453,8 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
 
     assert captured.out.startswith("---\ntitle: gotta session analysis\n---\nflowchart LR\n")
     assert captured.err == ""
-    receipt = json.loads((local_root / "summary.json").read_text(encoding="utf-8"))
-    assert receipt["sessionDir"] == str(local_root.resolve())
-    assert receipt["graphMermaidPath"].endswith("graph.mmd")
+    assert not (local_root / "summary.json").exists()
+    assert not (local_root / "graph.mmd").exists()
 
 
 def test_session_analyze_build_parser_rejects_stdout_flag() -> None:
@@ -2644,8 +2642,73 @@ def test_session_graph_match_prunes_to_matching_subgraph_and_supports_text_outpu
     )
     rendered = capsys.readouterr().out
     assert "match 'jira'" in rendered
+    assert "top providers:" in rendered
     assert "jira:GEN-1" in rendered
     assert "confluence:202" not in rendered
+
+
+def test_session_manifest_and_timeline_text_surface_hotspots_first(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"# GEN-1\n\nReference.\n",
+        dirs=dirs,
+        preferred_name="GEN-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "artifact_kind": "evidence",
+            "locator": "get GEN-1",
+            "canonical_locator": "jira:GEN-1",
+            "actor": "generic-actor",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    content.materialize_bytes(
+        b"# GEN-2\n\nReference.\n",
+        dirs=dirs,
+        preferred_name="GEN-2.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "artifact_kind": "evidence",
+            "locator": "get GEN-2",
+            "canonical_locator": "jira:GEN-2",
+            "actor": "generic-actor",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+    content.materialize_bytes(
+        b"# Generic Page\n\nReference.\n",
+        dirs=dirs,
+        preferred_name="generic-page.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "confluence",
+            "artifact_kind": "discovery",
+            "locator": "get 202",
+            "canonical_locator": "confluence:202",
+            "actor": "other-actor",
+        },
+        timestamp="2026-03-11T00:00:02.000001Z",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert session.main(["manifest", "--session", str(local_root)]) == 0
+    manifest_output = capsys.readouterr().out
+    assert "top plugins:" in manifest_output
+    assert "jira: 2" in manifest_output
+    assert "top actors:" in manifest_output
+    assert "generic-actor: 2" in manifest_output
+
+    assert session.main(["timeline", "--session", str(local_root)]) == 0
+    timeline_output = capsys.readouterr().out
+    assert "top plugins:" in timeline_output
+    assert "jira: 2" in timeline_output
+    assert "top actors:" in timeline_output
+    assert "generic-actor: 2" in timeline_output
 
 
 def test_session_analyze_defaults_to_text_overview_with_middle_sections(
