@@ -214,12 +214,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manifest.add_argument("--plugin")
     manifest.add_argument("--locator")
-    manifest.add_argument("--filter")
+    manifest.add_argument(
+        "--filter",
+        help="case-insensitive regex applied to manifest rows",
+    )
     manifest.add_argument("--limit", type=int, default=100)
     manifest.add_argument("--offset", type=int, default=0)
     manifest.add_argument("--all", action="store_true")
     manifest.add_argument("--output", choices=["json", "text"], default="text")
-    timeline.add_argument("--filter")
+    timeline.add_argument(
+        "--filter",
+        help="case-insensitive regex applied to timeline events",
+    )
     timeline.add_argument("--limit", type=int, default=100)
     timeline.add_argument("--offset", type=int, default=0)
     timeline.add_argument("--all", action="store_true")
@@ -236,7 +242,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="mermaid",
         help="render the content graph as Mermaid, text, or structured JSON",
     )
-    graph.add_argument("--filter")
+    graph.add_argument(
+        "--filter",
+        help="case-insensitive regex applied to graph nodes and edges",
+    )
     analyze.add_argument(
         "--output",
         choices=["text", "mermaid", "markdown", "json"],
@@ -275,7 +284,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--all", action="store_true")
     scan.add_argument("--output", choices=["json", "text"], default="text")
     leads.add_argument("target", nargs="?")
-    leads.add_argument("--filter")
+    leads.add_argument(
+        "--filter",
+        help="case-insensitive regex applied to derived lead records",
+    )
     leads.add_argument("--limit", type=int, default=100)
     leads.add_argument("--offset", type=int, default=0)
     leads.add_argument("--all", action="store_true")
@@ -433,6 +445,16 @@ def _match_filter_text(raw: object) -> str:
     return str(raw or "").strip()
 
 
+def _compile_filter_pattern(raw_query: object) -> re.Pattern[str] | None:
+    query = _match_filter_text(raw_query)
+    if not query:
+        return None
+    try:
+        return re.compile(query, re.IGNORECASE)
+    except re.error as exc:
+        raise SystemExit(f"invalid filter pattern: {exc}") from exc
+
+
 def _iter_match_strings(value: object):
     if value is None:
         return
@@ -449,13 +471,12 @@ def _iter_match_strings(value: object):
         yield text
 
 
-def _match_any(raw_query: object, *values: object) -> bool:
-    query = _match_filter_text(raw_query).casefold()
-    if not query:
+def _match_any(pattern: re.Pattern[str] | None, *values: object) -> bool:
+    if pattern is None:
         return True
     for value in values:
         for text in _iter_match_strings(value):
-            if query in text.casefold():
+            if pattern.search(text):
                 return True
     return False
 
@@ -709,9 +730,12 @@ def _filter_manifest_entries(
     return filtered
 
 
-def _manifest_entry_matches(entry: dict[str, object], match: str) -> bool:
+def _manifest_entry_matches(
+    entry: dict[str, object],
+    pattern: re.Pattern[str] | None,
+) -> bool:
     return _match_any(
-        match,
+        pattern,
         entry.get("canonical_locator"),
         entry.get("locator"),
         entry.get("preferred_name"),
@@ -966,8 +990,9 @@ def _manifest_payload(
     )
     entries = _aggregate_manifest_entries(raw_entries)
     filter_text = _match_filter_text(filter_query)
-    if filter_text:
-        entries = [entry for entry in entries if _manifest_entry_matches(entry, filter_text)]
+    filter_pattern = _compile_filter_pattern(filter_text)
+    if filter_pattern is not None:
+        entries = [entry for entry in entries if _manifest_entry_matches(entry, filter_pattern)]
     ordered = sorted(entries, key=_manifest_entry_sort_key, reverse=True)
     discovery_count, evidence_count = _artifact_kind_counts(ordered)
     paged, paging = _paginate_items(
@@ -1579,6 +1604,7 @@ def _timeline_payload(
         activity_paths[0] if activity_paths else str(activity_log_path(dirs.session_dir))
     )
     filter_text = _match_filter_text(filter_query)
+    filter_pattern = _compile_filter_pattern(filter_text)
     if normalized_mode != "acquired":
         snapshots = scan_content_store(dirs.content_dir)
         events: list[dict[str, object]] = []
@@ -1599,9 +1625,9 @@ def _timeline_payload(
             source_time, source_field = _source_timestamp_for_mode(snapshot, normalized_mode)
             if not source_time:
                 if _counts_as_source_coverage_gap(snapshot) and (
-                    not filter_text
+                    filter_pattern is None
                     or _match_any(
-                        filter_text,
+                        filter_pattern,
                         source_payload.get("actor"),
                         source_payload.get("target_actor"),
                         source_payload.get("plugin"),
@@ -1647,12 +1673,12 @@ def _timeline_payload(
             )
         if normalized_mode == "best-effort":
             events.extend(local_events)
-        if filter_text:
+        if filter_pattern is not None:
             events = [
                 item
                 for item in events
                 if _match_any(
-                    filter_text,
+                    filter_pattern,
                     item.get("actor"),
                     item.get("target_actor"),
                     item.get("plugin"),
@@ -1749,12 +1775,12 @@ def _timeline_payload(
             str(item.get("checksum") or ""),
         ),
     )
-    if filter_text:
+    if filter_pattern is not None:
         events = [
             item
             for item in events
             if _match_any(
-                filter_text,
+                filter_pattern,
                 item.get("actor"),
                 item.get("target_actor"),
                 item.get("plugin"),
@@ -1947,12 +1973,13 @@ def _graph_payload(
         for (source, checksum, plugin), count in sorted(edge_counts.items())
     ]
     filter_text = _match_filter_text(filter_query)
-    if filter_text:
+    filter_pattern = _compile_filter_pattern(filter_text)
+    if filter_pattern is not None:
         matched_sources = {
             str(source["locator"])
             for source in sources
             if _match_any(
-                filter_text,
+                filter_pattern,
                 source["locator"],
                 source.get("artifactKind"),
                 source.get("artifactKinds"),
@@ -1965,7 +1992,7 @@ def _graph_payload(
             str(item["checksum"])
             for item in content
             if _match_any(
-                filter_text,
+                filter_pattern,
                 item["checksum"],
                 item["preferredName"],
                 item["contentLocator"],
@@ -1979,7 +2006,7 @@ def _graph_payload(
             (str(edge["source"]), str(edge["checksum"]), str(edge["plugin"]))
             for edge in edges
             if _match_any(
-                filter_text,
+                filter_pattern,
                 edge["source"],
                 edge["checksum"],
                 edge["plugin"],
@@ -2615,12 +2642,13 @@ def _leads_payload(
         if locator:
             lead["followCommand"] = _follow_command(locator, session_ref=session_ref)
     filter_text = _match_filter_text(filter_query)
-    if filter_text:
+    filter_pattern = _compile_filter_pattern(filter_text)
+    if filter_pattern is not None:
         lead_sources = [
             lead
             for lead in lead_sources
             if _match_any(
-                filter_text,
+                filter_pattern,
                 lead.get("locator"),
                 lead.get("followCommand"),
                 lead.get("provider"),
@@ -2721,7 +2749,7 @@ def _leads_payload(
         else _no_leads_next_step(has_artifacts=bool(selected))
         if not lead_sources and not filter_text and selected
         else (
-            "No leads matched the current filter. Use `gotta session scan <query>` for broader regex-style searching."
+            "No leads matched the current filter. Use `gotta session scan <query>` when you need corpus-wide search instead of field-level lead filtering."
             if not lead_sources and filter_text
             else ""
         )

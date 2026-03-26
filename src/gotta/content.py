@@ -365,12 +365,12 @@ def write_session_state(
         if key not in {SESSION_ACTIVATION_ENV, CONTEXT_ID_ENV, CONTEXT_SOURCE_ENV}
     }
     current_session_id = session_id(dirs.session_dir)
-    identity = session_identity(dirs.session_dir)
+    actor_scope = session_actor_scope(dirs.session_dir)
     merged = {
         **existing,
         **env_mapping(dirs),
         SESSION_ID_ENV: current_session_id,
-        SESSION_ACTOR_ENV: identity,
+        SESSION_ACTOR_ENV: actor_scope,
     }
     if updates:
         merged.update({key: value for key, value in updates.items() if value is not None})
@@ -575,13 +575,16 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
 
 
 def export_env_lines(dirs: ResolvedDirs) -> list[str]:
-    return [
+    lines = [
         f"export {SESSION_ENV}={sh_quote(str(dirs.session_dir))}",
         f"export {SESSION_ID_ENV}={sh_quote(session_id(dirs.session_dir))}",
         f"export {CONTENT_ENV}={sh_quote(str(dirs.content_dir))}",
         f"export {STATE_DIR_ENV}={sh_quote(str(state_dir_path(dirs.session_dir)))}",
-        f"export {SESSION_ACTOR_ENV}={sh_quote(session_identity(dirs.session_dir))}",
     ]
+    actor_scope = session_actor_scope(dirs.session_dir)
+    if actor_scope:
+        lines.append(f"export {SESSION_ACTOR_ENV}={sh_quote(actor_scope)}")
+    return lines
 
 
 def env_mapping(dirs: ResolvedDirs) -> dict[str, str]:
@@ -590,7 +593,7 @@ def env_mapping(dirs: ResolvedDirs) -> dict[str, str]:
         SESSION_ID_ENV: session_id(dirs.session_dir),
         CONTENT_ENV: str(dirs.content_dir),
         STATE_DIR_ENV: str(state_dir_path(dirs.session_dir)),
-        SESSION_ACTOR_ENV: session_identity(dirs.session_dir),
+        SESSION_ACTOR_ENV: session_actor_scope(dirs.session_dir),
     }
 
 
@@ -604,6 +607,13 @@ def session_shared_id(root: Path) -> str:
     if explicit:
         return topology.normalize_session_id(explicit)
     return topology.shared_session_id(root)
+
+
+def session_actor_scope(root: Path) -> str:
+    derived = topology.session_identity(root)
+    if derived and not topology.is_placeholder_identity(derived):
+        return topology.normalize_identity(derived)
+    return ""
 
 
 def session_identity(root: Path) -> str:

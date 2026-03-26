@@ -152,6 +152,8 @@ def test_exact_root_scaffolds_local_metadata_content_and_actor_surfaces(
     assert payload[content.CONTENT_ENV] == str((root / "content").resolve())
     assert payload[content.SESSION_ACTOR_ENV] == ""
     assert payload[content.STATE_DIR_ENV] == str((root / "state").resolve())
+    state = content.load_state_env_at_root(root)
+    assert state.get(content.SESSION_ACTOR_ENV, "") == ""
     assert (root / "content").is_dir()
     assert not (root / "content").is_symlink()
     assert not (root / "session.json").exists()
@@ -171,6 +173,8 @@ def test_exact_root_scaffolds_local_metadata_content_and_actor_surfaces(
     assert payload[content.SESSION_ENV] == str(root.resolve())
     assert payload[content.SESSION_ACTOR_ENV] == ""
     assert payload[content.STATE_DIR_ENV] == str((root / "state").resolve())
+    state = content.load_state_env_at_root(root)
+    assert state.get(content.SESSION_ACTOR_ENV, "") == ""
 
     assert want.main(["--session", str(root)]) == 0
     actorless_output = capsys.readouterr().out
@@ -184,6 +188,26 @@ def test_exact_root_scaffolds_local_metadata_content_and_actor_surfaces(
     metadata = json.loads((root / "session.json").read_text(encoding="utf-8"))
     assert metadata["members"] == [claude]
     assert claude in metadata["actors"]
+
+
+def test_exact_root_bind_payload_and_binding_record_stay_actorless(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "workspace"
+
+    _init_session(root, capsys)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert session.main(["bind", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    binding_id = content.session_token("thread-123")
+    record = topology.load_binding_record(binding_id)
+
+    assert payload["sessionRoot"] == str(root.resolve())
+    assert payload["sessionDir"] == str(root.resolve())
+    assert payload["actor"] == ""
+    assert record is not None
+    assert record["actor"] == ""
 
 
 def test_session_init_is_idempotent_and_preserves_rewritten_charters(
@@ -2741,12 +2765,20 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
 
     assert (
         session.main(
-            ["graph", "--session", str(local_root), "--filter", "jira", "--output", "json"]
+            [
+                "graph",
+                "--session",
+                str(local_root),
+                "--filter",
+                "jira:GEN-(1|9)",
+                "--output",
+                "json",
+            ]
         )
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["filter"] == "jira"
+    assert payload["filter"] == "jira:GEN-(1|9)"
     assert payload["sourceCount"] == 1
     assert payload["contentCount"] == 1
     assert payload["edgeCount"] == 1
@@ -2754,12 +2786,20 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
 
     assert (
         session.main(
-            ["graph", "--session", str(local_root), "--filter", "jira", "--output", "text"]
+            [
+                "graph",
+                "--session",
+                str(local_root),
+                "--filter",
+                "jira:GEN-(1|9)",
+                "--output",
+                "text",
+            ]
         )
         == 0
     )
     rendered = capsys.readouterr().out
-    assert "filter 'jira'" in rendered
+    assert "filter 'jira:GEN-(1|9)'" in rendered
     assert "top providers:" in rendered
     assert "jira:GEN-1" in rendered
     assert "confluence:202" not in rendered
@@ -3364,6 +3404,30 @@ def test_session_scan_rejects_invalid_regex_even_without_entries(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["manifest", "--output", "json"],
+        ["timeline", "--output", "json"],
+        ["graph", "--output", "json"],
+        ["leads", "--output", "json"],
+    ],
+)
+def test_session_aggregate_filters_reject_invalid_regex_even_without_entries(
+    tmp_path: Path,
+    capsys,
+    argv: list[str],
+) -> None:
+    local_root = tmp_path / "local"
+    initialize_session(local_root)
+
+    with pytest.raises(SystemExit) as excinfo:
+        session.main([argv[0], "--session", str(local_root), "--filter", "[", *argv[1:]])
+
+    assert "invalid filter pattern:" in str(excinfo.value.code)
+    assert capsys.readouterr().out == ""
+
+
 def test_session_manifest_falls_back_to_jira_visibility_when_snapshot_metadata_is_unknown(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -3736,7 +3800,7 @@ def test_session_leads_filter_filters_surviving_leads_without_reordering_them(
                 "--session",
                 str(local_root),
                 "--filter",
-                "runbook",
+                "GEN-2|runbook",
                 "--output",
                 "json",
             ]
@@ -3745,10 +3809,56 @@ def test_session_leads_filter_filters_surviving_leads_without_reordering_them(
     )
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload["filter"] == "runbook"
-    assert payload["leadCount"] == 1
+    assert payload["filter"] == "GEN-2|runbook"
+    assert payload["leadCount"] == 2
     assert payload["artifactCount"] == 1
-    assert payload["leadSources"][0]["locator"] == "https://docs.example.test/runbook"
+    assert [lead["locator"] for lead in payload["leadSources"]] == [
+        "jira:GEN-2",
+        "https://docs.example.test/runbook",
+    ]
+
+
+def test_session_leads_filter_no_match_guides_toward_corpus_search(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        b"Runbook: https://docs.example.test/runbook\n",
+        dirs=dirs,
+        preferred_name="GEN-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get GEN-1",
+            "canonical_locator": "jira:GEN-1",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "leads",
+                "--session",
+                str(local_root),
+                "--filter",
+                "slack:thread:missing",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["leadCount"] == 0
+    assert payload["nextStep"] == (
+        "No leads matched the current filter. Use `gotta session scan <query>` "
+        "when you need corpus-wide search instead of field-level lead filtering."
+    )
 
 
 def test_session_leads_shows_low_signal_only_case_without_hiding_it(
@@ -4354,7 +4464,7 @@ def test_session_manifest_filter_filters_rows_before_paging(
                 "--session",
                 str(local_root),
                 "--filter",
-                "south",
+                "south-(runbook|ledger)",
                 "--output",
                 "json",
             ]
@@ -4362,7 +4472,7 @@ def test_session_manifest_filter_filters_rows_before_paging(
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["filter"] == "south"
+    assert payload["filter"] == "south-(runbook|ledger)"
     assert payload["entryCount"] == 1
     assert payload["fetchRecordCount"] == 1
     assert payload["entries"][0]["canonical_locator"] == "confluence:202"
@@ -4513,7 +4623,7 @@ def test_session_timeline_filter_filters_events_before_paging(
                 "--session",
                 str(local_root),
                 "--filter",
-                "south",
+                "south|GEN-404",
                 "--output",
                 "json",
             ]
@@ -4521,7 +4631,7 @@ def test_session_timeline_filter_filters_events_before_paging(
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["filter"] == "south"
+    assert payload["filter"] == "south|GEN-404"
     assert payload["eventCount"] == 1
     assert payload["events"][0]["locator"] == "confluence:202"
     assert payload["events"][0]["plugin"] == "confluence"

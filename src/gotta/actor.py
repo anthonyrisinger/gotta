@@ -34,8 +34,7 @@ def _shared_root(parent_root: Path) -> Path:
 
 
 def session_actor(root: Path) -> str:
-    state = content.load_state_env_at_root(root)
-    return normalize_actor_name(str(state.get(SESSION_ACTOR_ENV) or ""))
+    return normalize_actor_name(content.session_actor_scope(root))
 
 
 def resolve_actor_identity(parent_root: Path, actor_name: str) -> str:

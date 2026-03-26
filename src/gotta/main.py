@@ -44,6 +44,7 @@ from gotta.content import (
     load_state_env_at_root,
     resolve_dirs,
     resolve_session_reference,
+    session_actor_scope,
     session_id,
     session_identity as content_session_identity,
     session_is_initialized,
@@ -451,9 +452,11 @@ def _hydrate_environment(root: Path, *, context_id: str, context_source: str) ->
     os.environ[SESSION_ENV] = str(root)
     os.environ[SESSION_ID_ENV] = str(state.get(SESSION_ID_ENV) or session_id(root))
     os.environ[CONTENT_ENV] = str(state.get(CONTENT_ENV) or (root / "content"))
-    os.environ[SESSION_ACTOR_ENV] = str(
-        state.get(SESSION_ACTOR_ENV) or content_session_identity(root)
-    )
+    actor_scope = str(state.get(SESSION_ACTOR_ENV) or session_actor_scope(root))
+    if actor_scope:
+        os.environ[SESSION_ACTOR_ENV] = actor_scope
+    else:
+        os.environ.pop(SESSION_ACTOR_ENV, None)
     os.environ[CONTEXT_ACTIVE_ENV] = "1"
     os.environ[CONTEXT_ID_ENV] = context_id
     os.environ[CONTEXT_SOURCE_ENV] = context_source

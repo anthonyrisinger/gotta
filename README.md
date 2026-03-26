@@ -562,10 +562,10 @@ EOF
 Important invariants:
 
 - `gotta session bind ...` switches the active fingerprint binding to one
-  actor root, whether you name it by shared session id, exact session root, or
-  explicit `<session>/<actor>` reference
+  concrete session scope
 - binding a shared session id joins that shared session through the caller's own
-  actor root; binding an exact actor-root path reuses that exact actor root
+  actor root; binding an exact session root reuses that exact root; binding an
+  explicit `<session>/<actor>` reference reuses that exact actor root
 - `gotta actor bind ...` binds sibling actor sessions inside that shared
   session
   but does not launch them

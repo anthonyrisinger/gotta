@@ -271,7 +271,7 @@ def write_binding(
         "contextId": context_id,
         "contextSource": context_source,
         "sessionId": normalize_session_id(session_id),
-        "actor": normalize_identity(actor),
+        "actor": normalize_identity(actor) if actor.strip() else "",
         "sessionRoot": str(resolved_root),
         "createdAt": created_at,
         "updatedAt": updated_at,

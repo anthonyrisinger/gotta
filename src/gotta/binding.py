@@ -17,8 +17,8 @@ from gotta.content import (
     load_state_env_at_root,
     resolve_dirs,
     resolve_session_reference,
+    session_actor_scope,
     session_id,
-    session_identity,
     session_token,
     session_surface_initialized,
     write_session_state,
@@ -95,7 +95,7 @@ def ensure_actor_session(
 ) -> tuple[Path, bool]:
     resolved = root.expanduser().resolve()
     current_session_id = session_id(resolved)
-    actor = session_identity(resolved)
+    actor = session_actor_scope(resolved)
     actor_branch = (
         resolved.parent.name == "actors"
         or topology.parse_grouped_session_root(resolved) is not None
@@ -175,7 +175,7 @@ def bind_root_for_context(
         context_id=context_id,
         context_source=context_source,
         session_id=session_id(root),
-        actor=session_identity(root),
+        actor=session_actor_scope(root),
         created_at=str(existing.get("createdAt") or now),
         updated_at=now,
     )
@@ -189,7 +189,7 @@ def _resolved_payload(root: Path) -> dict[str, str]:
         "sessionRoot": str(resolved),
         "sessionId": session_id(resolved),
         "sessionDir": str(session_plugin._group_session_root(resolved)),
-        "actor": session_identity(resolved),
+        "actor": session_actor_scope(resolved),
         "content": str(state.get(CONTENT_ENV) or (resolved / "content")),
     }
 
