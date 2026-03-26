@@ -291,15 +291,10 @@ def _observation_scope(
 
 def _target_actor_ids(work_dir: Path, actor_ref: str | None = None) -> tuple[str, ...]:
     selected = _selected_actor_ids(work_dir)
-    if (
-        not selected
-        and topology.parse_grouped_session_root(work_dir) is None
-        and topology.parse_shared_session_root(work_dir) is None
-        and session_is_initialized(work_dir)
-    ):
-        identity = session_identity(work_dir)
-        if identity:
-            selected = (identity,)
+    if not selected and session_is_initialized(work_dir):
+        rooted_actor = session_actor(work_dir)
+        if rooted_actor:
+            selected = (rooted_actor,)
     if actor_ref:
         resolved = _resolve_bound_actor_name(work_dir, actor_ref)
         if resolved not in selected:

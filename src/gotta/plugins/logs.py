@@ -9,6 +9,7 @@ from gotta.actor import require_writer, writer_name, writer_role
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.logs import append_log_record, log_records, logs_state_path
 from gotta import session as session_plugin
+from gotta import topology
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
@@ -90,6 +91,16 @@ def _aggregate_logs(
     return actor_ids, records
 
 
+def _is_exact_session_root(work_dir) -> bool:
+    resolved = work_dir.resolve()
+    return (
+        resolved.parent.name != "actors"
+        and topology.parse_grouped_session_root(resolved) is None
+        and topology.parse_shared_session_root(resolved) is None
+        and session_plugin.session_is_initialized(resolved)
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv or [])
     if is_long_help_request(argv):
@@ -144,10 +155,37 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         actor_ids, records = _aggregate_logs(work_dir)
         if not actor_ids:
-            raise SystemExit(
-                "no actors bound for this session; bind one intentionally with "
-                + session_plugin._actor_bind_examples(prefix="gotta actor bind")
-            )
+            if not _is_exact_session_root(work_dir):
+                raise SystemExit(
+                    "no actors bound for this session; bind one intentionally with "
+                    + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+                )
+            entries = sorted(log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
+            limited = entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
+            payload = {
+                "session_root": str(work_dir),
+                "actor_count": 0,
+                "actors": [],
+                "entry_count": len(entries),
+                "entries": limited,
+                "state_path": str(logs_state_path(work_dir)),
+                "locator": session_plugin._native_surface_locator("logs"),
+                "follow_command": session_plugin._native_surface_follow_command("logs"),
+            }
+            if args.output == "json":
+                print(json.dumps(payload, indent=2, sort_keys=True))
+                return 0
+            print(f"logs: {payload['follow_command']}")
+            print(f"entries: {payload['entry_count']}")
+            for record in payload["entries"]:
+                timestamp = str(record.get("timestamp") or "unknown-time")
+                actor = str(record.get("actor") or "session")
+                message = str(record.get("message") or "").strip() or "unspecified log entry"
+                message_lines = message.splitlines() or ["unspecified log entry"]
+                print(f"- `{timestamp}` [{actor}] {message_lines[0]}")
+                for continuation in message_lines[1:]:
+                    print(f"  {continuation}")
+            return 0
         entries = records[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else records
         payload = {
             "session_root": str(work_dir),
