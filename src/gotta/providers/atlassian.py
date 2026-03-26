@@ -498,6 +498,21 @@ def api_json(
         raise AtlassianError(f"{method} {url} failed: {exc.reason}") from exc
 
 
+def api_bytes(method: str, url: str, token: str) -> bytes:
+    headers = {"Accept": "*/*"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise AtlassianError(f"{method} {url} failed with {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise AtlassianError(f"{method} {url} failed: {exc.reason}") from exc
+
+
 def exchange_authorization_code(
     client_id: str, client_secret: str, redirect_uri: str, code: str
 ) -> dict[str, Any]:

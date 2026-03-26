@@ -21,6 +21,7 @@ from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.config import set_provider_env_values
+from gotta.drawio import DRAWIO_MIME, summarize_drawio
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
@@ -78,6 +79,7 @@ load_atlassian_config_env = atl.load_atlassian_config_env
 load_oauth_runtime_config = atl.load_oauth_runtime_config
 is_interactive = atl.is_interactive
 api_json = atl.api_json
+api_bytes = atl.api_bytes
 token_preflight_status = atl.token_preflight_status
 load_cloud_id = atl.load_cloud_id
 atlassian_status_payload = atl.atlassian_status_payload
@@ -361,6 +363,57 @@ def comment_api_url(
     return (
         f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
         f"{comment_kind}/{comment_id}?{params}"
+    )
+
+
+def attachment_api_url(session: Session, attachment_id: str) -> str:
+    return (
+        f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
+        f"attachments/{attachment_id}"
+    )
+
+
+def attachment_download_api_url(
+    session: Session,
+    *,
+    page_id: str,
+    attachment_id: str,
+) -> str:
+    return (
+        f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/rest/api/"
+        f"content/{page_id}/child/attachment/{attachment_id}/download"
+    )
+
+
+def page_attachments_api_url(
+    session: Session,
+    page_id: str,
+    *,
+    filename: str = "",
+    limit: int = 25,
+) -> str:
+    params: dict[str, Any] = {"limit": limit}
+    if filename:
+        params["filename"] = filename
+    return (
+        f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
+        f"pages/{page_id}/attachments?{urllib.parse.urlencode(params, doseq=True)}"
+    )
+
+
+def custom_content_attachments_api_url(
+    session: Session,
+    custom_content_id: str,
+    *,
+    filename: str = "",
+    limit: int = 25,
+) -> str:
+    params: dict[str, Any] = {"limit": limit}
+    if filename:
+        params["filename"] = filename
+    return (
+        f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
+        f"custom-content/{custom_content_id}/attachments?{urllib.parse.urlencode(params, doseq=True)}"
     )
 
 
@@ -1188,6 +1241,262 @@ def _clean_markdown_projection(markdown: str) -> str:
     return cleaned
 
 
+_DRAWIO_MACRO_RE = re.compile(
+    r"<ac:structured-macro\b(?=[^>]*\bac:name=\"drawio\")[^>]*>(?P<body>.*?)</ac:structured-macro>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_DRAWIO_PARAM_RE = re.compile(
+    r"<ac:parameter\b[^>]*ac:name=\"(?P<name>[^\"]+)\"[^>]*(?:>(?P<value>.*?)</ac:parameter>|/>)",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_html_tags(value: str) -> str:
+    return re.sub(r"<[^>]+>", " ", value)
+
+
+def _parse_drawio_macro_params(macro_body: str) -> dict[str, str]:
+    params: dict[str, str] = {}
+    for match in _DRAWIO_PARAM_RE.finditer(macro_body):
+        name = str(match.group("name") or "").strip()
+        value = str(match.group("value") or "")
+        params[name] = html.unescape(_strip_html_tags(value)).strip()
+    return params
+
+
+def _html_list(items: list[str]) -> str:
+    return "<ul>" + "".join(f"<li>{item}</li>" for item in items) + "</ul>"
+
+
+def _fetch_attachment_candidates(
+    session: Session,
+    *,
+    page_id: str = "",
+    custom_content_id: str = "",
+    filename: str = "",
+) -> list[dict[str, Any]]:
+    urls: list[str] = []
+    if custom_content_id:
+        urls.append(
+            custom_content_attachments_api_url(
+                session,
+                custom_content_id,
+                filename=filename,
+            )
+        )
+    if page_id:
+        urls.append(page_attachments_api_url(session, page_id, filename=filename))
+    candidates: list[dict[str, Any]] = []
+    for url in urls:
+        try:
+            payload = api_json("GET", url, session.token)
+        except ToolError as exc:
+            if _is_not_found_error(exc):
+                continue
+            raise
+        if not isinstance(payload, dict):
+            continue
+        results = payload.get("results")
+        if not isinstance(results, list):
+            continue
+        for item in results:
+            if isinstance(item, dict):
+                candidates.append(item)
+    return candidates
+
+
+def _choose_attachment(
+    candidates: list[dict[str, Any]],
+    *,
+    filename: str,
+) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    if filename:
+        for candidate in candidates:
+            if str(candidate.get("title") or "").strip() == filename:
+                return candidate
+    return candidates[0]
+
+
+def _attachment_download_url(
+    session: Session,
+    attachment: dict[str, Any],
+    *,
+    page_id: str = "",
+) -> str:
+    attachment_id = str(attachment.get("id") or "").strip()
+    attachment_page_id = str(attachment.get("pageId") or "").strip() or page_id
+    if attachment_id and attachment_page_id:
+        return attachment_download_api_url(
+            session,
+            page_id=attachment_page_id,
+            attachment_id=attachment_id,
+        )
+    link = str(attachment.get("downloadLink") or "").strip()
+    if not link:
+        links = attachment.get("_links")
+        if isinstance(links, dict):
+            link = str(links.get("download") or "").strip()
+    if not link:
+        return ""
+    return absolutize_confluence_url(link, base_url=f"{session.base_url.rstrip('/')}/wiki")
+
+
+def _resolve_drawio_attachment(
+    session: Session,
+    *,
+    page_id: str,
+    custom_content_id: str,
+    filename: str,
+) -> dict[str, Any] | None:
+    candidates = _fetch_attachment_candidates(
+        session,
+        page_id=page_id,
+        custom_content_id=custom_content_id,
+        filename=filename,
+    )
+    attachment = _choose_attachment(candidates, filename=filename)
+    if attachment is not None:
+        return attachment
+    if custom_content_id.isdigit():
+        try:
+            payload = api_json("GET", attachment_api_url(session, custom_content_id), session.token)
+        except ToolError as exc:
+            if _is_not_found_error(exc):
+                return None
+            raise
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _render_drawio_macro_html(
+    session: Session | None,
+    params: dict[str, str],
+) -> str:
+    diagram_name = params.get("diagramDisplayName") or params.get("diagramName") or "(unnamed)"
+    page_id = params.get("pageId") or ""
+    custom_content_id = params.get("custContentId") or params.get("contentId") or ""
+    width = params.get("width") or ""
+    height = params.get("height") or ""
+    details = [f"<strong>Embedded draw.io diagram:</strong> <code>{html.escape(diagram_name)}</code>"]
+    meta_items: list[str] = []
+    if custom_content_id:
+        meta_items.append(f"Custom content ID: <code>{html.escape(custom_content_id)}</code>")
+    if page_id:
+        meta_items.append(f"Page ID: <code>{html.escape(page_id)}</code>")
+    if width or height:
+        meta_items.append(
+            "Configured size: <code>"
+            + html.escape(f"{width or '?'}x{height or '?'}")
+            + "</code>"
+        )
+
+    structure_items: list[str] = []
+    if session is not None and diagram_name and (page_id or custom_content_id):
+        attachment = _resolve_drawio_attachment(
+            session,
+            page_id=page_id,
+            custom_content_id=custom_content_id,
+            filename=diagram_name,
+        )
+        if attachment is not None:
+            title = str(attachment.get("title") or "").strip()
+            attachment_id = str(attachment.get("id") or "").strip()
+            media_type = str(attachment.get("mediaType") or "").strip()
+            download_url = _attachment_download_url(session, attachment, page_id=page_id)
+            if attachment_id:
+                meta_items.append(f"Attachment ID: <code>{html.escape(attachment_id)}</code>")
+            if media_type:
+                meta_items.append(f"Attachment MIME type: <code>{html.escape(media_type)}</code>")
+            if title and title != diagram_name:
+                meta_items.append(f"Attachment title: <code>{html.escape(title)}</code>")
+            if download_url:
+                try:
+                    data = api_bytes("GET", download_url, session.token)
+                except ToolError:
+                    structure_items.append(
+                        "Backing attachment resolved, but gotta could not download the diagram bytes."
+                    )
+                else:
+                    if media_type == DRAWIO_MIME or title.endswith(".drawio"):
+                        summary = summarize_drawio(data)
+                        if summary.get("parsed"):
+                            pages = summary.get("pages")
+                            if isinstance(pages, list):
+                                structure_items.append(f"Pages: <code>{len(pages)}</code>")
+                                for page in pages[:5]:
+                                    if not isinstance(page, dict):
+                                        continue
+                                    labels = page.get("labels")
+                                    label_preview = ""
+                                    if isinstance(labels, list):
+                                        label_preview = ", ".join(
+                                            html.escape(str(label))
+                                            for label in labels[:4]
+                                            if str(label).strip()
+                                        )
+                                    item = (
+                                        f"<code>{html.escape(str(page.get('name') or '(unnamed)'))}</code>: "
+                                        f"{int(page.get('vertexCount') or 0)} nodes, "
+                                        f"{int(page.get('edgeCount') or 0)} edges"
+                                    )
+                                    if label_preview:
+                                        item += f"; labels: {label_preview}"
+                                    structure_items.append(item)
+                                if len(pages) > 5:
+                                    structure_items.append(f"... {len(pages) - 5} more page(s)")
+                        elif summary.get("decoded"):
+                            structure_items.append(
+                                "Diagram bytes resolved, but gotta could not parse the draw.io XML into graph structure."
+                            )
+                        else:
+                            structure_items.append(
+                                "Diagram attachment resolved, but the bytes were not a decodable draw.io mxfile."
+                            )
+                    else:
+                        structure_items.append(
+                            f"Resolved backing attachment, but it is not a draw.io mxfile: <code>{html.escape(media_type or 'unknown')}</code>."
+                        )
+            else:
+                structure_items.append(
+                    "Backing attachment resolved, but the Confluence attachment payload did not expose a download link."
+                )
+        else:
+            structure_items.append(
+                "The draw.io macro is present in canonical storage HTML, but gotta could not resolve the backing attachment yet."
+            )
+    else:
+        structure_items.append(
+            "The draw.io macro is present in canonical storage HTML. Resolve the backing attachment to summarize nodes and edges."
+        )
+
+    html_parts = [
+        "<div>",
+        f"<p>{details[0]}</p>",
+    ]
+    if meta_items:
+        html_parts.append(_html_list(meta_items))
+    if structure_items:
+        html_parts.append("<p><strong>Structure</strong></p>")
+        html_parts.append(_html_list(structure_items))
+    html_parts.append("</div>")
+    return "".join(html_parts)
+
+
+def _replace_drawio_macros(
+    storage_html: str,
+    *,
+    session: Session | None = None,
+) -> str:
+    def replace(match: re.Match[str]) -> str:
+        params = _parse_drawio_macro_params(str(match.group("body") or ""))
+        return _render_drawio_macro_html(session, params)
+
+    return _DRAWIO_MACRO_RE.sub(replace, storage_html)
+
+
 def _sanitize_storage_html_for_markdown(storage_html: str) -> str:
     cleaned = re.sub(r'\s(?:ac|ri):[A-Za-z0-9_-]+="[^"]*"', "", storage_html)
     cleaned = re.sub(r'\sdata-[A-Za-z0-9_-]+="[^"]*"', "", cleaned)
@@ -1214,12 +1523,14 @@ def _projection_is_lossy(markdown: str) -> bool:
             "</table>",
             "<a href=",
             "Untitled Diagram-",
+            "Embedded draw.io diagram",
             "placeholder-inline-tasks",
         )
     )
 
 
-def render_storage_to_markdown(storage_html: str) -> str:
+def render_storage_to_markdown(storage_html: str, *, session: Session | None = None) -> str:
+    storage_html = _replace_drawio_macros(storage_html, session=session)
     storage_html = _sanitize_storage_html_for_markdown(storage_html)
     try:
         proc = subprocess.run(
@@ -1247,7 +1558,7 @@ def render_page_markdown(page: dict[str, Any], session: Session) -> str:
     if not isinstance(version, dict):
         version = {}
     updated = str(version.get("createdAt") or "")
-    body = render_storage_to_markdown(storage_value(page))
+    body = render_storage_to_markdown(storage_value(page), session=session)
     lines = [f"# {title}", ""]
     if page_url:
         lines.append(f"- URL: {page_url}")
@@ -1286,7 +1597,7 @@ def render_comment_markdown(comment: dict[str, Any], session: Session) -> str:
     if not isinstance(version, dict):
         version = {}
     updated = str(version.get("createdAt") or "")
-    body = render_storage_to_markdown(comment_storage_value(comment))
+    body = render_storage_to_markdown(comment_storage_value(comment), session=session)
     lines = [f"# {title}", ""]
     if comment_url:
         lines.append(f"- URL: {comment_url}")
@@ -1300,6 +1611,12 @@ def render_comment_markdown(comment: dict[str, Any], session: Session) -> str:
         lines.append(f"- Updated: {updated}")
     if version.get("number") is not None:
         lines.append(f"- Version: {version.get('number')}")
+    if _projection_is_lossy(body):
+        lines.append(
+            f"- Projection: approximate markdown; use `gotta confluence get {comment_id or page_id} --output body` "
+            "for canonical Confluence storage HTML when page layout, embedded diagrams, tables, "
+            "or macros matter"
+        )
     lines.extend(["", "---", "", body.rstrip(), ""])
     return "\n".join(lines)
 
@@ -1334,6 +1651,7 @@ def _content_capture_meta(
         "page_id": page_id,
         "source_title": str(content.get("title") or ""),
         "source_url": url,
+        "source_base_url": session.base_url,
         "source_space_id": str(content.get("spaceId") or ""),
         "source_created_at": str(content.get("createdAt") or ""),
         "source_updated_at": str(version.get("createdAt") or ""),
@@ -1352,7 +1670,17 @@ def _content_capture_name(kind: str, content: dict[str, Any], fallback: str) -> 
 
 def _markdown_from_capture(capture: Capture) -> bytes:
     kind = str(capture.meta.get("content_kind") or "page")
-    body = render_storage_to_markdown(capture.data.decode("utf-8", errors="replace"))
+    session: Session | None = None
+    base_url = str(capture.meta.get("source_base_url") or "").strip()
+    if base_url:
+        try:
+            session = load_session(PageRef(base_url=base_url))
+        except ToolError:
+            session = None
+    body = render_storage_to_markdown(
+        capture.data.decode("utf-8", errors="replace"),
+        session=session,
+    )
     title = str(capture.meta.get("source_title") or ("Confluence Comment" if kind == "comment" else "(untitled)"))
     lines = [f"# {title}", ""]
     url = str(capture.meta.get("source_url") or "")

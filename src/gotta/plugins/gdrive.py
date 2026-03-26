@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import mimetypes
 from pathlib import Path
@@ -15,10 +14,9 @@ import signal
 import subprocess
 import sys
 import urllib.parse
-import xml.etree.ElementTree as ET
-import zlib
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.drawio import DRAWIO_MIME, render_drawio_summary_markdown
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
@@ -52,9 +50,6 @@ TEXTLIKE_MIME_PREFIXES = (
     "application/x-sh",
     "application/x-shellscript",
 )
-DRAWIO_MIME = "application/vnd.jgraph.mxfile"
-
-
 def die(message: str, code: int = 2) -> int:
     print(message, file=sys.stderr)
     return code
@@ -405,138 +400,13 @@ def is_textlike_mime_type(mime_type: str) -> bool:
     )
 
 
-def _mxfile_xml(data: bytes) -> str:
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return ""
-    stripped = text.lstrip()
-    if stripped.startswith("<mxfile"):
-        return stripped
-    try:
-        decoded = base64.b64decode(data, validate=True)
-    except Exception:
-        return ""
-    try:
-        text = decoded.decode("utf-8")
-    except UnicodeDecodeError:
-        return ""
-    stripped = text.lstrip()
-    return stripped if stripped.startswith("<mxfile") else ""
-
-
-def _mxgraph_root(diagram: ET.Element) -> ET.Element | None:
-    direct_model = diagram.find("mxGraphModel")
-    if direct_model is not None:
-        root = direct_model.find("root")
-        if root is not None:
-            return root
-    raw = str(diagram.text or "").strip()
-    if not raw:
-        return None
-    try:
-        compressed = base64.b64decode(raw)
-    except Exception:
-        return None
-    for wbits in (-15, zlib.MAX_WBITS):
-        try:
-            expanded = zlib.decompress(compressed, wbits)
-        except zlib.error:
-            continue
-        try:
-            xml = urllib.parse.unquote(expanded.decode("utf-8"))
-        except UnicodeDecodeError:
-            continue
-        try:
-            model = ET.fromstring(xml)
-        except ET.ParseError:
-            continue
-        if model.tag == "mxGraphModel":
-            root = model.find("root")
-            if root is not None:
-                return root
-    return None
-
-
-def _mx_value_label(value: str) -> str:
-    # draw.io commonly stores HTML in values; normalize down to human-readable text.
-    text = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
 def drawio_summary(data: bytes, meta: dict[str, object]) -> str:
-    title = str(meta.get("name") or "(untitled)")
-    file_id = str(meta.get("id") or "")
-    url = str(meta.get("webViewLink") or "")
-    xml = _mxfile_xml(data)
-    lines = [f"# {title}", ""]
-    if url:
-        lines.append(f"- **URL:** {url}")
-    if file_id:
-        lines.append(f"- **Drive ID:** `{file_id}`")
-    lines.append(f"- **MIME type:** `{DRAWIO_MIME}`")
-    if not xml:
-        lines.extend(
-            [
-                "",
-                "This draw.io mxfile is stored canonically, but the native summary could",
-                "not decode a readable XML projection. Use `--output raw` if you need",
-                "the original bytes outside gotta.",
-            ]
-        )
-        return "\n".join(lines) + "\n"
-
-    try:
-        root = ET.fromstring(xml)
-    except ET.ParseError:
-        lines.extend(
-            [
-                "",
-                "This draw.io mxfile is stored canonically, but the XML could not be",
-                "parsed into a readable structure summary. Use `--output raw` if you",
-                "need the original bytes outside gotta.",
-            ]
-        )
-        return "\n".join(lines) + "\n"
-
-    diagrams = root.findall("diagram")
-    lines.append(f"- **Pages:** {len(diagrams)}")
-    page_summaries: list[str] = []
-    for diagram in diagrams[:5]:
-        page_name = str(diagram.get("name") or "(unnamed)").strip()
-        graph = _mxgraph_root(diagram)
-        cells = graph.findall("mxCell") if graph is not None else []
-        vertex_count = 0
-        edge_count = 0
-        labels: list[str] = []
-        for cell in cells:
-            if cell.get("vertex") == "1":
-                vertex_count += 1
-                label = _mx_value_label(str(cell.get("value") or ""))
-                if label and label not in labels:
-                    labels.append(label)
-            if cell.get("edge") == "1":
-                edge_count += 1
-        preview = ", ".join(labels[:4])
-        page_summary = f"{page_name}: {vertex_count} nodes, {edge_count} edges"
-        if preview:
-            page_summary += f"; labels: {preview}"
-        page_summaries.append(page_summary)
-    if page_summaries:
-        lines.extend(["", "## Structure", ""])
-        for summary in page_summaries:
-            lines.append(f"- {summary}")
-    if len(diagrams) > 5:
-        lines.append(f"- ... {len(diagrams) - 5} more page(s)")
-    lines.extend(
-        [
-            "",
-            "Use `--output raw` to download the original mxfile bytes.",
-        ]
+    return render_drawio_summary_markdown(
+        data,
+        title=str(meta.get("name") or "(untitled)"),
+        file_id=str(meta.get("id") or ""),
+        url=str(meta.get("webViewLink") or ""),
     )
-    return "\n".join(lines) + "\n"
 
 
 def normalize_search_result(item: dict[str, object], *, matched_by: set[str]) -> dict[str, object]:

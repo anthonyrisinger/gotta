@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from gotta.capture import Capture
 from gotta.plugins import confluence, jira
 from gotta.providers import atlassian
 
@@ -1155,14 +1156,14 @@ def test_confluence_render_page_markdown_includes_created_and_updated() -> None:
 
 def test_confluence_render_page_markdown_marks_lossy_projection() -> None:
     original = confluence.render_storage_to_markdown
-    confluence.render_storage_to_markdown = lambda storage_html: (
-        "<table><tr><td>x</td></tr></table>\nUntitled Diagram-1772055155063.drawio\n"
+    confluence.render_storage_to_markdown = lambda storage_html, **_kwargs: (
+        "<table><tr><td>x</td></tr></table>\nUntitled Diagram-111111.drawio\n"
     )
     try:
         rendered = confluence.render_page_markdown(
             {
-                "id": "4373708801",
-                "title": "Architecture Overview",
+                "id": "111111",
+                "title": "Example Architecture Page",
                 "createdAt": "2026-02-19T16:29:02.479Z",
                 "version": {"number": 43, "createdAt": "2026-03-11T16:48:50.034Z"},
                 "body": {"storage": {"value": "<table><tr><td>x</td></tr></table>"}},
@@ -1177,8 +1178,206 @@ def test_confluence_render_page_markdown_marks_lossy_projection() -> None:
         confluence.render_storage_to_markdown = original
 
     assert "Projection: approximate markdown" in rendered
-    assert "gotta confluence get 4373708801 --output body" in rendered
+    assert "gotta confluence get 111111 --output body" in rendered
     assert "embedded diagrams, tables, or macros matter" in rendered
+
+
+def test_confluence_render_page_markdown_marks_drawio_projection_as_lossy() -> None:
+    original = confluence.render_storage_to_markdown
+    confluence.render_storage_to_markdown = lambda storage_html, **_kwargs: (
+        "Embedded draw.io diagram: `example-graph.drawio`\n\n- Pages: `1`\n"
+    )
+    try:
+        rendered = confluence.render_page_markdown(
+            {
+                "id": "222222",
+                "title": "Example Diagram Page",
+                "createdAt": "2026-03-23T17:13:55.378Z",
+                "version": {"number": 11, "createdAt": "2026-03-24T19:47:30.675Z"},
+                "body": {"storage": {"value": "<ac:structured-macro ac:name=\"drawio\" />"}},
+            },
+            confluence.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            ),
+        )
+    finally:
+        confluence.render_storage_to_markdown = original
+
+    assert "Projection: approximate markdown" in rendered
+    assert "gotta confluence get 222222 --output body" in rendered
+
+
+def test_confluence_render_comment_markdown_marks_drawio_projection_as_lossy() -> None:
+    original = confluence.render_storage_to_markdown
+    confluence.render_storage_to_markdown = lambda storage_html, **_kwargs: (
+        "Embedded draw.io diagram: `example-graph.drawio`\n\n- Pages: `1`\n"
+    )
+    try:
+        rendered = confluence.render_comment_markdown(
+            {
+                "id": "333333",
+                "pageId": "222222",
+                "title": "Example Comment",
+                "createdAt": "2026-03-23T17:13:55.378Z",
+                "version": {"number": 2, "createdAt": "2026-03-24T19:47:30.675Z"},
+                "body": {"storage": {"value": "<ac:structured-macro ac:name=\"drawio\" />"}},
+            },
+            confluence.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            ),
+        )
+    finally:
+        confluence.render_storage_to_markdown = original
+
+    assert "Projection: approximate markdown" in rendered
+    assert "gotta confluence get 333333 --output body" in rendered
+
+
+def test_confluence_markdown_from_capture_reloads_session_for_drawio_projection(monkeypatch) -> None:
+    seen_page_refs: list[confluence.PageRef] = []
+    original = confluence.render_storage_to_markdown
+
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: (
+            seen_page_refs.append(page_ref)
+            or confluence.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            )
+        ),
+    )
+    confluence.render_storage_to_markdown = lambda storage_html, **kwargs: (
+        "Embedded draw.io diagram" if kwargs.get("session") is not None else "no session"
+    )
+    try:
+        rendered = confluence._markdown_from_capture(
+            Capture(
+                data=b"<ac:structured-macro ac:name=\"drawio\" />",
+                meta={
+                    "content_kind": "page",
+                    "content_id": "222222",
+                    "source_title": "Example Diagram Page",
+                    "source_url": "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=222222",
+                    "source_base_url": "https://example.atlassian.net",
+                },
+            )
+        ).decode("utf-8")
+    finally:
+        confluence.render_storage_to_markdown = original
+
+    assert seen_page_refs
+    assert seen_page_refs[0].base_url == "https://example.atlassian.net"
+    assert "Embedded draw.io diagram" in rendered
+
+
+def test_confluence_replace_drawio_macros_emits_structured_fallback() -> None:
+    rendered = confluence._replace_drawio_macros(
+        (
+            '<h2>Data Flow</h2>'
+            '<ac:structured-macro ac:name="drawio" ac:schema-version="1">'
+            '<ac:parameter ac:name="custContentId">444444</ac:parameter>'
+            '<ac:parameter ac:name="pageId">222222</ac:parameter>'
+            '<ac:parameter ac:name="diagramDisplayName">example-graph.drawio</ac:parameter>'
+            '<ac:parameter ac:name="diagramName">example-graph.drawio</ac:parameter>'
+            '<ac:parameter ac:name="width">400</ac:parameter>'
+            '<ac:parameter ac:name="height">200</ac:parameter>'
+            "</ac:structured-macro>"
+        ),
+        session=None,
+    )
+
+    assert "Embedded draw.io diagram" in rendered
+    assert "example-graph.drawio" in rendered
+    assert "Custom content ID" in rendered
+    assert "Structure" in rendered
+
+
+def test_confluence_replace_drawio_macros_summarizes_attachment_when_resolvable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        confluence,
+        "_resolve_drawio_attachment",
+        lambda *_args, **_kwargs: {
+            "id": "att-example",
+            "title": "example-graph.drawio",
+            "mediaType": "application/vnd.jgraph.mxfile",
+            "downloadLink": "/download/attachments/222222/example-graph.drawio",
+        },
+    )
+    monkeypatch.setattr(
+        confluence,
+        "api_bytes",
+        lambda *_args, **_kwargs: (
+            b'<mxfile><diagram id="example-page" name="Example Graph Page">'
+            b'<mxGraphModel><root><mxCell id="0" /><mxCell id="1" parent="0" />'
+            b'<mxCell id="2" value="Example Source" vertex="1" parent="1" />'
+            b'<mxCell id="3" value="Example Target" vertex="1" parent="1" />'
+            b'<mxCell id="4" edge="1" source="2" target="3" parent="1" />'
+            b"</root></mxGraphModel></diagram></mxfile>"
+        ),
+    )
+
+    rendered = confluence._replace_drawio_macros(
+        (
+            '<ac:structured-macro ac:name="drawio" ac:schema-version="1">'
+            '<ac:parameter ac:name="custContentId">444444</ac:parameter>'
+            '<ac:parameter ac:name="pageId">222222</ac:parameter>'
+            '<ac:parameter ac:name="diagramDisplayName">example-graph.drawio</ac:parameter>'
+            "</ac:structured-macro>"
+        ),
+        session=confluence.Session(
+            token="token",
+            cloud_id="cloud-123",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    assert "Attachment ID" in rendered
+    assert "Pages:" in rendered
+    assert "Example Graph Page" in rendered
+    assert "2 nodes, 1 edges" in rendered
+    assert "Example Source, Example Target" in rendered
+
+
+def test_confluence_attachment_download_url_prefers_api_redirect_endpoint() -> None:
+    session = confluence.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+
+    assert confluence._attachment_download_url(
+        session,
+        {
+            "id": "att-example",
+            "pageId": "222222",
+            "downloadLink": "/download/attachments/222222/example-graph.drawio",
+        },
+    ) == (
+        "https://api.atlassian.com/ex/confluence/cloud-123/wiki/rest/api/"
+        "content/222222/child/attachment/att-example/download"
+    )
+
+
+def test_confluence_attachment_download_url_falls_back_to_confluence_download_link() -> None:
+    session = confluence.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+
+    assert confluence._attachment_download_url(
+        session,
+        {
+            "downloadLink": "/download/attachments/222222/example-graph.drawio",
+        },
+    ) == "https://example.atlassian.net/wiki/download/attachments/222222/example-graph.drawio"
 
 
 def test_jira_auth_prefers_reuse_or_refresh(monkeypatch, capsys) -> None:
