@@ -99,14 +99,32 @@ def normalize_help_aliases(argv: list[str]) -> list[str]:
     return normalized
 
 
+_GLOBAL_FLAGS = {"--quiet", "--full-output"}
+
+
+def _argv_without_global_flags(argv: list[str]) -> list[str]:
+    return [token for token in argv if token not in _GLOBAL_FLAGS]
+
+
+def _plugin_invocation(argv: list[str]) -> tuple[str, list[str]] | None:
+    for index, token in enumerate(argv):
+        if token in _GLOBAL_FLAGS:
+            continue
+        plugin = token
+        plugin_argv = [*argv[:index], *argv[index + 1 :]]
+        return plugin, plugin_argv
+    return None
+
+
 def _gotta_main(argv: list[str]) -> int:
     argv = normalize_help_aliases(argv)
-    if _is_version_request(argv):
+    stripped = _argv_without_global_flags(argv)
+    if _is_version_request(stripped):
         print(f"gotta {_gotta_version()}")
         return 0
-    if not argv or (len(argv) == 1 and argv[0] in {"-h", "--help"}):
+    if not stripped or (len(stripped) == 1 and stripped[0] in {"-h", "--help"}):
         return print_usage()
-    if is_long_help_request(argv):
+    if is_long_help_request(stripped):
         print("# gotta")
         print("")
         print("usage: gotta <plugin> [args...]")
@@ -149,13 +167,16 @@ def _gotta_main(argv: list[str]) -> int:
         print("Use `gotta <plugin> --help-all` for recursive help within one plugin.")
         return 0
 
-    plugin = argv[0]
+    invocation = _plugin_invocation(argv)
+    if invocation is None:
+        return print_usage()
+    plugin, plugin_argv = invocation
     if plugin not in available_plugins():
         plugins = ", ".join(available_plugins())
         return die(
             f"unknown gotta plugin: {plugin}. available plugins: {plugins}"
         )
-    return run_plugin(plugin, argv[1:])
+    return run_plugin(plugin, plugin_argv)
 
 
 def _session_token(context_id: str) -> str:
@@ -294,15 +315,20 @@ def _create_session_root(
     context_id: str,
     context_source: str,
 ) -> tuple[Path, bool]:
-    current_session_id = topology.shared_session_id(root)
-    actor = topology.session_identity(root)
-    session_dir = shared_session_root(current_session_id)
+    resolved_root = root.expanduser().resolve()
+    current_session_id = topology.shared_session_id(resolved_root)
+    actor = content_session_identity(resolved_root)
+    actor_branch = (
+        resolved_root.parent.name == "actors"
+        or topology.parse_grouped_session_root(resolved_root) is not None
+    )
+    session_dir = session_plugin._group_session_root(resolved_root)
     content_dir = session_dir / "content"
     session_dir.mkdir(parents=True, exist_ok=True)
     content_dir.mkdir(parents=True, exist_ok=True)
     dirs = resolve_dirs(
         CommonOptions(
-            session_dir=str(root),
+            session_dir=str(resolved_root),
             content_dir=str(content_dir),
             actor=actor,
         ),
@@ -320,11 +346,12 @@ def _create_session_root(
         },
     )
     content_link = dirs.session_dir / "content"
-    if content_link.is_symlink() or content_link.is_file():
-        content_link.unlink(missing_ok=True)
-    elif content_link.exists():
-        os.rmdir(content_link)
-    content_link.symlink_to(os.path.relpath(content_dir, start=content_link.parent))
+    if content_link.resolve() != content_dir.resolve():
+        if content_link.is_symlink() or content_link.is_file():
+            content_link.unlink(missing_ok=True)
+        elif content_link.exists():
+            os.rmdir(content_link)
+        content_link.symlink_to(os.path.relpath(content_dir, start=content_link.parent))
     session_link = dirs.session_dir / "session"
     if session_link.is_symlink() or session_link.is_file():
         session_link.unlink(missing_ok=True)
@@ -346,20 +373,21 @@ def _create_session_root(
         for item in members
         if str(item).strip()
     ]
-    if actor not in normalized_members:
+    if actor_branch and actor and actor not in normalized_members:
         normalized_members.append(actor)
     actors = payload.get("actors")
     if not isinstance(actors, dict):
         actors = {}
-    actors.setdefault(
-        actor,
-        {
-            "label": actor,
-            "model": session_plugin.ACTOR_DEFAULT_MODEL,
-            "resume_uuid": "",
-            "template": "",
-        },
-    )
+    if actor_branch and actor:
+        actors.setdefault(
+            actor,
+            {
+                "label": actor,
+                "model": session_plugin.ACTOR_DEFAULT_MODEL,
+                "resume_uuid": "",
+                "template": "",
+            },
+        )
     payload["session_id"] = current_session_id
     payload.setdefault("created_at", datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
     payload["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -650,8 +678,7 @@ def _existing_actor_root_for_session(
     *,
     preferred_identities: list[str],
 ) -> Path | None:
-    session_id = topology.shared_session_id(root)
-    actors_dir = topology.shared_session_root_for(session_id) / "actors"
+    actors_dir = session_plugin._group_session_root(root) / "actors"
     if not actors_dir.is_dir():
         return None
     initialized: dict[str, Path] = {}
@@ -692,36 +719,181 @@ def _preferred_read_only_session_identities(
     return preferred
 
 
+def _is_shared_session_root(root: Path | None) -> bool:
+    if root is None:
+        return False
+    resolved = root.expanduser().resolve()
+    return topology.parse_shared_session_root(resolved) is not None
+
+
+def _explicit_session_content_root(root: Path) -> Path:
+    return (session_plugin._group_session_root(root) / "content").resolve()
+
+
+def _looks_like_stored_read_target(argv: list[str], explicit_session: str) -> bool:
+    if argv[:1] != ["read"]:
+        return False
+    shared_root = _resolve_shared_explicit_session(explicit_session)
+    if shared_root is None:
+        return False
+    try:
+        from gotta.target import resolve_read_target
+
+        resolved = resolve_read_target(
+            argv[1:],
+            CommonOptions(
+                session_dir=str(shared_root),
+                content_dir=str(_explicit_session_content_root(shared_root)),
+            ),
+        )
+    except SystemExit:
+        return False
+    target = str(resolved.request.target or "").strip()
+    if resolved.kind in {"artifact_locator", "artifact_name"}:
+        return True
+    if target.startswith("content:"):
+        return True
+    return len(target) == 64 and all(ch in "0123456789abcdef" for ch in target)
+
+
+def _uses_shared_session_root(
+    *,
+    argv: list[str],
+    explicit_session: str | None,
+    explicit_actor: str | None,
+    session_access: SessionAccessMode,
+) -> bool:
+    if not explicit_session or explicit_actor:
+        return False
+    if argv[:1] == ["session"]:
+        return True
+    if argv[:1] == ["notes"]:
+        return True
+    if session_access == "ambient":
+        return _looks_like_stored_read_target(argv, explicit_session)
+    return False
+
+
+def _prefers_primary_actor_root(argv: list[str]) -> bool:
+    if not argv:
+        return False
+    plugin = argv[0]
+    if plugin in {"want", "goal"}:
+        return True
+    if plugin == "session" and len(argv) >= 2 and argv[1] == "show":
+        return True
+    if plugin == "actor" and len(argv) >= 2 and argv[1] == "status":
+        return True
+    return False
+
+
+def _resolve_primary_actor_root(root: Path) -> Path | None:
+    session_root = root.expanduser().resolve()
+    if not _is_shared_session_root(session_root):
+        return session_root
+    primary = session_plugin._primary_actor_name(session_root)
+    if not primary:
+        return None
+    return session_plugin._actor_session_dir(session_root, primary)
+
+
+def _hydrate_shared_session_environment(
+    root: Path,
+    *,
+    context_id: str,
+    context_source: str,
+) -> None:
+    session_root = root.expanduser().resolve()
+    state: dict[str, object] = {}
+    primary = session_plugin._primary_actor_name(session_root) or ""
+    if primary:
+        primary_root = session_plugin._actor_session_dir(session_root, primary)
+        state = load_state_env_at_root(primary_root)
+    for key, value in state.items():
+        os.environ[key] = value
+    os.environ[SESSION_ENV] = str(session_root)
+    os.environ[SESSION_ID_ENV] = topology.shared_session_id(session_root)
+    os.environ[CONTENT_ENV] = str(_explicit_session_content_root(session_root))
+    if primary:
+        os.environ[SESSION_ACTOR_ENV] = primary
+    else:
+        os.environ.pop(SESSION_ACTOR_ENV, None)
+    os.environ[CONTEXT_ACTIVE_ENV] = "1"
+    os.environ[CONTEXT_ID_ENV] = context_id
+    os.environ[CONTEXT_SOURCE_ENV] = context_source
+    os.environ[SESSION_ACTIVATION_ENV] = "gotta"
+    repo_root = str(state.get(SESSION_REPO_ENV) or "").strip()
+    if repo_root:
+        os.environ[SESSION_REPO_ENV] = repo_root
+        venv_bin = Path(repo_root) / ".venv" / "bin"
+        if venv_bin.is_dir():
+            current_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = ":".join(
+                [str(venv_bin), current_path] if current_path else [str(venv_bin)]
+            )
+            os.environ["VIRTUAL_ENV"] = str(venv_bin.parent)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     normalized = normalize_help_aliases(args)
+    effective = _argv_without_global_flags(normalized)
     try:
-        if _is_nonbinding_help(normalized) or _is_version_request(normalized):
+        if _is_nonbinding_help(effective) or _is_version_request(effective):
             return _gotta_main(normalized)
-        plugin_name = normalized[0] if normalized else ""
+        plugin_name = effective[0] if effective else ""
         context = current_context_binding()
         context_id = context.context_id
         context_source = context.context_source
-        explicit_session = _explicit_session_arg(normalized)
-        explicit_actor = _explicit_actor_arg(normalized)
+        explicit_session = _explicit_session_arg(effective)
+        explicit_actor = _explicit_actor_arg(effective)
         explicit_target = bool(explicit_session or explicit_actor)
-        session_access = _session_access_mode(normalized)
+        session_access = _session_access_mode(effective)
         auto_bootstrap = _should_auto_bootstrap_session(
-            argv=normalized,
+            argv=effective,
             context_source=context_source,
             explicit_session=explicit_session,
             session_access=session_access,
         )
+        shared_root_command = _uses_shared_session_root(
+            argv=effective,
+            explicit_session=explicit_session,
+            explicit_actor=explicit_actor,
+            session_access=session_access,
+        )
         created = False
         bound_current_context = False
-        init_command = plugin_name == "session" and len(normalized) >= 2 and normalized[1] == "init"
-        if plugin_name == "session" and len(normalized) >= 2 and normalized[1] in {"bind"}:
+        init_command = plugin_name == "session" and len(effective) >= 2 and effective[1] == "init"
+        if plugin_name == "session" and len(effective) >= 2 and effective[1] in {"bind"}:
             return _gotta_main(normalized)
         if session_access == "none":
             return _gotta_main(normalized)
         if explicit_session:
-            if session_access == "read" and not explicit_actor:
+            if init_command:
+                target_identity = topology.normalize_identity(_active_identity(context_id))
+                root = resolve_session_reference(
+                    explicit_session,
+                    identity=target_identity,
+                    allow_missing=True,
+                )
+            elif shared_root_command:
                 root = _resolve_shared_explicit_session(explicit_session)
+            elif (
+                session_access == "read"
+                and not explicit_actor
+                and _prefers_primary_actor_root(effective)
+            ):
+                shared_root = _resolve_shared_explicit_session(explicit_session)
+                if _is_shared_session_root(shared_root):
+                    primary_root = _resolve_primary_actor_root(shared_root)
+                    if primary_root is None:
+                        return die(
+                            "this shared session does not resolve to one canonical actor root; "
+                            "pass `--actor <actor>` explicitly"
+                        )
+                    root = primary_root
+                else:
+                    root = shared_root
             else:
                 target_identity = topology.normalize_identity(
                     explicit_actor or _active_identity(context_id)
@@ -736,10 +908,7 @@ def main(argv: list[str] | None = None) -> int:
                         explicit_root,
                         explicit_actor,
                     )
-                    root = topology.session_root_for(
-                        session_id(explicit_root),
-                        resolved_actor,
-                    )
+                    root = session_plugin._actor_session_dir(explicit_root, resolved_actor)
                 elif explicit_root is not None:
                     root = explicit_root
                 else:
@@ -770,7 +939,7 @@ def main(argv: list[str] | None = None) -> int:
                 current,
                 explicit_actor,
             )
-            root = topology.session_root_for(session_id(current), resolved_actor)
+            root = session_plugin._actor_session_dir(current, resolved_actor)
         else:
             root = _prefer_bound_session_root()
         if root is None:
@@ -784,7 +953,12 @@ def main(argv: list[str] | None = None) -> int:
                 "first or pass `--session <session-id>`"
             )
         requested_root = root
-        if session_access == "ambient" and root is not None and not session_is_initialized(root):
+        if (
+            session_access == "ambient"
+            and root is not None
+            and not session_is_initialized(root)
+            and not shared_root_command
+        ):
             if explicit_target:
                 return die(
                     "ambient retrieval requires an existing initialized actor root in the "
@@ -798,18 +972,29 @@ def main(argv: list[str] | None = None) -> int:
                 context_id=context_id,
                 context_source=context_source,
             )
-        if session_access == "read" and not session_is_initialized(root):
-            existing = _existing_actor_root_for_session(
-                root,
-                preferred_identities=_preferred_read_only_session_identities(
+        if session_access == "read" and root is not None and not session_is_initialized(root):
+            if not shared_root_command:
+                existing = _existing_actor_root_for_session(
                     root,
-                    explicit_actor=explicit_actor,
-                ),
-            )
-            if existing is not None:
-                root = existing
+                    preferred_identities=_preferred_read_only_session_identities(
+                        root,
+                        explicit_actor=explicit_actor,
+                    ),
+                )
+                if existing is not None:
+                    root = existing
         if session_access == "read":
-            if not session_is_initialized(root):
+            if root is None:
+                return die(
+                    "explicit session inspection requires an initialized actor root in the "
+                    "target shared session; bind an actor there first or pass --actor"
+                )
+            if not session_is_initialized(root) and not shared_root_command:
+                if explicit_session and not _is_shared_session_root(root):
+                    return die(
+                        "explicit session inspection requires an existing initialized session "
+                        "at that exact root"
+                    )
                 return die(
                     "explicit session inspection requires an initialized actor root in the "
                     "target shared session; bind an actor there first or pass --actor"
@@ -836,10 +1021,17 @@ def main(argv: list[str] | None = None) -> int:
                 default_speaker=_active_identity(context_id)
             ).speaker or _active_identity(context_id)
             if root is not None:
-                _hydrate_environment(root, context_id=context_id, context_source=context_source)
-                seed_actor_context(acting_actor)
-                if explicit_actor:
-                    os.environ[SESSION_ACTOR_ENV] = content_session_identity(root)
+                if shared_root_command and _is_shared_session_root(root):
+                    _hydrate_shared_session_environment(
+                        root,
+                        context_id=context_id,
+                        context_source=context_source,
+                    )
+                else:
+                    _hydrate_environment(root, context_id=context_id, context_source=context_source)
+                    seed_actor_context(acting_actor)
+                    if explicit_actor:
+                        os.environ[SESSION_ACTOR_ENV] = content_session_identity(root)
                 if created:
                     print(
                         "\n".join(
@@ -856,7 +1048,7 @@ def main(argv: list[str] | None = None) -> int:
                 if warning:
                     print(warning, file=sys.stderr)
                 elif _should_emit_actor_note_check_warning(
-                    argv=normalized,
+                    argv=effective,
                     root=root,
                     requested_root=requested_root,
                     acting_actor=acting_actor,

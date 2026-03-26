@@ -21,7 +21,6 @@ from gotta.content import (
     session_identity,
     session_token,
     session_surface_initialized,
-    shared_session_root,
     write_session_state,
 )
 from gotta import session as session_plugin
@@ -97,9 +96,13 @@ def ensure_actor_session(
     resolved = root.expanduser().resolve()
     current_session_id = session_id(resolved)
     actor = session_identity(resolved)
-    shared_session_dir = shared_session_root(current_session_id)
-    content_dir = shared_session_dir / "content"
-    shared_session_dir.mkdir(parents=True, exist_ok=True)
+    actor_branch = (
+        resolved.parent.name == "actors"
+        or topology.parse_grouped_session_root(resolved) is not None
+    )
+    session_group_dir = session_plugin._group_session_root(resolved)
+    content_dir = session_group_dir / "content"
+    session_group_dir.mkdir(parents=True, exist_ok=True)
     content_dir.mkdir(parents=True, exist_ok=True)
     dirs = resolve_dirs(
         CommonOptions(
@@ -118,15 +121,18 @@ def ensure_actor_session(
             SESSION_ACTOR_ENV: actor,
         },
     )
-    _ensure_link(dirs.session_dir / "content", content_dir)
+    content_link = dirs.session_dir / "content"
+    if content_link.resolve() != content_dir.resolve():
+        _ensure_link(content_link, content_dir)
     session_link = dirs.session_dir / "session"
     if session_link.is_symlink() or session_link.is_file():
         session_link.unlink(missing_ok=True)
-    _update_session_metadata(
-        shared_session_dir,
-        session_id=current_session_id,
-        actor=actor,
-    )
+    if actor_branch and actor:
+        _update_session_metadata(
+            session_group_dir,
+            session_id=current_session_id,
+            actor=actor,
+        )
     created = not session_surface_initialized(dirs.session_dir)
     if created:
         session_plugin.scaffold_session(dirs.session_dir)
@@ -182,7 +188,7 @@ def _resolved_payload(root: Path) -> dict[str, str]:
     return {
         "sessionRoot": str(resolved),
         "sessionId": session_id(resolved),
-        "sessionDir": str(shared_session_root(session_id(resolved))),
+        "sessionDir": str(session_plugin._group_session_root(resolved)),
         "actor": session_identity(resolved),
         "content": str(state.get(CONTENT_ENV) or (resolved / "content")),
     }

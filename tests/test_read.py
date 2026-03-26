@@ -107,6 +107,26 @@ def test_read_can_follow_explicit_content_locator(monkeypatch, tmp_path: Path, c
     assert "# Stored body" in output
 
 
+def test_read_can_follow_explicit_content_locator_with_explicit_session(
+    tmp_path: Path, capsys
+) -> None:
+    session_root = tmp_path / "session"
+    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs.session_dir.mkdir(parents=True, exist_ok=True)
+    dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    content.write_state_env(dirs)
+    result = content.materialize_bytes(
+        b"# Stored body\n\nline two\n",
+        dirs=dirs,
+        preferred_name="stored.md",
+        metadata={"plugin": "read", "locator": "demo", "canonical_locator": "demo"},
+    )
+
+    assert read.main(["--session", str(dirs.session_dir), f"content:{result.digest}"]) == 0
+    output = capsys.readouterr().out
+    assert "# Stored body" in output
+
+
 def test_read_can_follow_unique_session_artifact_name(monkeypatch, tmp_path: Path, capsys) -> None:
     session_root = tmp_path / "session"
     dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
@@ -143,6 +163,35 @@ def test_read_can_follow_explicit_artifact_locator(monkeypatch, tmp_path: Path, 
     monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(dirs.content_dir))
 
     assert read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+    output = capsys.readouterr().out
+    assert "# Search Artifact" in output
+
+
+def test_read_can_follow_explicit_artifact_locator_with_explicit_session(
+    tmp_path: Path, capsys
+) -> None:
+    session_root = tmp_path / "session"
+    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs.session_dir.mkdir(parents=True, exist_ok=True)
+    dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    content.write_state_env(dirs)
+    result = content.materialize_bytes(
+        b"# Search Artifact\n\nbody\n",
+        dirs=dirs,
+        preferred_name="slack-search-abc.md",
+        metadata={"plugin": "slack", "locator": "demo", "canonical_locator": "demo"},
+    )
+
+    assert (
+        read.main(
+            [
+                "--session",
+                str(dirs.session_dir),
+                content.artifact_locator("slack-search-abc.md", result.digest),
+            ]
+        )
+        == 0
+    )
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
 

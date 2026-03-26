@@ -99,7 +99,7 @@ def test_emit_budgeted_output_omits_overlong_follow_command_in_text_footer(monke
 
     assert "output truncated by lines budget" in captured.out
     assert "follow: " not in captured.out
-    assert "rerun non-interactively for full output" in captured.out
+    assert "rerun the same command with --full-output" in captured.out
 
 
 def test_emit_budgeted_output_emits_json_preview_envelope_for_interactive_json(capsys) -> None:

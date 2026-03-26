@@ -31,6 +31,7 @@ from gotta.actor import (
     writer_name,
 )
 from gotta import session as session_plugin
+from gotta import topology
 from gotta.session import (
     _normalize_actor_name,
     _actor_goal_path,
@@ -558,9 +559,31 @@ def _require_actor_name(actor_name: str, action: str) -> None:
         raise SystemExit(f"missing actor for `gotta actor {action}`")
 
 
-def _status_actors(work_root: Path, actor_name: str) -> list[str]:
+def _status_actors(
+    work_root: Path,
+    actor_name: str,
+    *,
+    explicit_session: str = "",
+) -> list[str]:
     selected = list(session_plugin._selected_actor_ids(work_root))
     if not actor_name:
+        explicit_root = Path(explicit_session).expanduser().resolve() if explicit_session else None
+        explicit_shared = bool(
+            explicit_root is not None
+            and (
+                topology.parse_shared_session_root(explicit_root) is not None
+                or (explicit_root / "actors").is_dir()
+            )
+        )
+        if explicit_shared:
+            primary = session_plugin._primary_actor_name(work_root)
+            if primary:
+                return [primary]
+            if len(selected) > 1:
+                raise SystemExit(
+                    "this shared session does not resolve to one canonical actor root; "
+                    "pass `--actor <actor>` explicitly"
+                )
         return selected
     resolved = session_plugin._resolve_bound_actor_name(work_root, actor_name)
     if resolved not in selected:
@@ -726,7 +749,11 @@ def _runtime_closeout_note(current: dict[str, object]) -> bool:
 
 
 def _cmd_status(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
-    actors = _status_actors(work_root, actor_name)
+    actors = _status_actors(
+        work_root,
+        actor_name,
+        explicit_session=str(getattr(args, "session", None) or "").strip(),
+    )
     payload = {
         current_actor: session_plugin._actor_status_payload(work_root, current_actor)
         for current_actor in actors

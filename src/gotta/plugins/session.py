@@ -17,9 +17,12 @@ from gotta import binding as binding_helpers
 from gotta import session as sessionlib
 from gotta import topology
 from gotta.content import (
+    CONTENT_ENV,
     ContentError,
     ContentSnapshot,
     CommonOptions,
+    ResolvedDirs,
+    SESSION_ENV,
     activity_events,
     activity_log_path,
     artifact_locator,
@@ -37,6 +40,7 @@ from gotta.content import (
     sh_quote,
     state_env_path,
     load_state_env_at_root,
+    resolve_session_reference,
     write_session_state,
 )
 from gotta.helptext import is_long_help_request, print_long_help
@@ -67,6 +71,11 @@ TIMELINE_MODE_ALIASES = {
 
 SUMMARY_BUCKET_LIMIT = 5
 GRAPH_TEXT_PREVIEW_LIMIT = 8
+MANIFEST_TEXT_PREVIEW_LIMIT = 12
+TIMELINE_TEXT_PREVIEW_LIMIT = 20
+LEADS_BEST_OVERALL_LIMIT = 6
+LEADS_PROVIDER_HIGHLIGHT_LIMIT = 4
+ANALYZE_ANCHOR_PREVIEW_LIMIT = 4
 
 TIMELINE_MODE_HELP = "chronology mode: acquired, created, updated, or best-effort"
 
@@ -205,12 +214,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manifest.add_argument("--plugin")
     manifest.add_argument("--locator")
-    manifest.add_argument("--match")
+    manifest.add_argument("--filter")
     manifest.add_argument("--limit", type=int, default=100)
     manifest.add_argument("--offset", type=int, default=0)
     manifest.add_argument("--all", action="store_true")
     manifest.add_argument("--output", choices=["json", "text"], default="text")
-    timeline.add_argument("--match")
+    timeline.add_argument("--filter")
     timeline.add_argument("--limit", type=int, default=100)
     timeline.add_argument("--offset", type=int, default=0)
     timeline.add_argument("--all", action="store_true")
@@ -227,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="mermaid",
         help="render the content graph as Mermaid, text, or structured JSON",
     )
-    graph.add_argument("--match")
+    graph.add_argument("--filter")
     analyze.add_argument(
         "--output",
         choices=["text", "mermaid", "markdown", "json"],
@@ -266,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--all", action="store_true")
     scan.add_argument("--output", choices=["json", "text"], default="text")
     leads.add_argument("target", nargs="?")
-    leads.add_argument("--match")
+    leads.add_argument("--filter")
     leads.add_argument("--limit", type=int, default=100)
     leads.add_argument("--offset", type=int, default=0)
     leads.add_argument("--all", action="store_true")
@@ -283,9 +292,70 @@ def _options_from_args(
         actor=getattr(args, "actor", None),
     )
 
+def _explicit_session_ref(args: argparse.Namespace) -> str:
+    return str(getattr(args, "session", None) or "").strip()
+
+
+def _explicit_actor_ref(args: argparse.Namespace) -> str:
+    return str(getattr(args, "actor", None) or "").strip()
+
+
+def _shared_session_dirs_from_ref(session_ref: str):
+    normalized = str(session_ref or "").strip()
+    if not normalized:
+        return None
+    shared_root = resolve_session_reference(normalized, allow_missing=False)
+    if shared_root is None and "/" not in normalized and not Path(normalized).expanduser().is_absolute():
+        candidate = shared_session_root(normalized)
+        if candidate.exists() or candidate.is_symlink():
+            shared_root = candidate.resolve()
+    if shared_root is None:
+        return None
+    group_root = sessionlib._group_session_root(shared_root)
+    if group_root != shared_root or (group_root / "actors").is_dir():
+        return ResolvedDirs(
+            session_dir=group_root.resolve(),
+            content_dir=(group_root / "content").resolve(),
+        )
+    return None
+
+
+def _session_dirs_for_read(args: argparse.Namespace):
+    session_ref = _explicit_session_ref(args)
+    if session_ref:
+        shared_dirs = _shared_session_dirs_from_ref(session_ref)
+        if shared_dirs is not None:
+            return shared_dirs
+        return resolve_dirs(
+            CommonOptions(
+                session_dir=session_ref,
+                content_dir=getattr(args, "content_dir", None),
+            ),
+            create=False,
+        )
+    return resolve_dirs(
+        CommonOptions(
+            session_dir=getattr(args, "session", None),
+            content_dir=getattr(args, "content_dir", None),
+        ),
+        create=False,
+    )
+
+
+def _session_scope_started(dirs) -> bool:
+    if session_is_initialized(dirs.session_dir):
+        return True
+    session_root = sessionlib._group_session_root(dirs.session_dir)
+    if session_root != dirs.session_dir.resolve() and session_is_initialized(session_root):
+        return True
+    if (session_root / "actors").is_dir() and dirs.content_dir.exists():
+        return bool(sessionlib._selected_actor_ids(session_root))
+    return False
+
+
 def _require_started_session(dirs) -> None:
     state_file = _state_file(dirs.session_dir)
-    if not session_is_initialized(dirs.session_dir):
+    if not _session_scope_started(dirs):
         raise ContentError(
             "start or bind a session first with `gotta ...`. Stable interactive "
             "contexts adopt and scaffold their deterministic session on first "
@@ -390,9 +460,9 @@ def _match_any(raw_query: object, *values: object) -> bool:
     return False
 
 
-def _match_suffix(raw_query: object) -> str:
+def _filter_suffix(raw_query: object) -> str:
     query = _match_filter_text(raw_query)
-    return f"; match {query!r}" if query else ""
+    return f"; filter {query!r}" if query else ""
 
 
 def _binding_detail(record: dict[str, object]) -> str:
@@ -405,8 +475,38 @@ def _binding_detail(record: dict[str, object]) -> str:
     )
 
 
+def _show_payload(dirs) -> dict[str, str]:
+    resolved = dirs.session_dir.resolve()
+    if resolved.parent.name == "actors":
+        actor_root = resolved
+        session_root = sessionlib._group_session_root(actor_root)
+        primary_actor = session_identity(actor_root)
+        state_dir = str(actor_root / "state")
+    elif topology.parse_shared_session_root(resolved) is None:
+        actor_root = resolved
+        session_root = sessionlib._group_session_root(resolved)
+        primary_actor = ""
+        state_dir = str(actor_root / "state")
+    else:
+        session_root = sessionlib._group_session_root(resolved)
+        primary_actor = sessionlib._primary_actor_name(session_root) or ""
+        actor_root = (
+            sessionlib._actor_session_dir(session_root, primary_actor)
+            if primary_actor
+            else session_root
+        )
+        state_dir = str(actor_root / "state") if primary_actor else ""
+    return {
+        SESSION_ENV: str(actor_root),
+        "GOTTA_SESSION_ID": sessionlib.session_shared_id(session_root),
+        CONTENT_ENV: str(dirs.content_dir),
+        "GOTTA_SESSION_STATE_DIR": state_dir,
+        "GOTTA_SESSION_ACTOR": primary_actor,
+    }
+
+
 def _doctor_payload(dirs) -> dict[str, object]:
-    session_env = env_mapping(dirs)
+    session_env = _show_payload(dirs)
     state = load_state_env_at_root(dirs.session_dir)
     runtime = current_context_binding()
     runtime_root = topology.resolve_binding(runtime.binding_id)
@@ -415,7 +515,7 @@ def _doctor_payload(dirs) -> dict[str, object]:
     target_shared_root = shared_session_root(target_session_id).resolve()
     session_payload = {
         "sessionId": target_session_id,
-        "actor": session_identity(dirs.session_dir),
+        "actor": str(session_env.get("GOTTA_SESSION_ACTOR") or ""),
         "sessionRoot": str(dirs.session_dir),
         "contentRoot": str(dirs.content_dir),
         "initialized": bool(session_is_initialized(dirs.session_dir)),
@@ -445,7 +545,7 @@ def _doctor_payload(dirs) -> dict[str, object]:
     topology_consistent = (
         dirs.session_dir.exists()
         and dirs.content_dir.exists()
-        and session_is_initialized(dirs.session_dir)
+        and _session_scope_started(dirs)
         and topology.shared_session_id(dirs.session_dir) == target_session_id
         and (
             not session_in_shared_topology
@@ -531,9 +631,9 @@ def _print_doctor_summary(payload: dict[str, object]) -> int:
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
-    return _print_dirs(args, env_mapping(dirs))
+    return _print_dirs(args, _show_payload(dirs))
 
 
 def cmd_bind(args: argparse.Namespace) -> int:
@@ -561,7 +661,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
     payload = _doctor_payload(dirs)
     if getattr(args, "print_format", "json") == "json":
@@ -716,9 +816,17 @@ def _aggregate_manifest_entries(entries: list[dict[str, object]]) -> list[dict[s
     return aggregated
 
 
-def _follow_command(locator: str, *, checksum: str = "") -> str:
+def _session_read_command(target: str, *, session_ref: str = "") -> str:
+    parts = ["gotta read"]
+    if session_ref:
+        parts.append(f"--session {sh_quote(session_ref)}")
+    parts.append(sh_quote(target))
+    return " ".join(parts)
+
+
+def _follow_command(locator: str, *, checksum: str = "", session_ref: str = "") -> str:
     target = locator.strip() or (content_locator(checksum.strip()) if checksum.strip() else "unknown")
-    return f"gotta read {sh_quote(target)}"
+    return _session_read_command(target, session_ref=session_ref)
 
 
 def _artifact_human_locator(preferred_name: str, checksum: str) -> str:
@@ -844,10 +952,11 @@ def _manifest_payload(
     plugin: str = "",
     actor: str = "",
     locator: str = "",
-    match: str = "",
+    filter_query: str = "",
     limit: int = 20,
     offset: int = 0,
     include_all: bool = False,
+    session_ref: str = "",
 ) -> dict[str, object]:
     raw_entries = _filter_manifest_entries(
         _manifest_entries(dirs),
@@ -856,9 +965,9 @@ def _manifest_payload(
         locator=locator,
     )
     entries = _aggregate_manifest_entries(raw_entries)
-    match_filter = _match_filter_text(match)
-    if match_filter:
-        entries = [entry for entry in entries if _manifest_entry_matches(entry, match_filter)]
+    filter_text = _match_filter_text(filter_query)
+    if filter_text:
+        entries = [entry for entry in entries if _manifest_entry_matches(entry, filter_text)]
     ordered = sorted(entries, key=_manifest_entry_sort_key, reverse=True)
     discovery_count, evidence_count = _artifact_kind_counts(ordered)
     paged, paging = _paginate_items(
@@ -888,15 +997,23 @@ def _manifest_payload(
             "follow_command": _follow_command(
                 str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
                 checksum=str(entry.get("checksum", "")).strip(),
+                session_ref=session_ref,
             ),
             "content_follow_command": _follow_command(
                 "",
                 checksum=str(entry.get("checksum", "")).strip(),
+                session_ref=session_ref,
             )
             if str(entry.get("checksum", "")).strip()
             else "",
             "artifact_follow_command": (
-                f"gotta read {sh_quote(_artifact_human_locator(str(entry.get('preferred_name', '')).strip() or 'data', str(entry.get('checksum', '')).strip()))}"
+                _session_read_command(
+                    _artifact_human_locator(
+                        str(entry.get("preferred_name", "")).strip() or "data",
+                        str(entry.get("checksum", "")).strip(),
+                    ),
+                    session_ref=session_ref,
+                )
                 if str(entry.get("checksum", "")).strip()
                 else ""
             ),
@@ -943,7 +1060,7 @@ def _manifest_payload(
         "pluginFilter": plugin,
         "actorFilter": actor,
         "locatorFilter": locator,
-        "matchFilter": match_filter,
+        "filter": filter_text,
         "entries": rendered_entries,
     }
 
@@ -1071,6 +1188,7 @@ def _scan_payload(
     limit: int = 20,
     offset: int = 0,
     include_all: bool = False,
+    session_ref: str = "",
 ) -> dict[str, object]:
     regex = _scan_regex(
         query,
@@ -1120,10 +1238,17 @@ def _scan_payload(
             "followCommand": _follow_command(
                 str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
                 checksum=checksum,
+                session_ref=session_ref,
             ),
-            "contentFollowCommand": _follow_command("", checksum=checksum),
+            "contentFollowCommand": _follow_command("", checksum=checksum, session_ref=session_ref),
             "artifactFollowCommand": (
-                f"gotta read {sh_quote(_artifact_human_locator(str(entry.get('preferred_name', '')).strip() or 'data', checksum))}"
+                _session_read_command(
+                    _artifact_human_locator(
+                        str(entry.get("preferred_name", "")).strip() or "data",
+                        checksum,
+                    ),
+                    session_ref=session_ref,
+                )
                 if checksum
                 else ""
             ),
@@ -1445,14 +1570,15 @@ def _timeline_payload(
     offset: int = 0,
     include_all: bool = False,
     mode: str = "acquired",
-    match: str = "",
+    filter_query: str = "",
+    session_ref: str = "",
 ) -> dict[str, object]:
     normalized_mode = _normalize_timeline_mode(mode)
     local_events, activity_paths = _local_activity_timeline_events(dirs)
     primary_activity_path = (
         activity_paths[0] if activity_paths else str(activity_log_path(dirs.session_dir))
     )
-    match_filter = _match_filter_text(match)
+    filter_text = _match_filter_text(filter_query)
     if normalized_mode != "acquired":
         snapshots = scan_content_store(dirs.content_dir)
         events: list[dict[str, object]] = []
@@ -1473,9 +1599,9 @@ def _timeline_payload(
             source_time, source_field = _source_timestamp_for_mode(snapshot, normalized_mode)
             if not source_time:
                 if _counts_as_source_coverage_gap(snapshot) and (
-                    not match_filter
+                    not filter_text
                     or _match_any(
-                        match_filter,
+                        filter_text,
                         source_payload.get("actor"),
                         source_payload.get("target_actor"),
                         source_payload.get("plugin"),
@@ -1504,7 +1630,11 @@ def _timeline_payload(
                         snapshot.digest,
                     ),
                     "fetched_at": fetched_at,
-                    "follow_command": _follow_command(locator, checksum=snapshot.digest),
+                    "follow_command": _follow_command(
+                        locator,
+                        checksum=snapshot.digest,
+                        session_ref=session_ref,
+                    ),
                     **source_payload,
                     **_resolved_visibility_metadata(
                         dict(snapshot.metadata),
@@ -1517,12 +1647,12 @@ def _timeline_payload(
             )
         if normalized_mode == "best-effort":
             events.extend(local_events)
-        if match_filter:
+        if filter_text:
             events = [
                 item
                 for item in events
                 if _match_any(
-                    match_filter,
+                    filter_text,
                     item.get("actor"),
                     item.get("target_actor"),
                     item.get("plugin"),
@@ -1573,7 +1703,7 @@ def _timeline_payload(
             "evidenceArtifactCount": evidence_count,
             "topPlugins": top_plugins,
             "topActors": top_actors,
-            "matchFilter": match_filter,
+            "filter": filter_text,
             "events": paged,
         }
     manifest_events = [
@@ -1598,6 +1728,7 @@ def _timeline_payload(
             "follow_command": _follow_command(
                 str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
                 checksum=str(entry.get("checksum", "")).strip(),
+                session_ref=session_ref,
             ),
             "event_kind": "source",
             **_resolved_visibility_metadata(
@@ -1618,12 +1749,12 @@ def _timeline_payload(
             str(item.get("checksum") or ""),
         ),
     )
-    if match_filter:
+    if filter_text:
         events = [
             item
             for item in events
             if _match_any(
-                match_filter,
+                filter_text,
                 item.get("actor"),
                 item.get("target_actor"),
                 item.get("plugin"),
@@ -1665,7 +1796,7 @@ def _timeline_payload(
         "evidenceArtifactCount": evidence_count,
         "topPlugins": top_plugins,
         "topActors": top_actors,
-        "matchFilter": match_filter,
+        "filter": filter_text,
         "events": paged,
     }
 
@@ -1699,7 +1830,12 @@ def _no_leads_next_step(*, has_artifacts: bool) -> str:
     )
 
 
-def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
+def _graph_payload(
+    dirs,
+    *,
+    filter_query: str = "",
+    session_ref: str = "",
+) -> dict[str, object]:
     entries = _manifest_entries(dirs)
     snapshot_by_digest = {
         snapshot.digest: snapshot for snapshot in scan_content_store(dirs.content_dir)
@@ -1751,7 +1887,7 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
     sources = [
         {
             "locator": locator,
-            "followCommand": _follow_command(locator),
+            "followCommand": _follow_command(locator, session_ref=session_ref),
             "contentCount": len(checksums),
             "artifactKind": (
                 next(iter(source_artifact_kinds.get(locator, set())))
@@ -1781,7 +1917,10 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
             else "",
             "contentLocator": content_locator(checksum),
             "artifactLocator": _artifact_human_locator(content_names.get(checksum, "data"), checksum),
-            "followCommand": f"gotta read {sh_quote(_artifact_human_locator(content_names.get(checksum, 'data'), checksum))}",
+            "followCommand": _session_read_command(
+                _artifact_human_locator(content_names.get(checksum, "data"), checksum),
+                session_ref=session_ref,
+            ),
             "sourceCount": len(locators),
             "collision": len(locators) > 1,
             **(
@@ -1807,13 +1946,13 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
         }
         for (source, checksum, plugin), count in sorted(edge_counts.items())
     ]
-    match_filter = _match_filter_text(match)
-    if match_filter:
+    filter_text = _match_filter_text(filter_query)
+    if filter_text:
         matched_sources = {
             str(source["locator"])
             for source in sources
             if _match_any(
-                match_filter,
+                filter_text,
                 source["locator"],
                 source.get("artifactKind"),
                 source.get("artifactKinds"),
@@ -1826,7 +1965,7 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
             str(item["checksum"])
             for item in content
             if _match_any(
-                match_filter,
+                filter_text,
                 item["checksum"],
                 item["preferredName"],
                 item["contentLocator"],
@@ -1840,7 +1979,7 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
             (str(edge["source"]), str(edge["checksum"]), str(edge["plugin"]))
             for edge in edges
             if _match_any(
-                match_filter,
+                filter_text,
                 edge["source"],
                 edge["checksum"],
                 edge["plugin"],
@@ -1871,16 +2010,16 @@ def _graph_payload(dirs, *, match: str = "") -> dict[str, object]:
         discovery_count=discovery_count,
         evidence_count=evidence_count,
     )
-    if match_filter and empty:
+    if filter_text and empty:
         next_step = (
-            f"No graph nodes matched {match_filter!r}. Clear `--match` or choose a "
+            f"No graph nodes matched {filter_text!r}. Clear `--filter` or choose a "
             "different locator, actor, plugin, or keyword."
         )
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
-        "matchFilter": match_filter,
+        "filter": filter_text,
         "sourceCount": len(sources),
         "contentCount": len(content),
         "edgeCount": len(edges),
@@ -1970,7 +2109,7 @@ def _render_graph_text(payload: dict[str, object]) -> str:
             f"{payload['sourceCount']} sources, "
             f"{payload['contentCount']} content nodes, "
             f"{payload['edgeCount']} edges"
-            f"{_match_suffix(payload.get('matchFilter'))}"
+            f"{_filter_suffix(payload.get('filter'))}"
         ),
         (
             "artifacts: "
@@ -2165,7 +2304,7 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
     return edges
 
 
-def _analysis_payload(dirs) -> dict[str, object]:
+def _analysis_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
     snapshots = scan_content_store(dirs.content_dir)
     snapshot_by_digest = {snapshot.digest: snapshot for snapshot in snapshots}
     manifest_entries = _manifest_entries(dirs)
@@ -2243,7 +2382,10 @@ def _analysis_payload(dirs) -> dict[str, object]:
             "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
             "contentLocator": content_locator(snapshot.digest),
             "artifactLocator": snapshot_artifact_locator(snapshot),
-            "followCommand": f"gotta read {sh_quote(snapshot_artifact_locator(snapshot))}",
+            "followCommand": _session_read_command(
+                snapshot_artifact_locator(snapshot),
+                session_ref=session_ref,
+            ),
             "nameCollision": name_counts[snapshot_display_name(snapshot)] > 1,
             "nameCount": len(snapshot.names),
             "fetchCount": len(snapshot.events),
@@ -2306,6 +2448,10 @@ def _analysis_payload(dirs) -> dict[str, object]:
         classify_kind=_lead_kind,
     )
     lead_sources = aggregate_lead_sources(lead_edges)
+    for lead in lead_sources:
+        locator = str(lead.get("locator") or "").strip()
+        if locator:
+            lead["followCommand"] = _follow_command(locator, session_ref=session_ref)
     collisions = [source["locator"] for source in sources if source["collision"]]
     duplicate_materializations = [
         source["locator"] for source in sources if source.get("duplicateMaterialization")
@@ -2443,10 +2589,11 @@ def _leads_payload(
     dirs,
     *,
     target: str = "",
-    match: str = "",
+    filter_query: str = "",
     limit: int = 100,
     offset: int = 0,
     include_all: bool = False,
+    session_ref: str = "",
 ) -> dict[str, object]:
     snapshots = scan_content_store(dirs.content_dir)
     manifest_entries = _manifest_entries(dirs)
@@ -2463,13 +2610,17 @@ def _leads_payload(
         if str(edge.get("sourceChecksum", "")) in selected_digests
     ]
     lead_sources = aggregate_lead_sources(edge_records)
-    match_filter = _match_filter_text(match)
-    if match_filter:
+    for lead in lead_sources:
+        locator = str(lead.get("locator") or "").strip()
+        if locator:
+            lead["followCommand"] = _follow_command(locator, session_ref=session_ref)
+    filter_text = _match_filter_text(filter_query)
+    if filter_text:
         lead_sources = [
             lead
             for lead in lead_sources
             if _match_any(
-                match_filter,
+                filter_text,
                 lead.get("locator"),
                 lead.get("followCommand"),
                 lead.get("provider"),
@@ -2497,33 +2648,56 @@ def _leads_payload(
             continue
         selected_edges_by_checksum.setdefault(str(edge["sourceChecksum"]), []).append(edge)
     artifacts = []
-    for snapshot in selected:
-        edges = sorted(
-            selected_edges_by_checksum.get(snapshot.digest, []),
-            key=edge_best_first_sort_key,
-        )
-        if match_filter and not edges:
+    if lead_sources:
+        for snapshot in selected:
+            edges = sorted(
+                selected_edges_by_checksum.get(snapshot.digest, []),
+                key=edge_best_first_sort_key,
+            )
+            if filter_text and not edges:
+                continue
+            for edge in edges:
+                target_locator = str(edge.get("targetLocator") or "").strip()
+                if target_locator:
+                    edge["followCommand"] = _follow_command(
+                        target_locator,
+                        session_ref=session_ref,
+                    )
+            artifacts.append(
+                {
+                    "checksum": snapshot.digest,
+                    "preferredName": snapshot_display_name(snapshot),
+                    "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
+                    "sourceLocator": snapshot_locator(snapshot),
+                    "artifactLocator": snapshot_artifact_locator(snapshot),
+                    "contentLocator": content_locator(snapshot.digest),
+                    "lastFetchedAt": snapshot_last_fetched_at(snapshot),
+                    "leadCount": len(edges),
+                    "leads": edges[: max(limit, 0)],
+                    **_resolved_visibility_metadata(
+                        dict(snapshot.metadata),
+                        provider=str(snapshot.metadata.get("plugin") or ""),
+                        plugin=str(snapshot.metadata.get("plugin") or ""),
+                        subcommand=str(snapshot.metadata.get("subcommand") or ""),
+                        locator=str(snapshot_locator(snapshot)),
+                    ),
+                }
+            )
+    best_overall = lead_sources[:LEADS_BEST_OVERALL_LIMIT]
+    best_locators = {str(item.get("locator") or "").strip() for item in best_overall}
+    provider_highlights: list[dict[str, object]] = []
+    highlighted_providers: set[str] = {
+        str(item.get("provider") or "").strip() for item in best_overall if str(item.get("provider") or "").strip()
+    }
+    for lead in lead_sources:
+        provider = str(lead.get("provider") or "").strip()
+        locator = str(lead.get("locator") or "").strip()
+        if not provider or not locator or locator in best_locators or provider in highlighted_providers:
             continue
-        artifacts.append(
-            {
-                "checksum": snapshot.digest,
-                "preferredName": snapshot_display_name(snapshot),
-                "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
-                "sourceLocator": snapshot_locator(snapshot),
-                "artifactLocator": snapshot_artifact_locator(snapshot),
-                "contentLocator": content_locator(snapshot.digest),
-                "lastFetchedAt": snapshot_last_fetched_at(snapshot),
-                "leadCount": len(edges),
-                "leads": edges[: max(limit, 0)],
-                **_resolved_visibility_metadata(
-                    dict(snapshot.metadata),
-                    provider=str(snapshot.metadata.get("plugin") or ""),
-                    plugin=str(snapshot.metadata.get("plugin") or ""),
-                    subcommand=str(snapshot.metadata.get("subcommand") or ""),
-                    locator=str(snapshot_locator(snapshot)),
-                ),
-            }
-        )
+        provider_highlights.append(lead)
+        highlighted_providers.add(provider)
+        if len(provider_highlights) >= LEADS_PROVIDER_HIGHLIGHT_LIMIT:
+            break
     materialized_count = sum(1 for source in lead_sources if bool(source["materialized"]))
     discovery_count = sum(1 for item in artifacts if item.get("artifactKind") == "discovery")
     evidence_count = sum(1 for item in artifacts if item.get("artifactKind") == "evidence")
@@ -2543,16 +2717,20 @@ def _leads_payload(
     )
     next_step = (
         _topology_next_step(discovery_count=discovery_count, evidence_count=evidence_count)
-        if empty and not match_filter and not selected
+        if empty and not filter_text and not selected
         else _no_leads_next_step(has_artifacts=bool(selected))
-        if not lead_sources and not match_filter and selected
-        else ""
+        if not lead_sources and not filter_text and selected
+        else (
+            "No leads matched the current filter. Use `gotta session scan <query>` for broader regex-style searching."
+            if not lead_sources and filter_text
+            else ""
+        )
     )
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "target": target.strip(),
-        "matchFilter": match_filter,
+        "filter": filter_text,
         "limit": max(limit, 0),
         "artifactCount": len(artifacts),
         "discoveryArtifactCount": discovery_count,
@@ -2564,14 +2742,16 @@ def _leads_payload(
         "materializedLeadCount": materialized_count,
         "unmaterializedLeadCount": len(lead_sources) - materialized_count,
         "leadSources": paged_sources,
+        "bestOverall": best_overall,
+        "providerHighlights": provider_highlights,
         "artifacts": artifacts,
         "empty": empty,
         "nextStep": next_step,
     }
 
 
-def _semantic_payload(dirs) -> dict[str, object]:
-    lineage = _analysis_payload(dirs)
+def _semantic_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
+    lineage = _analysis_payload(dirs, session_ref=session_ref)
     nodes: dict[str, dict[str, object]] = {}
     edges: set[tuple[str, str, str]] = set()
 
@@ -4005,6 +4185,88 @@ def _render_text_bundle(sections: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def _render_markdown_list(lines: list[str], heading: str, entries: list[str]) -> None:
+    if not entries:
+        return
+    lines.extend([f"## {heading}", ""])
+    lines.extend([f"- {entry}" for entry in entries])
+    lines.append("")
+
+
+def _render_analysis_overview_markdown(
+    overview: dict[str, object],
+    *,
+    lineage: dict[str, object],
+    limit: int,
+) -> str:
+    lines = [
+        "# gotta session analyze",
+        "",
+        f"Session: `{overview['sessionDir']}`",
+        "",
+        (
+            f"Artifacts: {overview['contentCount']} total "
+            f"(discovery {overview['discoveryArtifactCount']}, "
+            f"evidence {overview['evidenceArtifactCount']})"
+        ),
+        (
+            f"Lineage: {overview['sourceCount']} sources, "
+            f"{overview['leadSourceCount']} lead sources, "
+            f"{overview['leadEdgeCount']} lead edges"
+        ),
+        (
+            f"Semantic: {overview['semanticNodeCount']} nodes, "
+            f"{overview['semanticEdgeCount']} edges"
+        ),
+        "",
+    ]
+    next_step = str(overview.get("nextStep") or "").strip()
+    if next_step:
+        lines.extend(["## Synthesis", "", next_step, ""])
+    provider_clusters = [
+        f"{item['provider']}: {item['nodeCount']} nodes"
+        for item in list(overview.get("providerClusters") or [])[:SUMMARY_BUCKET_LIMIT]
+    ]
+    _render_markdown_list(lines, "Provider Clusters", provider_clusters)
+    dominant_relations = [
+        f"{item['label']}: {item['edgeCount']} edges"
+        for item in list(overview.get("dominantRelations") or [])[:SUMMARY_BUCKET_LIMIT]
+    ]
+    _render_markdown_list(lines, "Dominant Relations", dominant_relations)
+    anchors = []
+    for anchor in list(overview.get("materializedAnchors") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]:
+        follow = str(anchor.get("followCommand") or "").strip()
+        if follow:
+            anchors.append(
+                f"[{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']} via `{follow}`"
+            )
+        else:
+            anchors.append(f"[{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']}")
+    _render_markdown_list(lines, "Anchor Shortlist", anchors)
+    lineage_preview = [
+        f"{item['locator']} ({int(item.get('contentCount') or 0)} materializations)"
+        for item in list(lineage.get("sources") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]
+    ]
+    _render_markdown_list(lines, "Lineage Preview", lineage_preview)
+    semantic_preview = [
+        f"{item['label']} ({item['kind']})"
+        for item in list(overview.get("querySeeds") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]
+    ]
+    _render_markdown_list(lines, "Semantic Preview", semantic_preview)
+    leads_preview = []
+    for lead in list(overview.get("bestLeads") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]:
+        follow = str(lead.get("followCommand") or "").strip()
+        relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+        label = f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+        if follow:
+            label += f" via `{follow}`"
+        leads_preview.append(label)
+    _render_markdown_list(lines, "Lead Preview", leads_preview)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
 def _render_markdown_bundle(
     sections: list[tuple[str, str]],
     *,
@@ -4089,9 +4351,14 @@ def _render_search_origins(lead: dict[str, object]) -> str:
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
-    payload = _graph_payload(dirs, match=str(args.match or ""))
+    session_ref = _explicit_session_ref(args)
+    payload = _graph_payload(
+        dirs,
+        filter_query=str(getattr(args, "filter", "") or ""),
+        session_ref=session_ref,
+    )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -4103,12 +4370,14 @@ def cmd_graph(args: argparse.Namespace) -> int:
 
 
 def cmd_leads(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
+    session_ref = _explicit_session_ref(args)
     payload = _leads_payload(
         dirs,
         target=args.target or "",
-        match=str(args.match or ""),
+        filter_query=str(getattr(args, "filter", "") or ""),
+        session_ref=session_ref,
         limit=max(args.limit, 0),
         offset=max(args.offset, 0),
         include_all=bool(args.all),
@@ -4129,7 +4398,7 @@ def cmd_leads(args: argparse.Namespace) -> int:
         f"{payload['leadCount']} total (showing {payload['shownCount']}; "
         f"materialized {payload['materializedLeadCount']}, "
         f"unmaterialized {payload['unmaterializedLeadCount']})"
-        f"{_match_suffix(payload.get('matchFilter'))}"
+        f"{_filter_suffix(payload.get('filter'))}"
     )
     print(
         _paging_summary_line(
@@ -4166,9 +4435,9 @@ def cmd_leads(args: argparse.Namespace) -> int:
         print("\n".join(top_relation_lines))
     if payload["nextStep"]:
         print(f"next: {payload['nextStep']}")
-    if payload["leadSources"]:
+    if payload["bestOverall"]:
         print("best leads:")
-        for lead in payload["leadSources"]:
+        for lead in payload["bestOverall"]:
             relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
             print(
                 f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
@@ -4190,6 +4459,15 @@ def cmd_leads(args: argparse.Namespace) -> int:
             contexts = [str(value) for value in lead.get("contexts") or [] if str(value)]
             if contexts:
                 print(f"    context: {contexts[0]}")
+    if payload["providerHighlights"]:
+        print("provider highlights:")
+        for lead in payload["providerHighlights"]:
+            relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+            print(
+                f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
+                f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+            )
+            print(f"    follow: `{lead['followCommand']}`")
     if payload["artifacts"] and (payload["target"] or payload["artifactCount"] == 1):
         print("source context:")
         for artifact in payload["artifacts"]:
@@ -4238,14 +4516,16 @@ def cmd_leads(args: argparse.Namespace) -> int:
 
 
 def cmd_manifest(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
+    session_ref = _explicit_session_ref(args)
     payload = _manifest_payload(
         dirs,
         plugin=args.plugin or "",
         actor=args.actor or "",
         locator=args.locator or "",
-        match=str(args.match or ""),
+        filter_query=str(getattr(args, "filter", "") or ""),
+        session_ref=session_ref,
         limit=args.limit,
         offset=max(args.offset, 0),
         include_all=bool(args.all),
@@ -4260,7 +4540,7 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         f"showing {payload['shownCount']}; "
         f"discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
-        f"{_match_suffix(payload.get('matchFilter'))}"
+        f"{_filter_suffix(payload.get('filter'))}"
     )
     print(
         _paging_summary_line(
@@ -4295,8 +4575,16 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     )
     if top_actors_lines:
         print("\n".join(top_actors_lines))
-    print("follow: pass any emitted locator directly to `gotta read <locator>`")
-    for entry in payload["entries"]:
+    if session_ref:
+        print(f"follow: use emitted locators with `gotta read --session {session_ref} <locator>`")
+    preview_entries = list(payload["entries"])[:MANIFEST_TEXT_PREVIEW_LIMIT]
+    if payload["entries"]:
+        print(
+            "entries preview:"
+            if len(payload["entries"]) <= MANIFEST_TEXT_PREVIEW_LIMIT
+            else f"entries preview (showing {len(preview_entries)} of {len(payload['entries'])}):"
+        )
+    for entry in preview_entries:
         fetched_at = str(entry.get("fetched_at", "")).strip() or "unknown-time"
         plugin_list = [str(value).strip() for value in list(entry.get("plugins") or []) if str(value).strip()]
         actor_list = [str(value).strip() for value in list(entry.get("actors") or []) if str(value).strip()]
@@ -4338,19 +4626,24 @@ def cmd_manifest(args: argparse.Namespace) -> int:
                     if part
                 )
             )
+    hidden = len(payload["entries"]) - len(preview_entries)
+    if hidden > 0:
+        print(f"  - ... {hidden} additional entries hidden in text view")
     return 0
 
 
 def cmd_timeline(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
+    session_ref = _explicit_session_ref(args)
     payload = _timeline_payload(
         dirs,
         limit=max(args.limit, 0),
         offset=max(args.offset, 0),
         include_all=bool(args.all),
         mode=args.mode,
-        match=str(args.match or ""),
+        filter_query=str(getattr(args, "filter", "") or ""),
+        session_ref=session_ref,
     )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -4368,7 +4661,7 @@ def cmd_timeline(args: argparse.Namespace) -> int:
         f"{payload['eventCount']} total "
         f"(discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
-        f"{_match_suffix(payload.get('matchFilter'))}"
+        f"{_filter_suffix(payload.get('filter'))}"
     )
     print(
         _paging_summary_line(
@@ -4403,7 +4696,14 @@ def cmd_timeline(args: argparse.Namespace) -> int:
     )
     if top_actors_lines:
         print("\n".join(top_actors_lines))
-    for event in payload["events"]:
+    preview_events = list(payload["events"])[:TIMELINE_TEXT_PREVIEW_LIMIT]
+    if payload["events"]:
+        print(
+            "events preview:"
+            if len(payload["events"]) <= TIMELINE_TEXT_PREVIEW_LIMIT
+            else f"events preview (showing {len(preview_events)} of {len(payload['events'])}):"
+        )
+    for event in preview_events:
         actor_label = event["actor"]
         if event.get("target_actor") and event["target_actor"] != actor_label:
             actor_label = f"{actor_label}->{event['target_actor']}"
@@ -4458,15 +4758,19 @@ def cmd_timeline(args: argparse.Namespace) -> int:
                         if part
                     )
                 )
+    hidden = len(payload["events"]) - len(preview_events)
+    if hidden > 0:
+        print(f"  - ... {hidden} additional events hidden in text view")
     return 0
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
-    payload = _analysis_payload(dirs)
+    session_ref = _explicit_session_ref(args)
+    payload = _analysis_payload(dirs, session_ref=session_ref)
     mermaid = _render_analysis_mermaid(payload)
-    semantic_payload = _semantic_payload(dirs)
+    semantic_payload = _semantic_payload(dirs, session_ref=session_ref)
     semantic_mermaid = _render_semantic_mermaid(semantic_payload)
     focus_query = str(getattr(args, "focus", "") or "").strip()
     focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
@@ -4483,6 +4787,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             query=focus_query,
             limit=max(focus_limit * 2, 12),
             include_all=True,
+            session_ref=session_ref,
         )
         lineage_focus_payload = _lineage_focus_payload(
             payload,
@@ -4586,7 +4891,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     ]
                 )
             )
-        else:
+        elif focus_query:
             print(
                 _render_markdown_bundle(
                     [
@@ -4605,6 +4910,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     ]
                 )
             )
+        else:
+            print(
+                _render_analysis_overview_markdown(
+                    overview,
+                    lineage=payload,
+                    limit=focus_limit,
+                ),
+                end="",
+            )
     else:
         if args.mode == "lineage":
             print(
@@ -4622,8 +4936,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(_options_from_args(args), create=False)
+    dirs = _session_dirs_for_read(args)
     _require_started_session(dirs)
+    session_ref = _explicit_session_ref(args)
     payload = _scan_payload(
         dirs,
         query=str(args.query or ""),
@@ -4638,6 +4953,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         limit=max(int(args.limit or 0), 0),
         offset=max(int(args.offset or 0), 0),
         include_all=bool(args.all),
+        session_ref=session_ref,
     )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))

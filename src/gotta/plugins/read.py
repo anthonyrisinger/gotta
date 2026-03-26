@@ -20,6 +20,7 @@ import urllib.request
 
 from gotta.builtin import get_plugin
 from gotta.capture import Capture
+from gotta.content import CommonOptions
 from gotta.dispatch import (
     SUPPRESS_MATERIALIZATION_ENV,
     SUPPRESS_RECEIPTS_ENV,
@@ -526,7 +527,16 @@ def capture(argv: list[str], options: object) -> Capture:
 
 def project(argv: list[str], capture: Capture) -> bytes:
     request = parse_args(argv)
-    resolved = resolve_read_target(argv)
+    try:
+        resolved = resolve_read_target(
+            argv,
+            CommonOptions(
+                session_dir=request.session or None,
+                actor=request.actor or None,
+            ),
+        )
+    except TypeError:
+        resolved = resolve_read_target(argv)
     if resolved.kind == "routed":
         assert resolved.routed_plugin is not None
         spec = get_plugin(resolved.routed_plugin)
@@ -547,7 +557,14 @@ def project(argv: list[str], capture: Capture) -> bytes:
 
 
 def execute_materializing_read(argv: list[str]) -> ReadExecution:
-    captured = capture(argv, object())
+    request = parse_args(argv)
+    captured = capture(
+        argv,
+        CommonOptions(
+            session_dir=request.session or None,
+            actor=request.actor or None,
+        ),
+    )
     return ReadExecution(
         code=0,
         canonical_bytes=captured.data,
@@ -625,7 +642,16 @@ def main(argv: list[str]) -> int:
         render_bytes(data, "txt")
         return 0
 
-    resolved = resolve_read_target(argv)
+    try:
+        resolved = resolve_read_target(
+            argv,
+            CommonOptions(
+                session_dir=request.session or None,
+                actor=request.actor or None,
+            ),
+        )
+    except TypeError:
+        resolved = resolve_read_target(argv)
     if resolved.kind == "routed":
         assert resolved.routed_plugin is not None
         return _delegate_with_view(

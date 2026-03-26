@@ -414,7 +414,7 @@ def _truncation_footer(reason: str, follow_command: str) -> str:
     follow = (
         f"follow: {clipped_follow}"
         if clipped_follow
-        else "rerun non-interactively for full output"
+        else "rerun the same command with --full-output"
     )
     return f"[output truncated by {reason} budget; {follow}]\n"
 
@@ -675,6 +675,10 @@ def _result_follow_command(result: Materialization | None) -> str:
         return ""
     locator = content_locator(result.digest)
     return shlex.join(["gotta", "read", locator])
+
+
+def _rerun_full_output_command(plugin: str, argv: list[str]) -> str:
+    return shlex.join(["gotta", plugin, *argv, "--full-output"])
 
 
 def _receipt_payload(
@@ -1158,6 +1162,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
     access = session_access_mode(plugin, cleaned)
     spec = plugin_spec(plugin)
     follow_command = ""
+    rerun_command = _rerun_full_output_command(plugin, cleaned)
     runtime_dirs: ResolvedDirs | None = None
     budget_output = not full_output
 
@@ -1174,7 +1179,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             stdout_data,
             output_format=_requested_output_format(plugin, cleaned, stdout_data),
             budget_output=budget_output,
-            follow_command=follow_command,
+            follow_command=rerun_command,
         )
         if stderr_data and not quiet:
             _emit_captured_stderr(stderr_data)
@@ -1196,6 +1201,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             stdout_data,
             output_format=_requested_output_format(plugin, cleaned, stdout_data),
             budget_output=budget_output,
+            follow_command=rerun_command,
         )
 
     if not resolved.should_materialize and _streams_live(plugin, cleaned):

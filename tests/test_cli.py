@@ -746,7 +746,7 @@ def test_main_stable_fingerprint_does_not_replace_explicit_session_target(
     assert cli.main(["todo", "--session", str(explicit_root)]) == 2
 
     captured = capsys.readouterr()
-    assert "session references must be an absolute path" in captured.err
+    assert "existing initialized session at that exact root" in captured.err
     assert seen == []
     assert not (tmp_path / "session").exists()
 
@@ -762,6 +762,49 @@ def test_main_explicit_actor_requires_existing_session_before_resolution(
     captured = capsys.readouterr()
     assert "explicit actor targeting requires an existing session" in captured.err
     assert not (tmp_path / "session").exists()
+
+
+def test_main_exact_root_explicit_actor_targets_local_actor_surface(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    root = tmp_path / "workspace"
+
+    assert cli.main(["session", "init", "--session", str(root)]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Claude", "--session", str(root)]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["want", "--session", str(root), "--actor", "Claude"]) == 0
+    output = capsys.readouterr().out
+
+    claude = sessionlib._resolve_bound_actor_name(root, "Claude")
+    assert "Actor Want Placeholder" in output
+    assert f"gotta want --actor {claude} --stdin" in output
+    assert (root / "actors" / claude).is_dir()
+    assert not (tmp_path / "session" / root.name / "actors").exists()
+
+
+def test_main_exact_root_session_show_stays_on_exact_root_after_bind(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    root = tmp_path / "workspace"
+
+    assert cli.main(["session", "init", "--session", str(root)]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Claude", "--session", str(root)]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["session", "show", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["GOTTA_SESSION_DIR"] == str(root.resolve())
+    assert payload["GOTTA_SESSION_CONTENT_DIR"] == str((root / "content").resolve())
+    assert payload["GOTTA_SESSION_STATE_DIR"] == str((root / "state").resolve())
+    assert payload["GOTTA_SESSION_ACTOR"] == ""
 
 
 def test_main_preserves_session_subcommands(
@@ -1135,7 +1178,7 @@ def test_main_read_only_explicit_session_inspection_uses_existing_actor_root(
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert payload["sessionDir"] == str(actor_root.resolve())
+    assert payload["sessionDir"] == str(shared_root.resolve())
     assert "created a new gotta session" not in captured.err
     assert not (
         shared_root / "actors" / cli._session_token("thread-123") / "state" / "env"

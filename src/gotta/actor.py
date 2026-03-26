@@ -30,7 +30,7 @@ def _shared_root(parent_root: Path) -> Path:
         return resolved
     if resolved.parent.name == "actors":
         return resolved.parent.parent
-    return topology.shared_session_root_for(content.session_shared_id(parent_root))
+    return resolved
 
 
 def session_actor(root: Path) -> str:

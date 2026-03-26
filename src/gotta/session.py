@@ -28,6 +28,7 @@ from gotta.content import (
     discover_state_env,
     env_mapping,
     load_state_env_at_root,
+    resolve_session_reference,
     resolve_dirs,
     session_identity,
     session_is_initialized,
@@ -35,7 +36,6 @@ from gotta.content import (
     session_shared_id,
     session_token,
     sh_quote,
-    shared_session_root,
     state_dir_path,
     state_env_path,
     stdin_has_meaningful_text,
@@ -148,9 +148,13 @@ def _session_dir(
     explicit_session: str | None,
     explicit_actor: str | None = None,
 ) -> Path:
-    current = _current_session_dir(
-        explicit_session,
-        explicit_actor=None,
+    current = (
+        resolve_session_reference(explicit_session, allow_missing=False)
+        if explicit_session
+        else _current_session_dir(
+            explicit_session,
+            explicit_actor=None,
+        )
     )
     if current is None:
         raise SystemExit(
@@ -160,10 +164,17 @@ def _session_dir(
             "when you intentionally want to scaffold one exact root."
         )
     if explicit_actor:
+        session_root = _group_session_root(current)
         current = _actor_session_dir(
-            current,
-            _resolve_bound_actor_name(current, explicit_actor),
+            session_root,
+            _resolve_bound_actor_name(session_root, explicit_actor),
         )
+    elif (
+        explicit_session
+        and (current / "actors").is_dir()
+        and topology.parse_shared_session_root(current) is not None
+    ):
+        current = _actor_session_dir(current, _require_primary_actor_name(current))
     if not session_is_initialized(current):
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
@@ -190,13 +201,47 @@ def _group_session_root(work_dir: Path) -> Path:
     return resolved
 
 
+def _primary_actor_name(work_dir: Path) -> str | None:
+    session_root = _group_session_root(work_dir)
+    selected = list(_selected_actor_ids(session_root))
+    if not selected:
+        return None
+    shared_id = topology.normalize_identity(session_shared_id(session_root))
+    if shared_id and shared_id in selected:
+        return shared_id
+    if len(selected) == 1:
+        return selected[0]
+    return None
+
+
+def _require_primary_actor_name(work_dir: Path) -> str:
+    primary = _primary_actor_name(work_dir)
+    if primary:
+        return primary
+    raise SystemExit(
+        "this shared session does not resolve to one canonical actor root; "
+        "pass `--actor <actor>` explicitly"
+    )
+
+
+def _shared_session_read_root(raw: str) -> Path | None:
+    resolved = resolve_session_reference(raw, allow_missing=False)
+    if resolved is None:
+        return None
+    return _group_session_root(resolved)
+
+
 def _shared_session_dir(
     *,
     explicit_session: str | None,
 ) -> Path:
-    current = _current_session_dir(
-        explicit_session,
-        explicit_actor=None,
+    current = (
+        _shared_session_read_root(explicit_session)
+        if explicit_session
+        else _current_session_dir(
+            explicit_session,
+            explicit_actor=None,
+        )
     )
     if current is None:
         raise SystemExit(
@@ -441,6 +486,12 @@ def run_charter_surface(
             explicit_session=getattr(args, "session", None),
         )
         if scoped_actor:
+            path = work_dir / surface_name
+            if not path.is_file():
+                raise SystemExit(f"missing {surface_name} surface: {path}")
+            print(path.read_text(encoding="utf-8"), end="")
+            return 0
+        if topology.parse_shared_session_root(work_dir) is None:
             path = work_dir / surface_name
             if not path.is_file():
                 raise SystemExit(f"missing {surface_name} surface: {path}")
@@ -691,7 +742,7 @@ def _actor_ids_for_state(state: dict[str, str]) -> tuple[str, ...]:
 
 
 def _session_metadata_path(work_dir: Path) -> Path:
-    return shared_session_root(session_shared_id(work_dir)) / "session.json"
+    return _group_session_root(work_dir) / "session.json"
 
 
 def _load_session_metadata(work_dir: Path) -> dict[str, object]:
@@ -754,10 +805,7 @@ def _actor_registry_from_metadata(work_dir: Path) -> dict[str, dict[str, str]]:
 
 
 def _discovered_actor_registry(work_dir: Path) -> dict[str, dict[str, str]]:
-    resolved = work_dir.resolve()
-    actors_dir = resolved / "actors"
-    if not actors_dir.is_dir():
-        actors_dir = shared_session_root(session_shared_id(work_dir)) / "actors"
+    actors_dir = _group_session_root(work_dir).resolve() / "actors"
     registry: dict[str, dict[str, str]] = {}
     if not actors_dir.is_dir():
         return registry
@@ -765,7 +813,7 @@ def _discovered_actor_registry(work_dir: Path) -> dict[str, dict[str, str]]:
         if not actor_dir.is_dir():
             continue
         actor_id = topology.normalize_identity(actor_dir.name)
-        if not _actor_is_fingerprint(actor_id) or topology.is_placeholder_identity(actor_id):
+        if not actor_id or topology.is_placeholder_identity(actor_id):
             continue
         if not session_is_initialized(actor_dir.resolve()):
             continue
@@ -2595,7 +2643,7 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
         raise SystemExit(f"unknown actor: {actor_name}")
     repo_raw = str(state.get(SESSION_REPO_ENV) or "").strip()
     actor_dir = actor_session_root(work_dir, actor_name)
-    shared_content_dir = shared_session_root(session_shared_id(work_dir)) / "content"
+    shared_content_dir = _group_session_root(work_dir) / "content"
     if actor_dir != work_dir:
         if actor_dir.exists() and not _actor_is_selected(work_dir, actor_name):
             _reset_orphaned_actor_surface(actor_dir)

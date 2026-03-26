@@ -20,6 +20,7 @@ from gotta.content import (
     sanitize_name,
     scan_content_store,
 )
+from gotta import topology
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,8 @@ class ReadRequest:
     head: int
     tail: int
     section: str
+    session: str = ""
+    actor: str = ""
     routed_plugin: str | None = None
     routed_argv: tuple[str, ...] = ()
 
@@ -94,6 +97,8 @@ def parse_args(argv: list[str]) -> ReadRequest:
             head=0,
             tail=0,
             section="",
+            session="",
+            actor="",
             routed_plugin=None,
             routed_argv=(),
         )
@@ -156,6 +161,8 @@ def parse_args(argv: list[str]) -> ReadRequest:
         head=int(values["head"]),
         tail=int(values["tail"]),
         section=str(values["section"] or "").strip(),
+        session=str(values.get("session") or "").strip(),
+        actor=str(values.get("actor") or "").strip(),
         routed_plugin=routed_plugin,
         routed_argv=routed_argv,
     )
@@ -231,9 +238,29 @@ def _nearby_session_context() -> tuple[str, str]:
     return session_root, content_root
 
 
-def _resolve_local_target(target: str) -> Path | None:
+def _explicit_session_context(options: CommonOptions | Any | None) -> tuple[str, str]:
+    if options is None:
+        return "", ""
+    session_root = str(getattr(options, "session_dir", "") or "").strip()
+    content_root = str(getattr(options, "content_dir", "") or "").strip()
+    if session_root and not content_root:
+        session_path = Path(session_root).expanduser().resolve()
+        in_shared_topology = (
+            topology.parse_grouped_session_root(session_path) is not None
+            or topology.parse_shared_session_root(session_path) is not None
+        )
+        if in_shared_topology:
+            shared_id = topology.shared_session_id(session_path)
+            content_root = str((topology.shared_session_root_for(shared_id) / "content").resolve())
+        else:
+            content_root = str((session_path / "content").resolve())
+    return session_root, content_root
+
+
+def _resolve_local_target(target: str, *, session_root: str = "", content_root: str = "") -> Path | None:
     candidate = Path(target).expanduser()
-    session_root, content_root = _nearby_session_context()
+    session_root = session_root or _nearby_session_context()[0]
+    content_root = content_root or _nearby_session_context()[1]
     digest_target = target.removeprefix("content:") if target.startswith("content:") else target
     if content_root and is_sha256_digest(digest_target):
         digest_candidate = (Path(content_root).expanduser() / digest_target / "data").resolve()
@@ -248,9 +275,9 @@ def _resolve_local_target(target: str) -> Path | None:
     return None
 
 
-def _expected_local_target(target: str) -> Path | None:
+def _expected_local_target(target: str, *, session_root: str = "") -> Path | None:
     candidate = Path(target).expanduser()
-    session_root, _content_root = _nearby_session_context()
+    session_root = session_root or _nearby_session_context()[0]
     if candidate.is_absolute():
         return candidate.resolve()
     if session_root:
@@ -258,8 +285,8 @@ def _expected_local_target(target: str) -> Path | None:
     return None
 
 
-def _resolve_session_artifact_name(target: str) -> Path | None:
-    _, content_root = _nearby_session_context()
+def _resolve_session_artifact_name(target: str, *, content_root: str = "") -> Path | None:
+    content_root = content_root or _nearby_session_context()[1]
     if not content_root:
         return None
     root = Path(content_root).expanduser()
@@ -280,10 +307,10 @@ def _resolve_session_artifact_name(target: str) -> Path | None:
     return matches[0].data_path
 
 
-def _resolve_artifact_locator(target: str) -> Path | None:
+def _resolve_artifact_locator(target: str, *, content_root: str = "") -> Path | None:
     if not target.startswith("artifact:"):
         return None
-    _, content_root = _nearby_session_context()
+    content_root = content_root or _nearby_session_context()[1]
     if not content_root:
         raise SystemExit(
             f"artifact locator '{target}' requires an active or discoverable session content store"
@@ -330,6 +357,7 @@ def resolve_read_target(
 ) -> ReadTarget:
     options = options or CommonOptions()
     request = parse_args(argv)
+    explicit_session_root, explicit_content_root = _explicit_session_context(options)
     target = (request.target or "").strip()
     save_as = str(getattr(options, "save_as", "") or "").strip()
     if not target:
@@ -411,7 +439,7 @@ def resolve_read_target(
             preferred_name=save_as or _url_name(target),
             should_materialize=True,
         )
-    artifact_path = _resolve_artifact_locator(target)
+    artifact_path = _resolve_artifact_locator(target, content_root=explicit_content_root)
     if artifact_path is not None:
         return ReadTarget(
             request=request,
@@ -423,7 +451,11 @@ def resolve_read_target(
             preferred_name=save_as or artifact_path.name or "read.txt",
             should_materialize=False,
         )
-    local_path = _resolve_local_target(target)
+    local_path = _resolve_local_target(
+        target,
+        session_root=explicit_session_root,
+        content_root=explicit_content_root,
+    )
     if local_path is not None:
         return ReadTarget(
             request=request,
@@ -435,7 +467,7 @@ def resolve_read_target(
             preferred_name=save_as or local_path.name or "read.txt",
             should_materialize=False,
         )
-    artifact_name_path = _resolve_session_artifact_name(target)
+    artifact_name_path = _resolve_session_artifact_name(target, content_root=explicit_content_root)
     if artifact_name_path is not None:
         return ReadTarget(
             request=request,
@@ -448,7 +480,7 @@ def resolve_read_target(
             should_materialize=False,
         )
     if ":" not in target:
-        expected_local = _expected_local_target(target)
+        expected_local = _expected_local_target(target, session_root=explicit_session_root)
         if expected_local is not None:
             return ReadTarget(
                 request=request,
