@@ -24,7 +24,6 @@ from gotta.friction import (
     oops_log_path,
     oops_records,
     oops_summary,
-    oops_surface_path,
 )
 
 OOPS_ACTIONS = {"show", "append", "extend"}
@@ -331,15 +330,26 @@ def _read_payload(
         **oops_summary(records),
     }
     if explicit_actor or scoped_actor:
-        payload["oops"] = str(oops_surface_path(session_dir))
-        payload["oops_log"] = str(oops_log_path(session_dir))
+        payload["state_path"] = str(oops_log_path(session_dir))
+        payload["locator"] = session_plugin._native_surface_locator(
+            "oops",
+            actor_name=scoped_actor or session_plugin.session_actor(session_dir),
+        )
+        payload["follow_command"] = session_plugin._native_surface_follow_command(
+            "oops",
+            actor_name=scoped_actor or session_plugin.session_actor(session_dir),
+        )
     else:
-        payload["oops_surfaces"] = {
-            actor: str(oops_surface_path(session_plugin._actor_session_dir(session_dir, actor)))
+        payload["state_paths"] = {
+            actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
             for actor in actor_ids
         }
-        payload["oops_logs"] = {
-            actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
+        payload["locators"] = {
+            actor: session_plugin._native_surface_locator("oops", actor_name=actor)
+            for actor in actor_ids
+        }
+        payload["follow_commands"] = {
+            actor: session_plugin._native_surface_follow_command("oops", actor_name=actor)
             for actor in actor_ids
         }
     return payload
@@ -407,7 +417,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             reproducibility=args.reproducibility,
             resolution_state=args.resolution_state,
         )
-        print(f"appended oops entry in {oops_surface_path(session_dir)}")
+        print("appended oops entry")
         return 0
     if action == "extend":
         session_dir = session_plugin._session_dir(
@@ -445,7 +455,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
                 reproducibility=args.reproducibility,
                 resolution_state=args.resolution_state,
             )
-        print(f"extended oops entries in {oops_surface_path(session_dir)}: {len(entries)} item(s)")
+        print(f"extended oops entries: {len(entries)} item(s)")
         return 0
 
     session_dir, scoped_actor = session_plugin._observation_scope(
@@ -495,7 +505,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if explicit_actor or scoped_actor:
-        print(f"oops: {oops_surface_path(session_dir)}")
+        print(f"oops: {payload['follow_command']}")
     else:
         print(f"oops: session-wide across {len(actor_ids)} actor(s)")
     print(f"entries: {payload['entry_count']} (showing {payload['shown_count']})")

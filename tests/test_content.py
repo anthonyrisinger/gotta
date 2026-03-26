@@ -21,7 +21,6 @@ def make_dirs(root: Path) -> content.ResolvedDirs:
 def initialize_session(root: Path) -> content.ResolvedDirs:
     dirs = make_dirs(root)
     content.write_state_env(dirs)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     return dirs
 
 
@@ -112,9 +111,9 @@ def test_activity_events_round_trip(tmp_path: Path) -> None:
             "plugin": "logs",
             "surface": "logs",
             "action": "append",
-            "locator": "LOGS.md",
-            "preferred_name": "LOGS.md",
-            "follow_command": "gotta read 'LOGS.md'",
+            "locator": "logs:session",
+            "preferred_name": "logs:session",
+            "follow_command": "gotta logs",
             "detail": "appended 1 logs entry",
             "time_field": "session_recorded_at",
         },
@@ -127,10 +126,10 @@ def test_activity_events_round_trip(tmp_path: Path) -> None:
             "action": "append",
             "actor": "ws",
             "detail": "appended 1 logs entry",
-            "follow_command": "gotta read 'LOGS.md'",
-            "locator": "LOGS.md",
+            "follow_command": "gotta logs",
+            "locator": "logs:session",
             "plugin": "logs",
-            "preferred_name": "LOGS.md",
+            "preferred_name": "logs:session",
             "surface": "logs",
             "time_field": "session_recorded_at",
             "timestamp": "2026-03-14T10:00:00Z",
@@ -171,7 +170,6 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     topology.write_binding(
         fingerprint,
         bound_root,
@@ -267,15 +265,16 @@ def test_session_is_initialized_depends_on_state_env_only(tmp_path: Path) -> Non
     assert content.session_is_initialized(root) is True
 
 
-def test_session_surface_initialized_requires_want_surface(tmp_path: Path) -> None:
+def test_session_surface_initialized_requires_authored_charters(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     initialize_session(root)
-    for name in ("TODO.md", "LOGS.md", "GOAL.md", "OOPS.md"):
-        (root / name).write_text("", encoding="utf-8")
 
     assert content.session_surface_initialized(root) is False
 
     (root / "WANT.md").write_text("", encoding="utf-8")
+    assert content.session_surface_initialized(root) is False
+
+    (root / "GOAL.md").write_text("", encoding="utf-8")
     assert content.session_surface_initialized(root) is True
 
 

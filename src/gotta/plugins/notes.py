@@ -11,7 +11,6 @@ from gotta.notes import (
     append_actor_note,
     actor_notes_log_path,
     actor_notes_payload,
-    actor_notes_surface_path,
     render_actor_notes_markdown,
 )
 from gotta import session as session_plugin
@@ -82,8 +81,9 @@ def _summary_payload(work_dir, *, actor_name: str) -> dict[str, object]:
     return {
         "actor": actor_name,
         "label": _actor_label(actor_name, work_dir=work_dir),
-        "notes": str(actor_notes_surface_path(work_dir, actor_name)),
-        "notes_log": str(actor_notes_log_path(work_dir, actor_name)),
+        "state_path": str(actor_notes_log_path(work_dir, actor_name)),
+        "locator": f"notes:actor:{actor_name}",
+        "follow_command": f"gotta notes --actor {actor_name}",
         "status": str(status.get("status") or "pending"),
         "voice": str(status.get("voice") or "missing"),
         "notes_status": str(status.get("notes_status") or "empty"),
@@ -155,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             explicit_actor=getattr(args, "actor", None),
         )
         if scoped_actor:
+            session_plugin._record_note_check(work_dir, scoped_actor)
             status = session_plugin._actor_status_payload(work_dir, scoped_actor)
             payload = actor_notes_payload(
                 work_dir,
@@ -184,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         actor_payloads: dict[str, dict[str, object]] = {}
         entries: list[dict[str, object]] = []
         for actor_name in actor_ids:
+            session_plugin._record_note_check(work_dir, actor_name)
             status = session_plugin._actor_status_payload(work_dir, actor_name)
             actor_payloads[actor_name] = actor_notes_payload(
                 work_dir,
@@ -256,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         input_name="actor note",
     )
     append_actor_note(work_dir, actor_name, message=message, author=author_name)
+    session_plugin._reset_note_check_feedback(work_dir, actor_name)
     session_plugin._append_actor_event(
         work_dir,
         actor_name,
@@ -269,14 +272,11 @@ def main(argv: list[str] | None = None) -> int:
         f"noted: {message.splitlines()[0]}",
         author=author_name,
     )
-    session_plugin._sync_actor_projection_surfaces(work_dir, actor_name)
-    session_plugin._record_actor_projection_activity(
+    session_plugin._record_actor_surface_activity(
         work_dir,
         actor_name=actor_name,
         surface="notes",
         action="append",
-        log_path=actor_notes_log_path(work_dir, actor_name),
-        projection_path=actor_notes_surface_path(work_dir, actor_name),
         detail="appended actor note",
         actor=author_name,
     )

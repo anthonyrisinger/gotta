@@ -963,7 +963,6 @@ def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> No
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
 
     large_file = tmp_path / "large.txt"
     large_file.write_text(
@@ -1009,7 +1008,6 @@ def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
 
     sample = tmp_path / "sample.txt"
     sample.write_text("hello\n", encoding="utf-8")

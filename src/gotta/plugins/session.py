@@ -51,7 +51,6 @@ from gotta.leads import (
     snapshot_last_fetched_at,
     snapshot_locator,
 )
-from gotta.notes import actor_notes_ready
 from gotta.source import (
     best_visibility_metadata,
     classify_visibility_metadata,
@@ -155,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser(
         "scan",
         description=(
-            "Search projected text across the materialized session corpus without "
+            "Search materialized text across the session corpus without "
             "dropping to shell-native grep tools."
         ),
     )
@@ -249,7 +248,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=8,
         help="maximum items to show per overview/focus section",
     )
-    scan.add_argument("query", help="literal text or regex to search for in stored projections")
+    scan.add_argument(
+        "query",
+        help="literal text or regex to search for in stored materialized text",
+    )
     scan.add_argument("--plugin")
     scan.add_argument("--locator")
     scan.add_argument("--kind", choices=["discovery", "evidence"])
@@ -548,7 +550,6 @@ def cmd_init(args: argparse.Namespace) -> int:
             SESSION_ACTIVATION_ENV: "manual",
         },
     )
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     from gotta import session as sessionlib
 
     sessionlib.scaffold_session(current)
@@ -1225,11 +1226,7 @@ def _counts_as_source_coverage_gap(snapshot: ContentSnapshot) -> bool:
     return True
 
 
-LOCAL_TIMELINE_FILES = (
-    "WANT.md",
-    "GOAL.md",
-    "BRIEF.md",
-)
+LOCAL_TIMELINE_FILES = ("WANT.md", "GOAL.md")
 
 
 def _iso_utc_from_timestamp(value: float) -> str:
@@ -1257,13 +1254,7 @@ def _is_aggregate_source_snapshot(snapshot: ContentSnapshot) -> bool:
 
 
 def _meaningful_local_surface(path: Path) -> bool:
-    if not path.is_file():
-        return False
-    if path.name == "NOTES.md":
-        return actor_notes_ready(path.parents[2], path.parent.name)
-    if path.name != "NOTES.md":
-        return True
-    return False
+    return path.is_file()
 
 
 def _timeline_activity_roots(dirs) -> list[Path]:
@@ -1321,29 +1312,37 @@ def _local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list
                     ),
                 }
             )
-    candidates: list[tuple[str, Path, str, str]] = [
-        ("session", dirs.session_dir / relative, relative, f"gotta read {relative!r}")
-        for relative in LOCAL_TIMELINE_FILES
-    ]
-    grouped_root = sessionlib._group_session_root(dirs.session_dir)
-    if grouped_root != dirs.session_dir.resolve() or (grouped_root / "actors").is_dir():
-        for actor_root in _timeline_activity_roots(dirs):
-            resolved_root = actor_root.resolve()
-            if resolved_root == dirs.session_dir.resolve():
-                continue
-            if activity_log_path(resolved_root).is_file():
-                continue
-            sibling = resolved_root / "NOTES.md"
-            actor = resolved_root.name
-            locator = f"actor:{actor}:notes"
-            follow = f"gotta read 'NOTES.md' --actor {actor}"
-            candidates.append(("actor", sibling, locator, follow))
-    for plugin, path, locator, follow_command in candidates:
+    candidates: list[tuple[str, Path, str, str, str]] = []
+    for activity_root in _timeline_activity_roots(dirs):
+        resolved_root = activity_root.resolve()
+        actor = sessionlib.session_actor(resolved_root) if resolved_root.parent.name == "actors" else ""
+        for relative in LOCAL_TIMELINE_FILES:
+            surface = "want" if relative == "WANT.md" else "goal"
+            locator = (
+                f"{surface}:actor:{actor}"
+                if actor
+                else f"{surface}:session"
+            )
+            follow = (
+                f"gotta {surface} --actor {actor}"
+                if actor
+                else f"gotta {surface}"
+            )
+            candidates.append(
+                (
+                    "actor" if actor else "session",
+                    resolved_root / relative,
+                    locator,
+                    follow,
+                    locator,
+                )
+            )
+    for plugin, path, locator, follow_command, preferred_name in candidates:
         candidate_scope = str(path.parent.resolve())
         if (candidate_scope, locator) in seen_locators or not _meaningful_local_surface(path):
             continue
         timestamp = _iso_utc_from_timestamp(path.stat().st_mtime)
-        actor = path.parent.name if plugin == "actor" else _fallback_actor(dirs.session_dir)
+        actor = sessionlib.session_actor(path.parent) if plugin == "actor" else _fallback_actor(dirs.session_dir)
         events.append(
             {
                 "mode": "local",
@@ -1357,7 +1356,7 @@ def _local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list
                 "actor": actor,
                 "target_actor": "",
                 "locator": locator,
-                "preferred_name": path.name,
+                "preferred_name": preferred_name,
                 "checksum": "",
                 "artifactKind": "",
                 "content_locator": "",

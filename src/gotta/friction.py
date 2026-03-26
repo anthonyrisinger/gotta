@@ -8,8 +8,8 @@ from pathlib import Path
 
 from gotta.actor import session_actor, writer_role
 from gotta.compat import UTC, datetime
-from gotta.content import append_activity_event, current_actor, session_identity, write_text_atomic
-from gotta.projection import append_chunk, append_jsonl, read_jsonl_records
+from gotta.content import append_activity_event, current_actor, session_identity
+from gotta.projection import append_jsonl, read_jsonl_records
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,11 +50,6 @@ OOPS_CHANNEL = FrictionChannel(
 
 def channel_log_path(session_dir: Path, channel: FrictionChannel) -> Path:
     return session_dir / "state" / f"{channel.stem}.jsonl"
-
-
-def channel_surface_path(session_dir: Path, channel: FrictionChannel) -> Path:
-    return session_dir / f"{channel.title.upper()}.md"
-
 
 def channel_records(session_dir: Path, channel: FrictionChannel) -> list[dict[str, object]]:
     return read_jsonl_records(channel_log_path(session_dir, channel))
@@ -103,12 +98,13 @@ def render_channel_markdown(
         f"# {channel.title}",
         "",
         f"> Generated automatically from `state/{channel.stem}.jsonl`.",
-        f"> This is a human-readable projection; the structured `{channel.stem}` log is canonical.",
+        "> Rendered on demand from canonical state.",
+        f"> The structured `{channel.stem}` log is canonical.",
         "",
         f"Capture {channel.description} as it happens.",
         "",
         channel.canonical_line,
-        f"projection of that structured `{channel.stem}` log.",
+        f"rendering of that structured `{channel.stem}` log.",
         "",
         "Use this file for:",
         "",
@@ -131,33 +127,6 @@ def render_channel_markdown(
         for continuation in message_lines[1:]:
             lines.append(f"  {continuation}")
     return "\n".join(lines) + "\n"
-
-
-def render_channel_record_markdown(
-    record: dict[str, object],
-    channel: FrictionChannel,
-) -> str:
-    timestamp = str(record.get("timestamp") or "unknown-time")
-    message = str(record.get("message") or "").strip() or channel.default_message
-    qualifiers = [
-        str(record.get("severity") or "").strip(),
-        str(record.get("kind") or "").strip(),
-        str(record.get("surface") or "").strip(),
-    ]
-    tag = " ".join(part for part in qualifiers if part)
-    suffix = f" [{tag}]" if tag else ""
-    message_lines = message.splitlines() or [channel.default_message]
-    lines = [f"- `{timestamp}` {message_lines[0]}{suffix}"]
-    for continuation in message_lines[1:]:
-        lines.append(f"  {continuation}")
-    return "\n".join(lines) + "\n"
-
-
-def sync_channel_projection(session_dir: Path, channel: FrictionChannel) -> None:
-    write_text_atomic(
-        channel_surface_path(session_dir, channel),
-        render_channel_markdown(visible_channel_records(session_dir, channel), channel),
-    )
 
 
 def append_channel_record(
@@ -192,8 +161,12 @@ def append_channel_record(
         "channel": channel.stem,
     }
     log_path = channel_log_path(session_dir, channel)
-    surface_path = channel_surface_path(session_dir, channel)
     append_jsonl(log_path, payload)
+    actor_id = session_identity(session_dir) if session_dir.resolve().parent.name == "actors" else ""
+    locator = f"{channel.stem}:actor:{actor_id}" if actor_id else f"{channel.stem}:session"
+    follow_command = (
+        f"gotta {channel.stem} --actor {actor_id}" if actor_id else f"gotta {channel.stem}"
+    )
     append_activity_event(
         session_dir,
         {
@@ -201,17 +174,13 @@ def append_channel_record(
             "surface": channel.stem,
             "action": "append",
             "actor": record_actor,
-            "locator": str(log_path.relative_to(session_dir)),
-            "preferred_name": surface_path.name,
-            "follow_command": f"gotta read {surface_path.name!r}",
+            "locator": locator,
+            "preferred_name": locator,
+            "follow_command": follow_command,
             "detail": message,
             "time_field": "session_recorded_at",
         },
     )
-    if surface_path.exists():
-        append_chunk(surface_path, render_channel_record_markdown(payload, channel))
-    else:
-        sync_channel_projection(session_dir, channel)
     return payload
 
 
@@ -260,12 +229,6 @@ def channel_summary(records: list[dict[str, object]]) -> dict[str, object]:
 
 def oops_log_path(session_dir: Path) -> Path:
     return channel_log_path(session_dir, OOPS_CHANNEL)
-
-
-def oops_surface_path(session_dir: Path) -> Path:
-    return channel_surface_path(session_dir, OOPS_CHANNEL)
-
-
 def oops_records(session_dir: Path) -> list[dict[str, object]]:
     return channel_records(session_dir, OOPS_CHANNEL)
 
@@ -289,12 +252,6 @@ def filtered_oops_records(
 
 def render_oops_markdown(records: list[dict[str, object]]) -> str:
     return render_channel_markdown(records, OOPS_CHANNEL)
-
-
-def sync_oops_projection(session_dir: Path) -> None:
-    sync_channel_projection(session_dir, OOPS_CHANNEL)
-
-
 def append_oops_record(
     session_dir: Path,
     *,

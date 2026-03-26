@@ -19,7 +19,6 @@ from gotta.helptext import format_long_help, is_long_help_request
 from gotta.friction import append_oops_record
 from gotta.notes import (
     actor_notes_log_path,
-    actor_notes_surface_path,
     append_actor_note,
 )
 from gotta.actor import (
@@ -88,7 +87,6 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
     actor_dir = actor_session_root(work_root, actor_name)
     actor_want = _actor_want_path(work_root, actor_name)
     actor_goal = _actor_goal_path(work_root, actor_name)
-    notes_file = session_plugin.actor_notes_surface_path(work_root, actor_name)
     notes_log = actor_notes_log_path(work_root, actor_name)
     label = _actor_label(actor_name, work_dir=work_root)
     want_text = actor_want.read_text(encoding="utf-8").strip()
@@ -115,10 +113,10 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
 
         - actor-local WANT present before launch: `{actor_want}`
         - actor-local GOAL present before launch: `{actor_goal}`
-        - actor-local TODO projection: `{actor_dir / 'TODO.md'}`
-        - notes projection: `{notes_file}`
-        - actor-local procedural trace: `{actor_dir / 'LOGS.md'}`
-        - actor-local friction log: `{actor_dir / 'OOPS.md'}`
+        - actor-local live checklist: `gotta todo`
+        - actor-local notes surface: `gotta notes`
+        - actor-local procedural trace: `gotta logs`
+        - actor-local friction surface: `gotta oops`
 
         Canonical actor mutation state:
 
@@ -162,7 +160,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - do not start with shell traversal, `gh`, `rg`, `jq`, ad hoc Python, or other side channels; exhaust native `gotta` surfaces first
         - if no native path exists, disclose that gap in a short note instead of silently routing around it through shell traversal
         - treat actor-local WANT.md and GOAL.md as operator-authored live surfaces, not hidden templates that need to be rediscovered
-        - treat actor-local WANT/GOAL/TODO/LOGS/OOPS plus the shared evidence web as the live truth surfaces
+        - treat actor-local WANT.md and GOAL.md plus the live `gotta todo|notes|logs|oops` surfaces and the shared evidence web as the live truth surfaces
         - disclose any non-native move as a native-coverage gap instead of hiding it
         - materialized evidence becomes usable immediately through manifest, timeline, leads, and graph even before notes catch up
         - append an initial short heartbeat note as soon as the actor runtime is alive, even before the first strong anchor
@@ -171,6 +169,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - if you materially expanded the evidence web since your last note, append a new short note before requesting completion or sign-off
         - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final short note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
         - session-rooted `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
+        - if session-rooted `gotta ...` commands warn that the supervisor has checked your notes repeatedly, treat that as live pulse feedback and answer it with one short note if real progress exists
         - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
         - append running notes with `gotta notes append --stdin`; add `--actor {actor_name}` only when you are intentionally targeting this actor from another bound root
@@ -189,11 +188,9 @@ def _actor_runtime_env(work_root: Path, actor_name: str) -> dict[str, str]:
     env[ACTOR_ID_ENV] = actor_name
     env[ACTOR_LABEL_ENV] = _actor_label(actor_name, work_dir=work_root)
     env["GOTTA_ACTOR_DIR"] = str(actor_dir)
-    env["GOTTA_ACTOR_NOTES_PATH"] = str(session_plugin.actor_notes_surface_path(work_root, actor_name))
     env["GOTTA_ACTOR_NOTES_LOG_PATH"] = str(actor_notes_log_path(work_root, actor_name))
     env[ACTOR_SPEAKER_ENV] = actor_name
     repo = env.get(SESSION_REPO_ENV, "").strip()
-    env["PATH"] = f"{actor_dir / 'bin'}:{env.get('PATH', '')}"
     env.pop("GOTTA_CONTEXT_ID", None)
     env.pop("GOTTA_CONTEXT_SOURCE", None)
     env.pop("GOTTA_SESSION_ACTIVATION", None)
@@ -221,7 +218,6 @@ def _mark_actor_runtime_active(work_root: Path, actor_name: str) -> None:
                 "heartbeat_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
         )
-        session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
         return
     _write_actor_state(
         work_root,
@@ -236,7 +232,6 @@ def _mark_actor_runtime_active(work_root: Path, actor_name: str) -> None:
             "exit_code": None,
         },
     )
-    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
 
 
 def _actor_action_is_authoritative(actor_name: str) -> bool:
@@ -321,6 +316,7 @@ def _apply_feedback_directive(
     )
     if surface == "notes":
         append_actor_note(actor_root, actor_name, message=message, author=rendered_author)
+        session_plugin._reset_note_check_feedback(actor_root, actor_name)
         session_plugin._append_actor_event(
             actor_root,
             actor_name,
@@ -334,14 +330,11 @@ def _apply_feedback_directive(
             f"noted: {first_line}",
             author=rendered_author,
         )
-        session_plugin._sync_actor_projection_surfaces(actor_root, actor_name)
-        session_plugin._record_actor_projection_activity(
+        session_plugin._record_actor_surface_activity(
             actor_root,
             actor_name=actor_name,
             surface="notes",
             action="append",
-            log_path=actor_notes_log_path(actor_root, actor_name),
-            projection_path=actor_notes_surface_path(actor_root, actor_name),
             detail="appended actor note",
             actor=rendered_author,
         )
@@ -463,7 +456,6 @@ def _finalize_actor_runtime_exit(
             work_root, actor_name, f"{final_status.replace('_', ' ')} and exited"
         )
     session_plugin._sync_actor_todo_state(work_root)
-    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
     return int(returncode)
 
 
@@ -600,6 +592,11 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
         last_note_summary = str(state.get("last_note_summary") or "").strip()
         if last_note_at and last_note_summary:
             print(f"  recent_note: {last_note_at} {last_note_summary}")
+        note_checks = int(state.get("note_checks_since_update") or 0)
+        last_note_check_by = str(state.get("last_note_check_by") or "").strip()
+        if note_checks > 0:
+            suffix = f" by {last_note_check_by}" if last_note_check_by else ""
+            print(f"  note_reads_since_update: {note_checks}{suffix}")
         last_activity_at = str(state.get("last_activity_at") or "").strip()
         last_activity_summary = str(state.get("last_activity_summary") or "").strip()
         if last_activity_at and last_activity_summary:
@@ -629,7 +626,6 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
 def _sync_actor_outputs(work_root: Path, actor_name: str, *, sync_todo: bool = False) -> None:
     if sync_todo:
         session_plugin._sync_actor_todo_state(work_root)
-    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
 
 
 def _record_requested_disposition(
@@ -1018,7 +1014,6 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
     session_plugin._append_actor_event(work_root, actor_name, event="starting", detail=str(goal_path))
     session_plugin._actor_log_line(work_root, actor_name, f"starting with {model}")
     session_plugin._sync_actor_todo_state(work_root)
-    session_plugin._sync_actor_projection_surfaces(work_root, actor_name)
     _record_launcher_heartbeat(work_root, actor_name)
     print(
         f"launcher pulse landed for {actor_name}; the launched background runtime already is "

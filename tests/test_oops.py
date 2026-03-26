@@ -59,15 +59,6 @@ def _run_oops_subprocess(
         kwargs["input"] = stdin_text
     return subprocess.run(command, **kwargs)
 
-
-def _projection_entry_count(path: Path) -> int:
-    return sum(
-        1
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.startswith("- `")
-    )
-
-
 def test_oops_help_all_is_top_level(capsys) -> None:
     assert oops.main(["--help-all"]) == 0
     output = capsys.readouterr().out
@@ -105,11 +96,10 @@ def test_oops_is_session_rooted_and_canonical(tmp_path: Path, capsys) -> None:
     assert payload["kind_counts"]["routing"] == 1
     assert payload["surface_counts"]["read"] == 1
     assert (root / "state" / "oops.jsonl").exists()
-    assert "Need clearer next step" in (root / "OOPS.md").read_text(encoding="utf-8")
     activity = content.activity_events(root)
-    assert activity[-1]["locator"] == "state/oops.jsonl"
-    assert activity[-1]["preferred_name"] == "OOPS.md"
-    assert activity[-1]["follow_command"] == "gotta read 'OOPS.md'"
+    assert activity[-1]["locator"] == "oops:session"
+    assert activity[-1]["preferred_name"] == "oops:session"
+    assert activity[-1]["follow_command"] == "gotta oops"
 
 
 def test_oops_append_supports_from_file(tmp_path: Path, capsys) -> None:
@@ -143,7 +133,6 @@ def test_oops_append_supports_from_file(tmp_path: Path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["entry_count"] == 1
     assert "Literal `gotta todo append` friction" in payload["entries"][0]["message"]
-    assert "with multiline context." in (root / "OOPS.md").read_text(encoding="utf-8")
 
 
 def test_oops_append_resolves_from_file_relative_to_session(
@@ -401,7 +390,7 @@ def test_oops_read_defaults_to_all_bound_actors_and_actor_filters_narrow(
     assert payload["entry_count"] == 2
     assert payload["shown_count"] == 2
     assert set(payload["actors"]) == {codex, claude}
-    assert set(payload["oops_logs"]) == {codex, claude}
+    assert set(payload["state_paths"]) == {codex, claude}
 
     assert {entry["actor"] for entry in payload["entries"]} == {codex, claude}
 
@@ -469,21 +458,9 @@ def test_oops_read_on_actor_root_defaults_to_session_wide(
     assert listed["shown_count"] == 2
 
 
-def test_oops_append_uses_projection_append_hot_path_when_surface_exists(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_oops_append_writes_only_canonical_state(tmp_path: Path) -> None:
     root = tmp_path / "session-root"
     initialize_session(root)
-    friction.sync_oops_projection(root)
-
-    monkeypatch.setattr(
-        friction,
-        "sync_channel_projection",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("existing oops surface should use append hot path")
-        ),
-    )
 
     friction.append_oops_record(
         root,
@@ -492,15 +469,11 @@ def test_oops_append_uses_projection_append_hot_path_when_surface_exists(
         kind="routing",
     )
 
-    assert "append-hot-path entry [medium routing read]" in (
-        root / "OOPS.md"
-    ).read_text(encoding="utf-8")
+    assert friction.oops_records(root)[0]["message"] == "append-hot-path entry"
 
-
-def test_oops_projection_stays_in_sync_under_concurrent_appends(tmp_path: Path) -> None:
+def test_oops_concurrent_appends_only_touch_canonical_state(tmp_path: Path) -> None:
     root = tmp_path / "session-root"
     initialize_session(root)
-    friction.sync_oops_projection(root)
 
     total_threads = 4
     entries_per_thread = 25
@@ -529,14 +502,14 @@ def test_oops_projection_stays_in_sync_under_concurrent_appends(tmp_path: Path) 
         assert not thread.is_alive()
 
     records = friction.oops_records(root)
-    surface_path = root / "OOPS.md"
-    oops_text = surface_path.read_text(encoding="utf-8")
 
     assert len(records) == total_threads * entries_per_thread
-    assert _projection_entry_count(surface_path) == len(records)
     for thread_index in range(total_threads):
-        assert f"t{thread_index}-0" in oops_text
-        assert f"t{thread_index}-{entries_per_thread - 1}" in oops_text
+        assert any(record["message"] == f"t{thread_index}-0" for record in records)
+        assert any(
+            record["message"] == f"t{thread_index}-{entries_per_thread - 1}"
+            for record in records
+        )
 
 
 def test_oops_extend_supports_multiple_entries(tmp_path: Path, capsys) -> None:

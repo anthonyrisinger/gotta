@@ -109,7 +109,6 @@ def ensure_actor_session(
         ),
         create=True,
     )
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     state = load_state_env_at_root(dirs.session_dir)
     write_session_state(
         dirs,

@@ -11,6 +11,7 @@ from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta import builtin
 from gotta import content
 from gotta import main as cli
+from gotta.notes import append_actor_note
 from gotta import session as sessionlib
 from gotta.capture import Capture
 from gotta.plugins import github
@@ -98,9 +99,6 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     assert not (session_root / "session").exists()
     assert (session_root / "WANT.md").is_file()
     assert (session_root / "GOAL.md").is_file()
-    assert (session_root / "TODO.md").is_file()
-    assert (session_root / "LOGS.md").is_file()
-    assert (session_root / "OOPS.md").is_file()
     assert "created a new gotta session" in first_err
     assert "this context is now bound to that session root" in first_err
     assert "same-context fresh-process commands should resolve here automatically" in first_err
@@ -626,9 +624,6 @@ def test_main_session_init_creates_scaffolded_bound_session(
     assert capsys.readouterr().out.strip() == str(session_root.resolve())
     assert (session_root / "WANT.md").is_file()
     assert (session_root / "GOAL.md").is_file()
-    assert (session_root / "TODO.md").is_file()
-    assert (session_root / "LOGS.md").is_file()
-    assert (session_root / "OOPS.md").is_file()
 
 
 def test_main_preserves_read_option_ordering(
@@ -727,7 +722,6 @@ def test_main_session_show_and_doctor_require_an_existing_session(
     assert show_output.strip() == str(session_root.resolve())
     assert (session_root / "state" / "env").exists()
     assert (session_root / "content").is_dir()
-    assert (session_root / "TODO.md").is_file()
 
     assert cli.main(["session", "doctor"]) == 0
     doctor_output = json.loads(capsys.readouterr().out)
@@ -859,9 +853,6 @@ def test_main_failed_session_init_seed_does_not_leave_half_session(
     assert "unrecognized arguments: legacy mission" in err
     assert (session_root / "WANT.md").is_file()
     assert (session_root / "GOAL.md").is_file()
-    assert (session_root / "TODO.md").is_file()
-    assert (session_root / "LOGS.md").is_file()
-    assert (session_root / "OOPS.md").is_file()
     (session_root / "intent.txt").write_text("real intent\n", encoding="utf-8")
 
     assert cli.main(["want", "--from-file", "intent.txt"]) == 0
@@ -1175,6 +1166,112 @@ def test_main_does_not_warn_actor_for_nonfailed_pending_disposition(
 
     assert seen == [["logs"]]
     assert "Supervisor requested `failed`" not in err
+
+
+def test_main_warns_actor_when_supervisor_keeps_checking_notes_since_last_note(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    seen: list[list[str]] = []
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "actor-root"]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Scout"]) == 0
+    capsys.readouterr()
+    scout = _actor_id(registry / "actor-root", "scout")
+    actor_root = registry / "actor-root" / "actors" / scout
+    append_actor_note(
+        registry / "actor-root",
+        scout,
+        message="alive: first anchor",
+        author=scout,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    def fake_gotta_main(argv: list[str] | None = None) -> int:
+        seen.append(list(argv or []))
+        return 0
+
+    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    actor_state_path = actor_root / "state" / "actor.json"
+    actor_state_path.write_text(
+        json.dumps(
+            {
+                "actor": scout,
+                "label": "Scout",
+                "status": "active",
+                "note_checks_since_update": 3,
+                "last_note_check_at": "2026-03-21T00:05:00Z",
+                "last_note_check_by": "operator-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for key, value in content.load_state_env_at_root(actor_root).items():
+        monkeypatch.setenv(key, value)
+
+    assert cli.main(["logs"]) == 0
+    err = capsys.readouterr().err
+
+    assert seen == [["logs"]]
+    assert "Supervisor has checked your notes 3 times since your last note." in err
+    assert "If you have real progress, land one short note now." in err
+
+
+def test_main_stop_warning_suppresses_note_check_pulse(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    seen: list[list[str]] = []
+    registry = tmp_path / "session"
+    _set_default_session_root(monkeypatch, registry)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["session", "bind", "actor-root"]) == 0
+    capsys.readouterr()
+    assert cli.main(["actor", "bind", "Scout"]) == 0
+    capsys.readouterr()
+    scout = _actor_id(registry / "actor-root", "scout")
+    actor_root = registry / "actor-root" / "actors" / scout
+    append_actor_note(
+        registry / "actor-root",
+        scout,
+        message="alive: first anchor",
+        author=scout,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    def fake_gotta_main(argv: list[str] | None = None) -> int:
+        seen.append(list(argv or []))
+        return 0
+
+    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    actor_state_path = actor_root / "state" / "actor.json"
+    actor_state_path.write_text(
+        json.dumps(
+            {
+                "actor": scout,
+                "label": "Scout",
+                "status": "active",
+                "requested_status": "failed",
+                "requested_summary": "operator chose to stop this actor run",
+                "note_checks_since_update": 2,
+                "last_note_check_at": "2026-03-21T00:05:00Z",
+                "last_note_check_by": "operator-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for key, value in content.load_state_env_at_root(actor_root).items():
+        monkeypatch.setenv(key, value)
+
+    assert cli.main(["logs"]) == 0
+    err = capsys.readouterr().err
+
+    assert seen == [["logs"]]
+    assert "Supervisor requested `failed` (operator chose to stop this actor run)." in err
+    assert "Supervisor has checked your notes" not in err
 
 
 def test_main_does_not_warn_nonactor_session(

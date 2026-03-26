@@ -88,9 +88,9 @@ The normal working loop expands and compresses repeatedly:
 4. record friction and continuity gaps in `oops`
 5. refine the next retrieval wave from durable state instead of memory
 
-`state/oops.jsonl` is the canonical friction log, projected into `OOPS.md`. It
-captures operator-visible seams: misleading contracts, interrupted
-continuations, coverage gaps, and workflow friction worth fixing.
+`state/oops.jsonl` is the canonical friction log, and `gotta oops` is the live
+readable surface. It captures operator-visible seams: misleading contracts,
+interrupted continuations, coverage gaps, and workflow friction worth fixing.
 
 ## Installation
 
@@ -218,12 +218,7 @@ Each actor root then owns its local working surfaces:
 actors/<actor-id>/
   WANT.md
   GOAL.md
-  TODO.md
-  LOGS.md
-  OOPS.md
-  NOTES.md
   state/
-  bin/
   content -> ../../content
 ```
 
@@ -403,22 +398,21 @@ sessions/retry-review/
   actors/<actor-id>/
     WANT.md
     GOAL.md
-    TODO.md
-    LOGS.md
-    OOPS.md
-    NOTES.md
     state/
-    bin/
     content -> ../../content
 ```
 
 Inside this topology:
 
 - `WANT.md` and `GOAL.md` are actor-local intentional rewrites
-- `state/todo.jsonl` is actor-local truth and projects into `TODO.md`
-- `state/logs.jsonl` is actor-local procedural/system trace and projects into `LOGS.md`
-- `state/oops.jsonl` is actor-local truth and projects into `OOPS.md`
-- `state/notes.jsonl` is actor-authored narration truth and projects into `NOTES.md`
+- `state/todo.jsonl` is actor-local checklist truth and `gotta todo` is the
+  live readable/mutable surface
+- `state/logs.jsonl` is actor-local procedural/system trace and `gotta logs`
+  is the live readable trace surface
+- `state/oops.jsonl` is actor-local friction truth and `gotta oops` is the
+  live readable friction surface
+- `state/notes.jsonl` is actor-authored narration truth and `gotta notes` is
+  the live readable narration surface
 - `sessions/<session-id>/content/` is shared across all actors bound into that
   session
 
@@ -431,7 +425,7 @@ This split is deliberate:
 
 - narrative framing stays editable
 - operational truth stays append-only and durable
-- readable projections refresh from canonical state
+- the CLI renders readable output from canonical state on demand
 
 `gotta session init` scaffolds the target session and adopts it for the current
 runtime context. Future commands in that same context should resolve there
@@ -509,7 +503,8 @@ Important invariants:
 - actor-local `WANT.md` and `GOAL.md` are seeded placeholders that must be
   rewritten before launch with `gotta want --actor <actor> ...` and
   `gotta goal --actor <actor> ...`
-- actor-local `TODO.md` is seeded automatically and can be extended
+- actor-local checklist state is seeded automatically and surfaced through
+  `gotta todo`
 - actor notes are the canonical actor-authored narration surface
 - short one-line notes are valid; polished synthesis notes are optional
 - actor evidence often lands in the shared manifest, timeline, and graph before
@@ -548,10 +543,10 @@ These terms appear throughout `gotta` and its documentation:
   extended, handed off, or compacted and rehydrated.
 
 - **actor** — a named participant in a session. Each actor has its own charter
-  surfaces (`WANT.md`, `GOAL.md`), checklist/state projections (`TODO.md`,
-  `LOGS.md`, `OOPS.md`, `NOTES.md`), and lifecycle. `NOTES.md` is actor-authored
-  narration, `LOGS.md` is procedural/system trace, and `OOPS.md` is friction.
-  Actors can be human operators, AI agents, or automated workflows.
+  files (`WANT.md`, `GOAL.md`), canonical state, and lifecycle. `gotta notes`
+  is actor-authored narration, `gotta logs` is procedural/system trace,
+  `gotta oops` is friction, and `gotta todo` is the checklist surface. Actors
+  can be human operators, AI agents, or automated workflows.
 
 - **fingerprint** — the context identity that binds the current terminal,
   thread, or environment to a session and actor root. Fingerprints are derived
@@ -584,12 +579,12 @@ These terms appear throughout `gotta` and its documentation:
 
 - **friction** — operator-visible misalignment captured in `oops`. Not bug
   tracking. Friction records seams: misleading contracts, continuity gaps,
-  workflow detours. The canonical log is `state/oops.jsonl`; `OOPS.md` is the
-  readable projection.
+  workflow detours. The canonical log is `state/oops.jsonl`; `gotta oops` is
+  the readable surface.
 
-- **projection** — a readable Markdown file derived from canonical JSONL state.
-  `TODO.md`, `LOGS.md`, `OOPS.md`, and `NOTES.md` are projections.
-  Append-only JSONL is truth; Markdown is the human surface.
+- **projection** — an on-demand terminal render from canonical state or a
+  provider/content transform. Projections are no longer seeded as live root
+  files; the CLI is the live readable surface.
 
 - **rehydration** — recovering prior working state from durable session
   artifacts after context has been compressed. The synthesis surfaces make

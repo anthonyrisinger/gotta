@@ -19,7 +19,6 @@ from gotta.actor import SESSION_ACTOR_ENV
 from gotta.notes import actor_notes_records, append_actor_note, render_actor_notes_markdown
 from gotta import session as sessionlib
 from gotta import todo as session_todo
-from gotta.notes import actor_notes_surface_path
 from gotta.plugins import goal
 from gotta.plugins import logs
 from gotta.plugins import notes
@@ -56,7 +55,6 @@ def make_dirs(root: Path) -> content.ResolvedDirs:
 def initialize_session(root: Path) -> content.ResolvedDirs:
     dirs = make_dirs(root)
     content.write_state_env(dirs)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     return dirs
 
 
@@ -93,7 +91,7 @@ def test_session_commands_require_bootstrap(
     assert "start or bind a session first" in capsys.readouterr().err
 
 
-def test_session_init_bootstraps_state_env_and_bin(
+def test_session_init_bootstraps_state_env(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -104,7 +102,6 @@ def test_session_init_bootstraps_state_env_and_bin(
     assert capsys.readouterr().out.strip() == str(root.resolve())
     assert (root / "state" / "env").exists()
     assert (root / "state").is_dir()
-    assert (root / "bin").is_dir()
 
 
 def test_session_init_scaffolds_surface_and_drops_ephemeral_context_state(
@@ -127,7 +124,7 @@ def test_session_init_scaffolds_surface_and_drops_ephemeral_context_state(
     assert content.CONTEXT_ID_ENV not in state
     assert content.CONTEXT_SOURCE_ENV not in state
     assert state[content.SESSION_INITIALIZED_ENV] == "1"
-    for name in ("WANT.md", "GOAL.md", "TODO.md", "LOGS.md", "OOPS.md"):
+    for name in ("WANT.md", "GOAL.md"):
         assert (root / name).exists()
     assert "_empty_" in (root / "WANT.md").read_text(encoding="utf-8")
     assert "Mission seed" not in (root / "WANT.md").read_text(encoding="utf-8")
@@ -252,12 +249,12 @@ def test_actor_bind_binds_grouped_actor_surfaces_without_launching(
     assert f"bound {codex} (Codex) session" in output
     assert f"gotta want --actor {claude} --stdin" in output
     assert f"gotta goal --actor {claude} --stdin" in output
+    assert "minimal actor-local canonical state" in output
+    assert "actor-local notes/logs/oops surfaces" not in output
     for actor_name in (claude, codex):
         actor_root = sessionlib._actor_session_dir(root, actor_name)
         assert actor_root.exists()
-        assert (root / "bin" / actor_name).is_file()
-        assert (actor_root / "README.md").is_file()
-        assert (actor_root / "TODO.md").is_file()
+        assert (actor_root / "state" / "todo.jsonl").is_file()
         assert sessionlib._read_actor_state(root, actor_name)["status"] == "bound"
 
 
@@ -457,7 +454,13 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
     assert "ordinary stderr" in captured.err
     assert "@@gotta" not in captured.out
     assert "@@gotta" not in captured.err
-    assert actor_notes_surface_path(actor_root, claude).read_text(encoding="utf-8")
+    rendered_notes = render_actor_notes_markdown(
+        actor_root,
+        claude,
+        label=sessionlib._actor_label(claude, work_dir=actor_root),
+        status_payload=sessionlib._actor_status_payload(actor_root, claude),
+    )
+    assert "first durable heartbeat note" in rendered_notes
     assert actor_notes_records(actor_root, claude)[-1]["message"] == "first durable heartbeat note"
     assert actor_notes_records(actor_root, claude)[-1]["author"] == claude
     assert (
@@ -580,7 +583,6 @@ def test_actor_status_discovers_initialized_fingerprint_actors_missing_from_meta
             content.SESSION_ACTOR_ENV: discovered,
         },
     )
-    actor_root.joinpath("bin").mkdir(parents=True, exist_ok=True)
     sessionlib.scaffold_session(actor_root)
     (root / "session.json").write_text(
         json.dumps({"session_id": root.name, "members": []}) + "\n",
@@ -1080,7 +1082,12 @@ def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
     assert payload["status"] == "closing"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "failed"
-    notes_text = actor_notes_surface_path(root, claude).read_text(encoding="utf-8")
+    notes_text = render_actor_notes_markdown(
+        root,
+        claude,
+        label=sessionlib._actor_label(claude, work_dir=root),
+        status_payload=payload,
+    )
     assert "Supervisor requested `failed` (operator stopped this run)." in notes_text
     assert "pending_disposition: failed: operator stopped this run" in notes_text
 
@@ -1117,7 +1124,12 @@ def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
     assert payload["requested_status"] == "signed_off"
     assert payload["requested_mode"] == "stop"
     assert payload["requested_label"] == "stop"
-    notes_text = actor_notes_surface_path(root, claude).read_text(encoding="utf-8")
+    notes_text = render_actor_notes_markdown(
+        root,
+        claude,
+        label=sessionlib._actor_label(claude, work_dir=root),
+        status_payload=payload,
+    )
     assert (
         "Supervisor requested a graceful stop (finish the current wave and close out)."
         in notes_text
@@ -1142,43 +1154,25 @@ def test_notes_projection_skips_supervisor_warning_for_nonfailed_pending_request
             "requested_summary": "looked done from the operator side",
         },
     )
-    sessionlib._sync_actor_projection_surfaces(root, claude)
-
-    notes_text = actor_notes_surface_path(root, claude).read_text(encoding="utf-8")
+    notes_text = render_actor_notes_markdown(
+        root,
+        claude,
+        label=sessionlib._actor_label(claude, work_dir=root),
+        status_payload=sessionlib._actor_status_payload(root, claude),
+    )
     assert "Supervisor requested `failed`" not in notes_text
     assert "pending_disposition: signed off: looked done from the operator side" in notes_text
 
 
-def test_actor_bind_preserves_preexisting_actor_local_log_file(
+def test_actor_bind_canonical_root_has_no_projection_files(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
-    actor_root = sessionlib._actor_session_dir(root, "claude")
-    actor_root.mkdir(parents=True, exist_ok=True)
-    (actor_root / "LOGS.md").write_text("stale log placeholder\n", encoding="utf-8")
-    actor_state_dir = actor_root / "state"
-    actor_state_dir.mkdir(parents=True, exist_ok=True)
-    (actor_state_dir / "actor.json").write_text(
-        json.dumps(
-            {
-                "actor": "claude",
-                "label": "Claude",
-                "status": "signed_off",
-                "signoff_summary": "stale orphaned actor state",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (actor_root / "NOTES.md").write_text("# Claude Notes\n\nstale\n", encoding="utf-8")
-
     assert actor.main(["bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
 
-    assert (actor_root / "LOGS.md").is_file()
-    assert "stale log placeholder" in (actor_root / "LOGS.md").read_text(encoding="utf-8")
     assert sessionlib._actor_status_payload(root, _actor_id(root, "claude"))["status"] == "bound"
 
 
@@ -1594,6 +1588,135 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
     assert "Land a short note now" in payload["next_step"]
 
 
+def test_foreign_notes_show_records_checks_and_append_resets_feedback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Scout")
+    scout = _actor_id(root, "scout")
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, "operator-1")
+
+    assert notes.main(["--session", str(root), "--actor", scout]) == 0
+    capsys.readouterr()
+
+    status = sessionlib._actor_status_payload(root, scout)
+    assert status["note_checks_since_update"] == 1
+    assert status["last_note_check_at"]
+    assert status["last_note_check_by"] == "operator-1"
+
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, scout)
+    assert notes.main(["append", "alive: first anchor", "--session", str(root), "--actor", scout]) == 0
+    capsys.readouterr()
+
+    reset_status = sessionlib._actor_status_payload(root, scout)
+    assert reset_status["note_checks_since_update"] == 0
+    assert reset_status["last_note_check_at"] == ""
+    assert reset_status["last_note_check_by"] == ""
+
+
+def test_explicit_actor_notes_show_counts_cold_start_supervisor_read(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Scout")
+    scout = _actor_id(root, "scout")
+    monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
+    monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
+
+    assert notes.main(["--session", str(root), "--actor", scout]) == 0
+    capsys.readouterr()
+
+    status = sessionlib._actor_status_payload(root, scout)
+    assert status["note_checks_since_update"] == 1
+    assert status["last_note_check_at"]
+    assert status["last_note_check_by"]
+    assert status["last_note_check_by"] != scout
+
+
+def test_notes_show_does_not_count_self_reads(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Scout")
+    scout = _actor_id(root, "scout")
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, scout)
+
+    assert notes.main(["--session", str(root), "--actor", scout]) == 0
+    capsys.readouterr()
+
+    status = sessionlib._actor_status_payload(root, scout)
+    assert status["note_checks_since_update"] == 0
+    assert status["last_note_check_at"] == ""
+    assert status["last_note_check_by"] == ""
+
+
+def test_session_wide_notes_show_counts_each_foreign_actor_once(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Scout", "Beacon")
+    scout = _actor_id(root, "scout")
+    beacon = _actor_id(root, "beacon")
+    monkeypatch.setenv(ACTOR_SPEAKER_ENV, "operator-1")
+
+    assert notes.main(["--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["actor_count"] == 2
+    assert sessionlib._actor_status_payload(root, scout)["note_checks_since_update"] == 1
+    assert sessionlib._actor_status_payload(root, beacon)["note_checks_since_update"] == 1
+
+
+def test_actor_status_preserves_note_read_pulse_when_low_signal_progress_is_active(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Scout")
+    scout = _actor_id(root, "scout")
+    stale_started = (
+        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=120)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale_heartbeat = (
+        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=5)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    append_actor_note(
+        root,
+        scout,
+        message="alive: tracing importer continuity",
+        author=scout,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+    sessionlib._write_actor_state(
+        root,
+        scout,
+        {
+            "status": "active",
+            "pid": os.getpid(),
+            "started_at": stale_started,
+            "heartbeat_at": stale_heartbeat,
+            "note_checks_since_update": 2,
+            "last_note_check_at": "2026-03-21T00:05:00Z",
+            "last_note_check_by": "operator-1",
+        },
+    )
+
+    payload = sessionlib._actor_status_payload(root, scout)
+
+    assert "Supervisor has checked this actor's notes 2 times since the last note." in payload["next_step"]
+    assert "low-signal run" in payload["next_step"]
+
+
 def test_actor_notes_projection_describes_notes_as_canonical_narration(
     tmp_path: Path, capsys
 ) -> None:
@@ -1612,7 +1735,7 @@ def test_actor_notes_projection_describes_notes_as_canonical_narration(
 
     assert "canonical actor-authored narration surface" in rendered
     assert "short one-line notes are valid" in rendered
-    assert "`LOGS.md` remains procedural/system trace" in rendered
+    assert "`gotta logs` remains procedural/system trace" in rendered
 
 
 def test_logs_projection_describes_logs_as_procedural_trace(tmp_path: Path, capsys) -> None:
@@ -4273,9 +4396,9 @@ def test_session_timeline_acquired_includes_native_local_activity(
             "plugin": "logs",
             "surface": "logs",
             "action": "append",
-            "locator": "LOGS.md",
-            "preferred_name": "LOGS.md",
-            "follow_command": "gotta read 'LOGS.md'",
+            "locator": "logs:session",
+            "preferred_name": "logs:session",
+            "follow_command": "gotta logs",
             "detail": "appended 1 logs entry",
             "time_field": "session_recorded_at",
         },
@@ -4286,7 +4409,7 @@ def test_session_timeline_acquired_includes_native_local_activity(
     assert payload["activityPath"].endswith("state/activity.jsonl")
     assert payload["eventCount"] == 2
     assert payload["events"][0]["locator"] == "jira:PROJ-1"
-    assert payload["events"][1]["locator"] == "LOGS.md"
+    assert payload["events"][1]["locator"] == "logs:session"
     assert payload["events"][1]["event_kind"] == "local"
     assert payload["events"][1]["fetched_at"] == "2026-03-11T00:00:01Z"
 
@@ -4311,9 +4434,9 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
             "surface": "notes",
             "action": "append",
             "actor": claude,
-            "locator": "NOTES.md",
-            "preferred_name": "NOTES.md",
-            "follow_command": "gotta read 'NOTES.md'",
+            "locator": f"notes:actor:{claude}",
+            "preferred_name": f"notes:actor:{claude}",
+            "follow_command": f"gotta notes --actor {claude}",
             "detail": "claude durable note",
             "time_field": "session_recorded_at",
         },
@@ -4326,9 +4449,9 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
             "surface": "logs",
             "action": "append",
             "actor": codex,
-            "locator": "LOGS.md",
-            "preferred_name": "LOGS.md",
-            "follow_command": "gotta read 'LOGS.md'",
+            "locator": f"logs:actor:{codex}",
+            "preferred_name": f"logs:actor:{codex}",
+            "follow_command": f"gotta logs --actor {codex}",
             "detail": "codex execution pulse",
             "time_field": "session_recorded_at",
         },
@@ -4341,14 +4464,13 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
             "surface": "oops",
             "action": "append",
             "actor": codex,
-            "locator": "state/oops.jsonl",
-            "preferred_name": "OOPS.md",
-            "follow_command": "gotta read 'OOPS.md'",
+            "locator": f"oops:actor:{codex}",
+            "preferred_name": f"oops:actor:{codex}",
+            "follow_command": f"gotta oops --actor {codex}",
             "detail": "codex noted friction",
             "time_field": "session_recorded_at",
         },
     )
-    codex_root.joinpath("NOTES.md").write_text("# Notes\n\nlate snapshot\n", encoding="utf-8")
 
     assert (
         session.main(["timeline", "--session", str(claude_root), "--all", "--output", "json"])
@@ -4360,8 +4482,11 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
     assert {Path(path).parent.parent.name for path in payload["activityPaths"]} == {claude, codex}
     local_events = [event for event in payload["events"] if event["mode"] == "local"]
     assert [event["actor"] for event in local_events[:3]] == [claude, codex, codex]
-    assert [event["locator"] for event in local_events[:3]] == ["NOTES.md", "LOGS.md", "state/oops.jsonl"]
-    assert all(event["locator"] != f"actor:{codex}:notes" for event in local_events)
+    assert [event["locator"] for event in local_events[:3]] == [
+        f"notes:actor:{claude}",
+        f"logs:actor:{codex}",
+        f"oops:actor:{codex}",
+    ]
 
 
 def test_session_timeline_labels_local_surface_snapshots_as_session(
@@ -4374,10 +4499,10 @@ def test_session_timeline_labels_local_surface_snapshots_as_session(
     assert session.main(["timeline", "--session", str(local_root), "--output", "json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    goal_event = next(event for event in payload["events"] if event["locator"] == "GOAL.md")
+    goal_event = next(event for event in payload["events"] if event["locator"] == "goal:session")
     assert goal_event["plugin"] == "session"
     assert goal_event["mode"] == "local"
-    assert goal_event["follow_command"] == "gotta read 'GOAL.md'"
+    assert goal_event["follow_command"] == "gotta goal"
 
 
 def test_session_timeline_best_effort_mode_prefers_created_and_surfaces_gaps(
@@ -4453,9 +4578,9 @@ def test_session_timeline_best_effort_includes_local_activity_with_explicit_prov
             "plugin": "todo",
             "surface": "todo",
             "action": "append",
-            "locator": "TODO.md",
-            "preferred_name": "TODO.md",
-            "follow_command": "gotta read 'TODO.md'",
+            "locator": "todo:session",
+            "preferred_name": "todo:session",
+            "follow_command": "gotta todo",
             "detail": "appended 1 TODO item",
             "time_field": "session_recorded_at",
         },
@@ -4472,7 +4597,7 @@ def test_session_timeline_best_effort_includes_local_activity_with_explicit_prov
     assert payload["eventCount"] == 2
     assert payload["events"][0]["locator"] == "jira:PROJ-1"
     assert payload["events"][0]["source_time_field"] == "source_created_at"
-    assert payload["events"][1]["locator"] == "TODO.md"
+    assert payload["events"][1]["locator"] == "todo:session"
     assert payload["events"][1]["source_time_field"] == "session_recorded_at"
     assert payload["events"][1]["event_kind"] == "local"
 

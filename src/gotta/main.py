@@ -19,7 +19,12 @@ from gotta.actors import resolve_actor_context, seed_actor_context
 from gotta.dispatch import available_plugins, print_usage, run_plugin, system_exit_status
 from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
-from gotta.actor import session_actor, supervisor_stop_message, supervisor_stop_pending
+from gotta.actor import (
+    session_actor,
+    supervisor_note_check_message,
+    supervisor_stop_message,
+    supervisor_stop_pending,
+)
 from gotta.content import (
     CONTENT_ENV,
     CONTEXT_ACTIVE_ENV,
@@ -229,6 +234,17 @@ def _actor_stop_warning(root: Path) -> str:
     )
 
 
+def _actor_note_check_warning(root: Path) -> str:
+    actor_name = session_actor(root)
+    if not actor_name:
+        return ""
+    try:
+        payload = session_plugin._actor_status_payload(root, actor_name)
+    except SystemExit:
+        return ""
+    return supervisor_note_check_message(actor_name, status_payload=payload)
+
+
 def _iter_session_roots(base_dir: Path) -> list[Path]:
     if not base_dir.exists():
         return []
@@ -265,7 +281,6 @@ def _create_session_root(
         ),
         create=True,
     )
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     repo_root = _discover_repo_root()
     write_session_state(
         dirs,
@@ -778,6 +793,10 @@ def main(argv: list[str] | None = None) -> int:
                 warning = _actor_stop_warning(root)
                 if warning:
                     print(warning, file=sys.stderr)
+                else:
+                    pulse_warning = _actor_note_check_warning(root)
+                    if pulse_warning:
+                        print(pulse_warning, file=sys.stderr)
             elif session_access == "ambient":
                 os.environ[SUPPRESS_MATERIALIZATION_ENV] = "1"
                 os.environ[_AMBIENT_SESSIONLESS_ENV] = "1"

@@ -222,3 +222,30 @@ def supervisor_stop_message(
         + "final short note, and sign off ASAP with "
     )
     return message + suffix + f"`gotta actor signoff {normalize_actor_name(actor_name)} --summary ...`."
+
+
+def supervisor_note_check_message(
+    actor_name: str,
+    *,
+    status_payload: dict[str, object] | None = None,
+) -> str:
+    payload = status_payload or {}
+    try:
+        checks = int(payload.get("note_checks_since_update") or 0)
+    except (TypeError, ValueError):
+        checks = 0
+    if checks <= 0:
+        return ""
+    status = str(payload.get("status") or "").strip()
+    if status in {"completed", "failed", "incomplete", "rejected", "signed_off"}:
+        return ""
+    count_word = "time" if checks == 1 else "times"
+    if str(payload.get("last_note_at") or "").strip():
+        return (
+            f"Supervisor has checked your notes {checks} {count_word} since your last note. "
+            "If you have real progress, land one short note now."
+        )
+    return (
+        f"Supervisor has checked your notes {checks} {count_word} and no first note has landed yet. "
+        "If you have real progress, land one short note now."
+    )

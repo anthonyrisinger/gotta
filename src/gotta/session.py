@@ -42,19 +42,16 @@ from gotta.content import (
     session_surface_initialized,
     write_session_state,
 )
-from gotta.friction import OOPS_CHANNEL, oops_log_path, render_oops_markdown, visible_channel_records
+from gotta.friction import OOPS_CHANNEL, oops_log_path, visible_channel_records
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.logs import (
     append_log_record,
     logs_state_path,
-    sync_logs_projection,
 )
 from gotta.notes import (
     actor_voice,
     actor_notes_ready,
     visible_actor_notes_records,
-    actor_notes_surface_path,
-    sync_actor_notes_projection,
 )
 from gotta import topology
 from gotta.actor import (
@@ -68,7 +65,6 @@ from gotta.todo import (
     create_todo_item,
     ensure_managed_todo_item,
     set_todo_checked,
-    sync_todo_projection,
     todo_items,
     todo_state_path,
 )
@@ -111,10 +107,6 @@ ACTOR_RUNNING_STATUS = {
     "producing_evidence",
 }
 WANT_FILE = "WANT.md"
-ROOT_SHARED_FILES = (
-    "LOGS.md",
-    "OOPS.md",
-)
 SESSION_STATE_KEYS = (
     SESSION_INITIALIZED_ENV,
     SESSION_CREATED_ENV,
@@ -123,14 +115,6 @@ SESSION_STATE_KEYS = (
     SESSION_ACTORS_SOURCE_ENV,
     SESSION_VOICE_SOURCE_ENV,
     SESSION_ACTOR_ENV,
-)
-ACTOR_SHARED_FILES = (
-    "LOGS.md",
-    "OOPS.md",
-)
-ACTOR_SHARED_STATE_FILES = (
-    "logs.jsonl",
-    "oops.jsonl",
 )
 FINAL_SIGNOFF_MARKER = "actors-final-signoff"
 
@@ -376,6 +360,31 @@ def _session_relative_locator(work_dir: Path, path: Path) -> str:
         return str(resolved)
 
 
+def _native_surface_locator(surface: str, *, actor_name: str = "") -> str:
+    normalized_surface = surface.strip().lower()
+    normalized_actor = _normalize_actor_name(actor_name) if actor_name.strip() else ""
+    if normalized_actor:
+        return f"{normalized_surface}:actor:{normalized_actor}"
+    return f"{normalized_surface}:session"
+
+
+def _native_surface_follow_command(surface: str, *, actor_name: str = "") -> str:
+    normalized_surface = surface.strip().lower()
+    normalized_actor = _normalize_actor_name(actor_name) if actor_name.strip() else ""
+    command = f"gotta {normalized_surface}"
+    if normalized_actor:
+        command += f" --actor {normalized_actor}"
+    return command
+
+
+def _native_surface_preferred_name(surface: str, *, actor_name: str = "") -> str:
+    return _native_surface_locator(surface, actor_name=actor_name)
+
+
+def _surface_actor_scope(work_dir: Path) -> str:
+    return session_identity(work_dir) if work_dir.resolve().parent.name == "actors" else ""
+
+
 def run_charter_surface(
     argv: list[str] | None,
     *,
@@ -479,15 +488,23 @@ def run_charter_surface(
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload + "\n", encoding="utf-8")
+    actor_scope = _surface_actor_scope(work_dir)
+    surface_key = "want" if surface_name == WANT_FILE else "goal"
     append_activity_event(
         work_dir,
         {
             "plugin": plugin_name,
             "surface": plugin_name,
             "action": "write",
-            "locator": _session_relative_locator(work_dir, path),
-            "preferred_name": path.name,
-            "follow_command": f"gotta read {surface_name!r}",
+            "locator": _native_surface_locator(surface_key, actor_name=actor_scope),
+            "preferred_name": _native_surface_preferred_name(
+                surface_key,
+                actor_name=actor_scope,
+            ),
+            "follow_command": _native_surface_follow_command(
+                surface_key,
+                actor_name=actor_scope,
+            ),
             "detail": f"rewrote {surface_name}",
             "time_field": "session_recorded_at",
         },
@@ -1031,16 +1048,15 @@ def _bootstrap_goal(
         - Operating directory: `{work_dir}`
         - Durable intent frame: `WANT.md`
         - Canonical coordination state: `state/todo.jsonl`
-        - Readable coordination view: `TODO.md`
         - Supporting canonical logs: `state/logs.jsonl`, `state/oops.jsonl`, `state/env`
-        - Readable projections: `LOGS.md`, `OOPS.md`
+        - Live readable surfaces: `gotta todo`, `gotta logs`, `gotta oops`
         {markers}
         GOAL.md rule:
 
         - Read `WANT.md` first.
-        - Read `TODO.md`, `LOGS.md`, and `OOPS.md`.
+        - Read `gotta todo`, `gotta logs`, and `gotta oops`.
         - Treat `state/todo.jsonl`, `state/logs.jsonl`, and `state/oops.jsonl` as the
-          canonical continuous state behind those readable views.
+          canonical continuous state behind those CLI surfaces.
         - Provider-native `search` commands can seed discovery artifacts and
           provider-native `get` / plain `gotta read <locator>` retrieval can land
           evidence artifacts, but only when an initialized session is already
@@ -1074,17 +1090,16 @@ def _bootstrap_actor_goal(*, actor_name: str, label: str, actor_dir: Path, work_
         Bootstrap facts:
 
         - Actor session root: `{actor_dir}`
-        - Actor-local logs and friction: `{actor_dir / 'LOGS.md'}`, `{actor_dir / 'OOPS.md'}`
-        - Actor-local checklist: `{actor_dir / 'TODO.md'}`
-        - Actor-local notes: `{actor_dir / 'NOTES.md'}`
+        - Actor-local authored charters: `{actor_dir / WANT_FILE}`, `{actor_dir / 'GOAL.md'}`
+        - Actor-local live surfaces: `gotta todo`, `gotta notes`, `gotta logs`, `gotta oops`
 
         Rewrite rule:
 
         - Read actor-local `WANT.md` first.
         - Turn that charter into concrete evidence-collection steps.
-        - Treat `TODO.md` as the live actor-local checklist.
-        - Treat `NOTES.md` as the canonical actor-authored narration surface.
-        - Treat `LOGS.md` as procedural/system trace rather than the primary narration surface.
+        - Treat `gotta todo` as the live actor-local checklist.
+        - Treat `gotta notes` as the canonical actor-authored narration surface.
+        - Treat `gotta logs` as procedural/system trace rather than the primary narration surface.
         - Append an initial short heartbeat note immediately after launch, even before the first evidence wave.
         - Continue appending short notes during the run; do not wait until the end.
         - Do not author the final dossier from this session.
@@ -1096,55 +1111,9 @@ def _bootstrap_actor_goal(*, actor_name: str, label: str, actor_dir: Path, work_
         """
     )
 
-
-def _bootstrap_oops() -> str:
-    return render_oops_markdown([])
-
-
 def _seed_file(path: Path, content: str) -> None:
     if not path.exists():
         path.write_text(content, encoding="utf-8")
-
-
-def _actor_readme(actor_name: str, label: str) -> str:
-    actor_name = _normalize_actor_name(actor_name)
-    return dedent(
-        f"""\
-        # {label} Session
-
-        > Generated by `gotta actor bind {label}`.
-        > This file is a bootstrap guide, not a live append surface.
-
-        This directory is the canonical {label.lower()} actor root for one shared gotta session.
-
-        Readable actor surfaces:
-
-        - `WANT.md`: actor-local intent frame seeded here, then rewritten before launch
-        - `GOAL.md`: actor-local goal seeded here, then rewritten before launch
-        - `TODO.md`: actor-local checklist projected from `state/todo.jsonl`
-        - `NOTES.md`: projected actor-authored narration plus live actor state
-        - `LOGS.md`: actor-local procedural/system trace
-        - `OOPS.md`: actor-local friction log
-
-        Canonical truth:
-
-        - this session root is real; operate from here with `gotta ...`
-        - actor selection is explicit actor selection inside one shared session, not path traversal under `actors/`
-        - actor-local checklist truth is `state/todo.jsonl`
-        - actor lifecycle truth is `state/actor.json` and `state/actor.jsonl`
-        - actor-authored narration truth is `state/notes.jsonl`
-        - actor-local procedural/system trace is `state/logs.jsonl`
-        - actor-local friction truth is `state/oops.jsonl`
-        - shared cross-actor truth is the shared evidence web at `content/`
-        - provenance still belongs to the actor that produced the evidence
-        - actor-local `WANT.md` and `GOAL.md` are live operator-authored charters, not hidden templates
-        - rewrite actor-local charters with `{_actor_charter_command(actor_name, 'want')}` and `{_actor_charter_command(actor_name, 'goal')}` before launch
-        - prefer native `gotta` surfaces over shell-side spelunking
-        - prefer `gotta notes ...` for actor-authored narration; short notes are valid
-        - use `gotta logs ...` for chronology and runtime/system trace, not as the primary narration path
-        - do not author the final dossier from this session; stop at evidence and handoff notes
-        """
-    )
 
 
 def _seed_actor_surface(
@@ -1155,7 +1124,6 @@ def _seed_actor_surface(
     work_dir: Path,
 ) -> None:
     actor_dir.mkdir(parents=True, exist_ok=True)
-    _seed_file(actor_dir / "README.md", _actor_readme(actor_name, label))
     _seed_file(
         actor_dir / WANT_FILE,
         _bootstrap_actor_want(actor_name=actor_name, label=label),
@@ -1173,11 +1141,8 @@ def _seed_actor_surface(
 
 def _reset_orphaned_actor_surface(actor_dir: Path) -> None:
     managed_paths = (
-        actor_dir / "README.md",
         actor_dir / WANT_FILE,
         actor_dir / "GOAL.md",
-        actor_dir / "TODO.md",
-        actor_dir / "NOTES.md",
         actor_dir / "content",
         actor_dir / "session",
     )
@@ -1186,23 +1151,6 @@ def _reset_orphaned_actor_surface(actor_dir: Path) -> None:
             path.unlink(missing_ok=True)
         elif path.exists():
             shutil.rmtree(path)
-
-
-def _actor_script(*, work_dir: Path, actor_dir: Path, actor_name: str) -> str:
-    actor_name = _normalize_actor_name(actor_name)
-    actor_session = _actor_session_dir(work_dir, actor_name)
-    return dedent(
-        f"""\
-        #!/usr/bin/env bash
-        set -euo pipefail
-
-        ws={sh_quote(str(actor_session))}
-        if [[ "${{1:-}}" == "--help" || "${{1:-}}" == "-h" ]]; then
-          exec gotta actor launch {actor_name} --session "$ws" --help
-        fi
-        exec gotta actor launch {actor_name} --session "$ws" "$@"
-        """
-    )
 
 
 def _load_session_state(work_dir: Path) -> dict[str, str]:
@@ -1341,7 +1289,6 @@ def _ensure_state_exports(work_dir: Path) -> dict[str, str]:
         if key not in {SESSION_ENV, CONTENT_ENV, SESSION_REPO_ENV}
     }
     write_session_state(dirs, preserved)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     return env_mapping(dirs)
 
 
@@ -1381,8 +1328,6 @@ def _seed_session_files(
     agents_src: Path | None,
     voice_src: Path | None,
 ) -> None:
-    bin_dir = session_dir / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
     _copy_if_present(agents_src, session_dir / "AGENTS.md")
     _copy_if_present(voice_src, session_dir / "VOICE.md")
     _seed_file(session_dir / WANT_FILE, _bootstrap_want())
@@ -1395,7 +1340,6 @@ def _seed_session_files(
             voice_src=voice_src,
         ),
     )
-    _seed_file(session_dir / "OOPS.md", _bootstrap_oops())
     if not todo_state_path(session_dir).exists():
         create_todo_item(
             session_dir,
@@ -1416,7 +1360,7 @@ def _seed_session_files(
         create_todo_item(
             session_dir,
             section="Status",
-            text="TODO.md expanded by the active actor into a real working checklist",
+            text="Expand the canonical checklist through `gotta todo` until it reflects real working state.",
         )
         create_todo_item(
             session_dir,
@@ -1428,7 +1372,6 @@ def _seed_session_files(
             section="Status",
             text="Decide whether to bind an actor with `gotta actor bind ...` and actually consult them if it helps.",
         )
-        sync_todo_projection(session_dir)
     if not logs_state_path(session_dir).exists():
         bootstrap_lines = [
             "Session surface initialized by `gotta session init`",
@@ -1447,10 +1390,9 @@ def _seed_session_files(
             bootstrap_lines.append("Imported `VOICE.md`")
         bootstrap_lines.append("Seeded as the procedural/system trace for this session")
         bootstrap_lines.append(
-            "Keep actor-authored narration in `NOTES.md`; one-line notes after strong anchors, substantive evidence waves, and final synthesis/signoff are expected."
+            "Keep actor-authored narration in `gotta notes`; one-line notes after strong anchors, substantive evidence waves, and final synthesis/signoff are expected."
         )
         append_log_record(session_dir, message="\n".join(bootstrap_lines))
-        sync_logs_projection(session_dir)
 
 
 def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
@@ -1500,7 +1442,7 @@ def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
         surface="session.init",
         action="init",
         target=session_dir / WANT_FILE,
-        detail="scaffolded WANT.md, GOAL.md, TODO.md, LOGS.md, and OOPS.md",
+        detail="scaffolded WANT.md and GOAL.md; canonical live surfaces are now CLI-native",
     )
 
 
@@ -1514,7 +1456,6 @@ def _ensure_actor_session_exports(
         create=True,
     )
     write_session_state(dirs)
-    dirs.session_dir.joinpath("bin").mkdir(parents=True, exist_ok=True)
     _ensure_symlink(actor_dir / "content", content_dir)
     session_link = actor_dir / "session"
     if session_link.is_symlink() or session_link.is_file():
@@ -1532,7 +1473,7 @@ def _ensure_actor_initial_todo(actor_dir: Path) -> None:
     create_todo_item(
         actor_dir,
         section="Status",
-        text="Rewrite WANT.md and GOAL.md into a concrete actor-local checklist in TODO.md.",
+        text="Rewrite WANT.md and GOAL.md into a concrete actor-local checklist through `gotta todo`.",
     )
     create_todo_item(
         actor_dir,
@@ -1547,12 +1488,8 @@ def _ensure_actor_initial_todo(actor_dir: Path) -> None:
     create_todo_item(
         actor_dir,
         section="Status",
-        text="Append another short note after each material evidence wave or plan change; do not request completion or sign-off with empty NOTES.md.",
+        text="Append another short note after each material evidence wave or plan change; do not request completion or sign-off with empty actor notes.",
     )
-
-
-def _session_surface_path(work_dir: Path, surface: str) -> Path:
-    return work_dir / surface
 
 
 def _record_session_activity(
@@ -1571,21 +1508,27 @@ def _record_session_activity(
 ) -> None:
     if target is not None:
         resolved = target.resolve()
-        todo_surface = _session_surface_path(work_dir, "TODO.md").resolve()
-        logs_surface = _session_surface_path(work_dir, "LOGS.md").resolve()
-        oops_surface = _session_surface_path(work_dir, "OOPS.md").resolve()
-        if resolved == todo_surface:
-            resolved_locator = _session_relative_locator(work_dir, todo_state_path(work_dir))
-            resolved_name = "TODO.md"
-            resolved_follow = "gotta read 'TODO.md'"
-        elif resolved == logs_surface:
-            resolved_locator = _session_relative_locator(work_dir, logs_state_path(work_dir))
-            resolved_name = "LOGS.md"
-            resolved_follow = "gotta read 'LOGS.md'"
-        elif resolved == oops_surface:
-            resolved_locator = _session_relative_locator(work_dir, oops_log_path(work_dir))
-            resolved_name = "OOPS.md"
-            resolved_follow = "gotta read 'OOPS.md'"
+        actor_scope = _surface_actor_scope(work_dir)
+        if resolved == (work_dir / WANT_FILE).resolve():
+            resolved_locator = _native_surface_locator("want", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name("want", actor_name=actor_scope)
+            resolved_follow = _native_surface_follow_command("want", actor_name=actor_scope)
+        elif resolved == (work_dir / "GOAL.md").resolve():
+            resolved_locator = _native_surface_locator("goal", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name("goal", actor_name=actor_scope)
+            resolved_follow = _native_surface_follow_command("goal", actor_name=actor_scope)
+        elif resolved == todo_state_path(work_dir).resolve():
+            resolved_locator = _native_surface_locator("todo", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name("todo", actor_name=actor_scope)
+            resolved_follow = _native_surface_follow_command("todo", actor_name=actor_scope)
+        elif resolved == logs_state_path(work_dir).resolve():
+            resolved_locator = _native_surface_locator("logs", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name("logs", actor_name=actor_scope)
+            resolved_follow = _native_surface_follow_command("logs", actor_name=actor_scope)
+        elif resolved == oops_log_path(work_dir).resolve():
+            resolved_locator = _native_surface_locator("oops", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name("oops", actor_name=actor_scope)
+            resolved_follow = _native_surface_follow_command("oops", actor_name=actor_scope)
         else:
             resolved_locator = _session_relative_locator(work_dir, resolved)
             resolved_name = resolved.name
@@ -1658,14 +1601,12 @@ def _actor_log_line(session_root: Path, actor_name: str, message: str, *, author
     append_log_record(session_root, message=rendered, actor=log_author)
 
 
-def _record_actor_projection_activity(
+def _record_actor_surface_activity(
     session_root: Path,
     *,
     actor_name: str,
     surface: str,
     action: str,
-    log_path: Path,
-    projection_path: Path,
     detail: str,
     actor: str = "",
 ) -> None:
@@ -1677,15 +1618,15 @@ def _record_actor_projection_activity(
         action=action,
         actor=actor.strip() or current_actor(default_actor=normalized_actor),
         target_actor=normalized_actor,
-        locator=_session_relative_locator(session_root, log_path),
-        preferred_name=projection_path.name,
-        follow_command=f"gotta read {_session_relative_locator(session_root, projection_path)!r}",
+        locator=_native_surface_locator(surface, actor_name=normalized_actor),
+        preferred_name=_native_surface_preferred_name(surface, actor_name=normalized_actor),
+        follow_command=_native_surface_follow_command(surface, actor_name=normalized_actor),
         detail=detail,
     )
 
 
 def _want_rewrite_pending(work_dir: Path) -> bool:
-    want_path = _session_surface_path(work_dir, WANT_FILE)
+    want_path = work_dir / WANT_FILE
     if not want_path.is_file():
         return True
     current = want_path.read_text(encoding="utf-8").strip()
@@ -1723,9 +1664,9 @@ def _actor_goal_rewrite_pending(work_root: Path, actor_name: str) -> bool:
 
 def _actor_launch_blockers(work_root: Path, *, actor_name: str = "") -> list[str]:
     blockers: list[str] = []
-    goal_path = _session_surface_path(work_root, "GOAL.md")
+    goal_path = work_root / "GOAL.md"
     if _want_rewrite_pending(work_root):
-        blockers.append(f"rewrite `{_session_surface_path(work_root, WANT_FILE)}` first")
+        blockers.append(f"rewrite `{work_root / WANT_FILE}` first")
     if _goal_rewrite_pending(goal_path):
         blockers.append(f"rewrite `{goal_path}` from the current moment before launch")
     if actor_name:
@@ -1943,6 +1884,48 @@ def _actor_note_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
     }
 
 
+def _actor_note_check_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
+    state = _read_actor_state(work_dir, actor_name)
+    try:
+        count = int(state.get("note_checks_since_update") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    return {
+        "note_checks_since_update": max(count, 0),
+        "last_note_check_at": str(state.get("last_note_check_at") or ""),
+        "last_note_check_by": str(state.get("last_note_check_by") or ""),
+    }
+
+
+def _reset_note_check_feedback(work_dir: Path, actor_name: str) -> None:
+    _write_actor_state(
+        work_dir,
+        actor_name,
+        {
+            "note_checks_since_update": 0,
+            "last_note_check_at": None,
+            "last_note_check_by": None,
+        },
+    )
+
+
+def _record_note_check(work_dir: Path, actor_name: str, *, reader: str = "") -> None:
+    normalized_actor = _normalize_actor_name(actor_name)
+    normalized_reader = _normalize_actor_name(reader.strip() or current_actor(default_actor=""))
+    if not normalized_reader or normalized_reader == normalized_actor:
+        return
+    summary = _actor_note_check_summary(work_dir, normalized_actor)
+    _write_actor_state(
+        work_dir,
+        normalized_actor,
+        {
+            "note_checks_since_update": int(summary.get("note_checks_since_update") or 0) + 1,
+            "last_note_check_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "last_note_check_by": normalized_reader,
+        },
+    )
+
+
 def _actor_progress_summary(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
     normalized_actor = _normalize_actor_name(actor_name)
     actor_root = _actor_session_dir(work_dir, normalized_actor)
@@ -2120,13 +2103,13 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             heartbeat_stale = True
     signoff_at = str(state.get("signoff_at") or "")
     actor_dir = _actor_session_dir(work_dir, actor_name)
-    notes_path = actor_dir / "NOTES.md"
     voice = actor_voice(work_dir, _normalize_actor_name(actor_name))
     notes_ready = voice == "present"
     evidence = _actor_evidence_summary(work_dir, actor_name)
     evidence_note = _actor_evidence_note(evidence)
     recent_activity = _actor_recent_activity(work_dir, actor_name)
     note_summary = _actor_note_summary(work_dir, actor_name)
+    note_check_summary = _actor_note_check_summary(work_dir, actor_name)
     progress = _actor_progress_summary(work_dir, actor_name)
     lifecycle_entries = [dict(item) for item in recent_activity.get("recent_lifecycle", [])]
     if lifecycle_entries and str(lifecycle_entries[0].get("event") or "") == "runtime_exit":
@@ -2158,11 +2141,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     evidence_live = int(evidence["artifact_count"]) > 0
     if signoff_at:
         derived_status = "signed_off"
-    notes_status = (
-        "present"
-        if actor_notes_ready(work_dir, _normalize_actor_name(actor_name))
-        else "empty" if notes_path.exists() else "missing"
-    )
+    notes_status = "present" if actor_notes_ready(work_dir, _normalize_actor_name(actor_name)) else "empty"
     runtime_note = ""
     if status in {"starting", "active"} and runtime_live is False:
         if requested_status in {"completed", "failed", "signed_off"}:
@@ -2214,6 +2193,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     progress_stale = bool(progress.get("progress_stale"))
     last_note_at = str(note_summary.get("last_note_at") or "")
     last_artifact_at = str(evidence.get("last_artifact_at") or "")
+    note_checks_since_update = int(note_check_summary.get("note_checks_since_update") or 0)
     needs_note_refresh = bool(
         evidence_live and last_artifact_at and (not last_note_at or last_artifact_at > last_note_at)
     )
@@ -2288,7 +2268,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             next_step = (
                 "actor is still active and producing evidence artifacts. "
                 + (evidence_note + " " if evidence_note else "")
-                + "Use NOTES.md for live actor visibility; recheck `gotta actor status "
+                + "Use `gotta notes` for live actor visibility; recheck `gotta actor status "
                 f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
                 + request_note
                 + runtime_note
@@ -2336,7 +2316,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     elif derived_status in {"starting", "active"} and notes_ready:
         next_step = (
             "actor is still active and actor voice is present. "
-            "Use NOTES.md for live actor visibility; recheck `gotta actor status "
+            "Use `gotta notes` for live actor visibility; recheck `gotta actor status "
             f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
             + request_note
             + runtime_note
@@ -2372,7 +2352,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         next_step = (
             "actor runtime is no longer running, but no durable terminal lifecycle was recorded yet. "
             + (evidence_note + " " if evidence_note else "")
-            + "Inspect NOTES.md plus the shared evidence web, then settle with "
+            + "Inspect `gotta notes` plus the shared evidence web, then settle with "
             f"`gotta actor settle {_normalize_actor_name(actor_name)}`"
             + (
                 f" to honor the pending `{requested_label}` request."
@@ -2383,7 +2363,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         )
     elif derived_status == "stalled" and (not voice_missing or evidence_live):
         next_step = (
-            "actor heartbeat is stale, but material actor state already exists in NOTES.md or the "
+            "actor heartbeat is stale, but material actor state already exists in `gotta notes` or the "
             "shared evidence web. "
             + (evidence_note + " " if evidence_note else "")
             + "Inspect the notes and decide whether to wait, relaunch, or disposition manually."
@@ -2397,7 +2377,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             )
         elif notes_ready:
             next_step = (
-                "actor run is complete; inspect NOTES.md plus the shared evidence web, then record "
+                "actor run is complete; inspect `gotta notes` plus the shared evidence web, then record "
                 "durable sign-off with "
                 f"`gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
             )
@@ -2472,6 +2452,19 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         )
     else:
         next_step = ""
+    pulse_next_step = ""
+    if note_checks_since_update > 0 and derived_status not in ACTOR_TERMINAL_STATUS:
+        check_noun = "time" if note_checks_since_update == 1 else "times"
+        if last_note_at:
+            pulse_next_step = (
+                f"Supervisor has checked this actor's notes {note_checks_since_update} {check_noun} "
+                "since the last note. Land one short note now if real progress exists."
+            )
+        else:
+            pulse_next_step = (
+                f"Supervisor has checked this actor's notes {note_checks_since_update} {check_noun} "
+                "and no first short note has landed yet. Land one short note now if real progress exists."
+            )
     if low_signal_progress:
         next_step = (
             "actor runtime is still live, but actor-authored progress is stale and no "
@@ -2480,6 +2473,8 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             + request_note
             + runtime_note
         )
+    if pulse_next_step:
+        next_step = f"{pulse_next_step} {next_step}".strip()
     return {
         **state,
         "label": _actor_label(actor_name, work_dir=work_dir),
@@ -2487,7 +2482,6 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         "state_path": str(_actor_state_path(work_dir, actor_name)),
         "events_path": str(_actor_events_path(work_dir, actor_name)),
         "actor_dir": str(actor_dir),
-        "notes_path": str(notes_path),
         "notes_status": notes_status,
         "notes_ready": notes_ready,
         "voice": voice,
@@ -2506,6 +2500,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         ),
         "next_step": next_step,
         **note_summary,
+        **note_check_summary,
         **progress,
         **recent_activity,
         **evidence,
@@ -2579,16 +2574,6 @@ def _sync_actor_todo_state(work_dir: Path) -> None:
         set_todo_checked(work_dir, str(final_item["id"]), checked=final_checked)
 
 
-def _sync_actor_projection_surfaces(work_dir: Path, actor_name: str) -> None:
-    actor = _normalize_actor_name(actor_name)
-    sync_actor_notes_projection(
-        work_dir,
-        actor,
-        label=_actor_label(actor, work_dir=work_dir),
-        status_payload=_actor_status_payload(work_dir, actor),
-    )
-
-
 def _actor_launch_command(work_dir: Path, actor_name: str) -> str:
     return f"gotta actor launch {actor_name} --session {sh_quote(str(work_dir))}"
 
@@ -2602,7 +2587,6 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
         raise SystemExit(f"unknown actor: {actor_name}")
     repo_raw = str(state.get(SESSION_REPO_ENV) or "").strip()
     actor_dir = actor_session_root(work_dir, actor_name)
-    bin_path = work_dir / "bin" / actor_name
     shared_content_dir = shared_session_root(session_shared_id(work_dir)) / "content"
     if actor_dir != work_dir:
         if actor_dir.exists() and not _actor_is_selected(work_dir, actor_name):
@@ -2621,10 +2605,6 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
         )
         _ensure_actor_parent_links(work_dir, actor_name, actor_dir)
     else:
-        _seed_file(
-            actor_dir / "README.md",
-            _actor_readme(actor_name, _actor_label(actor_name, work_dir=work_dir)),
-        )
         _ensure_state_exports(actor_dir)
     _write_state_file(
         actor_dir,
@@ -2648,28 +2628,14 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
         actor_name,
         {
             "status": str(_read_actor_state(work_dir, actor_name).get("status") or "pending"),
-            "notes_path": str(actor_notes_surface_path(work_dir, actor_name)),
         },
     )
-    _sync_actor_projection_surfaces(work_dir, actor_name)
-    if actor_dir != work_dir:
-        bin_path.parent.mkdir(parents=True, exist_ok=True)
-        bin_path.write_text(
-            _actor_script(
-                work_dir=work_dir,
-                actor_dir=actor_dir,
-                actor_name=actor_name,
-            ),
-            encoding="utf-8",
-        )
-        bin_path.chmod(0o755)
     return actor_dir
 
 
 def _bind_actor(session_root: Path, actor_name: str) -> str:
     actor, created = _bind_actor_identity(session_root, actor_name)
-    bin_path = session_root / "bin" / actor
-    already_bound = _actor_is_selected(session_root, actor) and bin_path.exists()
+    already_bound = _actor_is_selected(session_root, actor)
     _ensure_actor_surface(session_root, actor)
     current_status = str(_read_actor_state(session_root, actor).get("status") or "pending")
     if current_status in {
@@ -2682,24 +2648,24 @@ def _bind_actor(session_root: Path, actor_name: str) -> str:
         "signed_off",
     }:
         _write_actor_state(session_root, actor, {"status": "bound"})
-        _sync_actor_projection_surfaces(session_root, actor)
     launch_cmd = _actor_launch_command(session_root, actor)
     actor_want = _actor_dir_path(session_root, actor) / WANT_FILE
     actor_goal = _actor_dir_path(session_root, actor) / "GOAL.md"
-    actor_todo = _actor_dir_path(session_root, actor) / "TODO.md"
     want_cmd = _actor_charter_command(actor, "want")
     goal_cmd = _actor_charter_command(actor, "goal")
     actor_blockers = _actor_launch_blockers(session_root, actor_name=actor)
     if actor_blockers:
         suffix = (
             f"; not launched. Rewrite `{actor_want}` and `{actor_goal}` for {_actor_label(actor, work_dir=session_root)} with `{want_cmd}` and `{goal_cmd}` first. "
-            f"`{actor_todo}` is already seeded with a minimal actor-local checklist and you may extend it before launch if useful, "
+            "Use `gotta todo --actor "
+            f"{actor}` to extend the minimal actor-local checklist before launch if useful, "
             f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor, work_dir=session_root)} to start"
         )
     else:
         suffix = (
             f"; not launched. `{actor_want}` and `{actor_goal}` are already real. "
-            f"`{actor_todo}` is already seeded with a minimal actor-local checklist and you may extend it before launch if useful, "
+            "Use `gotta todo --actor "
+            f"{actor}` to extend the minimal actor-local checklist before launch if useful, "
             f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor, work_dir=session_root)} to start"
         )
     if already_bound:
@@ -2708,7 +2674,7 @@ def _bind_actor(session_root: Path, actor_name: str) -> str:
     _actor_log_line(session_root, actor, "bound session")
     created_note = " [new actor]" if created else ""
     return (
-        f"bound {actor} ({_actor_label(actor, work_dir=session_root)}) session, seeded actor-local WANT/GOAL placeholders, seeded actor-local TODO, launch shim, actor-local notes/logs/oops surfaces, and shared evidence access{created_note}"
+        f"bound {actor} ({_actor_label(actor, work_dir=session_root)}) session, seeded actor-local WANT/GOAL placeholders, minimal actor-local canonical state, and shared evidence access{created_note}"
         f"{suffix}"
     )
 

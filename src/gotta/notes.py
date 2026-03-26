@@ -1,4 +1,4 @@
-"""Canonical actor notes state and readable projections."""
+"""Canonical actor notes state and on-demand rendering."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from gotta.actor import (
 )
 from gotta.content import SESSION_ACTOR_ENV, current_actor
 from gotta.friction import OOPS_CHANNEL, visible_channel_records
-from gotta.projection import append_jsonl, read_jsonl_records, write_projection_if_changed
+from gotta.projection import append_jsonl, read_jsonl_records
 
 
 ACTOR_NOTES_LOG_NAME = "notes.jsonl"
@@ -25,10 +25,6 @@ ACTOR_NOTES_LOG_NAME = "notes.jsonl"
 
 def actor_notes_log_path(work_dir: Path, actor_name: str) -> Path:
     return actor_session_root(work_dir, actor_name) / "state" / ACTOR_NOTES_LOG_NAME
-
-
-def actor_notes_surface_path(work_dir: Path, actor_name: str) -> Path:
-    return actor_session_root(work_dir, actor_name) / "NOTES.md"
 
 
 def actor_notes_records(work_dir: Path, actor_name: str) -> list[dict[str, object]]:
@@ -142,8 +138,9 @@ def actor_notes_payload(
     return {
         "actor": actor_name,
         "label": label,
-        "notes": str(actor_notes_surface_path(work_dir, actor_name)),
-        "notes_log": str(actor_notes_log_path(work_dir, actor_name)),
+        "state_path": str(actor_notes_log_path(work_dir, actor_name)),
+        "locator": f"notes:actor:{actor_name}",
+        "follow_command": f"gotta notes --actor {actor_name}",
         "status": status_payload,
         "entry_count": len(records),
         "entries": records,
@@ -161,10 +158,11 @@ def render_actor_notes_markdown(
         f"# {label} Notes",
         "",
         f"> Generated automatically from `state/{ACTOR_NOTES_LOG_NAME}`.",
-        "> This is a human-readable projection; the structured actor notes log is canonical.",
+        "> Rendered on demand from canonical state.",
+        "> The structured actor notes log is canonical.",
         "> Notes are the canonical actor-authored narration surface; short one-line notes are valid.",
         "> Prefer `gotta notes append ...` on the active actor root; add `--actor <actor>` only when targeting another bound actor intentionally.",
-        "> Use notes for alive, first-anchor, evidence-wave, and signoff narration. `LOGS.md` remains procedural/system trace.",
+        "> Use notes for alive, first-anchor, evidence-wave, and signoff narration. `gotta logs` remains procedural/system trace.",
         "",
     ]
     if supervisor_stop_pending(status_payload):
@@ -228,21 +226,3 @@ def render_actor_notes_markdown(
         for continuation in message_lines[1:]:
             lines.append(f"  {continuation}")
     return "\n".join(lines) + "\n"
-
-
-def sync_actor_notes_projection(
-    work_dir: Path,
-    actor_name: str,
-    *,
-    label: str,
-    status_payload: dict[str, object],
-) -> None:
-    write_projection_if_changed(
-        actor_notes_surface_path(work_dir, actor_name),
-        render_actor_notes_markdown(
-            work_dir,
-            actor_name,
-            label=label,
-            status_payload=status_payload,
-        ),
-    )

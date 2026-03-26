@@ -7,7 +7,7 @@ import json
 
 from gotta.actor import require_writer, writer_name, writer_role
 from gotta.helptext import format_long_help, is_long_help_request
-from gotta.logs import append_log_record, log_records, logs_state_path, logs_surface_path
+from gotta.logs import append_log_record, log_records, logs_state_path
 from gotta import session as session_plugin
 
 
@@ -117,16 +117,21 @@ def main(argv: list[str] | None = None) -> int:
             ]
             entries = sorted(visible, key=lambda item: str(item.get("timestamp") or ""))
             limited = entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
+            locator = session_plugin._native_surface_locator("logs", actor_name=scoped_actor)
             payload = {
-                "logs": str(logs_surface_path(work_dir)),
-                "logs_log": str(logs_state_path(work_dir)),
+                "state_path": str(logs_state_path(work_dir)),
+                "locator": locator,
+                "follow_command": session_plugin._native_surface_follow_command(
+                    "logs",
+                    actor_name=scoped_actor,
+                ),
                 "entry_count": len(entries),
                 "entries": limited,
             }
             if args.output == "json":
                 print(json.dumps(payload, indent=2, sort_keys=True))
                 return 0
-            print(f"logs: {payload['logs']}")
+            print(f"logs: {payload['follow_command']}")
             print(f"entries: {payload['entry_count']}")
             for record in payload["entries"]:
                 timestamp = str(record.get("timestamp") or "unknown-time")
@@ -150,12 +155,16 @@ def main(argv: list[str] | None = None) -> int:
             "actors": actor_ids,
             "entry_count": len(records),
             "entries": entries,
-            "logs_surfaces": {
-                actor: str(logs_surface_path(session_plugin._actor_session_dir(work_dir, actor)))
+            "state_paths": {
+                actor: str(logs_state_path(session_plugin._actor_session_dir(work_dir, actor)))
                 for actor in actor_ids
             },
-            "logs_logs": {
-                actor: str(logs_state_path(session_plugin._actor_session_dir(work_dir, actor)))
+            "locators": {
+                actor: session_plugin._native_surface_locator("logs", actor_name=actor)
+                for actor in actor_ids
+            },
+            "follow_commands": {
+                actor: session_plugin._native_surface_follow_command("logs", actor_name=actor)
                 for actor in actor_ids
             },
         }
@@ -187,7 +196,6 @@ def main(argv: list[str] | None = None) -> int:
             writer=writer,
             action="write into this actor branch",
         )
-    log_path = logs_surface_path(work_dir)
     record_actor = writer or ""
     if action == "extend":
         entries = session_plugin._read_text_items_source(
@@ -209,10 +217,10 @@ def main(argv: list[str] | None = None) -> int:
             surface="logs",
             action="extend",
             actor=record_actor,
-            target=log_path,
+            target=logs_state_path(work_dir),
             detail=f"extended logs with {len(entries)} item(s)",
         )
-        print(f"extended logs entries in {log_path}: {len(entries)} item(s)")
+        print(f"extended logs entries: {len(entries)} item(s)")
         return 0
     payload = session_plugin._read_text_source(
         session_root=work_dir,
@@ -232,8 +240,8 @@ def main(argv: list[str] | None = None) -> int:
         surface="logs",
         action="append",
         actor=record_actor,
-        target=log_path,
+        target=logs_state_path(work_dir),
         detail="appended 1 logs entry",
     )
-    print(f"appended logs entry in {log_path}")
+    print("appended logs entry")
     return 0

@@ -626,7 +626,7 @@ def session_surface_initialized(root: Path) -> bool:
     state = load_state_env_at_root(root)
     if state.get(SESSION_INITIALIZED_ENV, "").strip() == "1":
         return True
-    required = ("WANT.md", "TODO.md", "LOGS.md", "GOAL.md", "OOPS.md")
+    required = ("WANT.md", "GOAL.md")
     return all((root / name).exists() for name in required)
 
 

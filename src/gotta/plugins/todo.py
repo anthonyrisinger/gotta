@@ -13,6 +13,7 @@ from gotta.todo import (
     resolve_todo_item,
     set_todo_checked,
     todo_payload,
+    todo_state_path,
 )
 from gotta import session as session_plugin
 
@@ -270,13 +271,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     session_plugin._sync_actor_todo_state(work_dir)
     action = args.action or "show"
-    todo_path = session_plugin._session_surface_path(work_dir, "TODO.md")
     if action == "show":
         payload = todo_payload(work_dir, status=args.status, limit=max(args.limit, 0))
+        actor_scope = session_plugin.session_actor(work_dir) if work_dir.resolve().parent.name == "actors" else ""
+        payload["locator"] = session_plugin._native_surface_locator("todo", actor_name=actor_scope)
+        payload["follow_command"] = session_plugin._native_surface_follow_command(
+            "todo",
+            actor_name=actor_scope,
+        )
         if args.output == "json":
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
-        print(f"todo: {payload['todo']}")
+        print(f"todo: {payload['follow_command']}")
         print(
             f"entries: {payload['entry_count']} "
             f"(open: {payload['open_count']}, done: {payload['done_count']})"
@@ -303,10 +309,10 @@ def main(argv: list[str] | None = None) -> int:
             plugin="todo",
             surface="todo",
             action="append",
-            target=todo_path,
+            target=todo_state_path(work_dir),
             detail="appended 1 TODO item",
         )
-        print(f"appended TODO item in {todo_path}")
+        print("appended TODO item")
         return 0
     if action == "extend":
         entries, item_count = _todo_extend_entries_source(
@@ -329,10 +335,10 @@ def main(argv: list[str] | None = None) -> int:
             plugin="todo",
             surface="todo",
             action="extend",
-            target=todo_path,
+            target=todo_state_path(work_dir),
             detail=f"extended TODO with {item_count} item(s)",
         )
-        print(f"extended TODO items in {todo_path}: {item_count} item(s)")
+        print(f"extended TODO items: {item_count} item(s)")
         return 0
     if action == "check":
         updated_items = _check_todo_items(
@@ -352,12 +358,11 @@ def main(argv: list[str] | None = None) -> int:
                 plugin="todo",
                 surface="todo",
                 action="check",
-                target=todo_path,
+                target=todo_state_path(work_dir),
                 detail=f"checked TODO item {updated['id']}",
             )
             print(
-                f"checked TODO item in {todo_path}: "
-                f"{updated['id']} {updated['section']} :: {updated['text']}"
+                f"checked TODO item: {updated['id']} {updated['section']} :: {updated['text']}"
             )
             return 0
         session_plugin._record_session_activity(
@@ -365,10 +370,10 @@ def main(argv: list[str] | None = None) -> int:
             plugin="todo",
             surface="todo",
             action="check",
-            target=todo_path,
+            target=todo_state_path(work_dir),
             detail=f"checked {len(updated_items)} TODO items",
         )
-        print(f"checked TODO items in {todo_path}: {len(updated_items)} item(s)")
+        print(f"checked TODO items: {len(updated_items)} item(s)")
         for updated in updated_items:
             print(f"- {updated['id']} {updated['section']} :: {updated['text']}")
         return 0

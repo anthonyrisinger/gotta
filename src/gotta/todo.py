@@ -1,4 +1,4 @@
-"""Canonical structured session checklist state and Markdown projection."""
+"""Canonical structured session checklist state and on-demand rendering."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import uuid
 
 from gotta.compat import UTC, datetime
-from gotta.content import SESSION_REPO_ENV, load_state_env_at_root, write_text_atomic
+from gotta.content import SESSION_REPO_ENV, load_state_env_at_root
 from gotta.actor import SESSION_ACTOR_ENV
 from gotta.projection import append_jsonl, read_jsonl_records
 
@@ -28,10 +28,6 @@ DEFAULT_SECTION_ORDER = (
 
 def todo_state_path(work_dir: Path) -> Path:
     return work_dir / "state" / TODO_LOG_NAME
-
-
-def todo_surface_path(work_dir: Path) -> Path:
-    return work_dir / "TODO.md"
 
 
 def is_todo_id(value: str) -> bool:
@@ -110,8 +106,9 @@ def todo_payload(
     if limit > 0:
         filtered = filtered[:limit]
     return {
-        "todo": str(todo_surface_path(work_dir)),
-        "todo_log": str(todo_state_path(work_dir)),
+        "state_path": str(todo_state_path(work_dir)),
+        "locator": "todo:session",
+        "follow_command": "gotta todo",
         "entry_count": len(items),
         "open_count": sum(1 for item in items if not bool(item["checked"])),
         "done_count": sum(1 for item in items if bool(item["checked"])),
@@ -170,11 +167,10 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
         f"# {_repo_display_name(work_dir)} Session TODO",
         "",
         f"> Generated automatically from `state/{TODO_LOG_NAME}`.",
-        "> This is a human-readable projection; the structured `todo` log is canonical.",
+        "> Rendered on demand from canonical state.",
         "",
         "Prefer `gotta todo ...` for routine mutation.",
-        "",
-        "This file is the definition of done for this session as projected from canonical state.",
+        "The structured `todo` log is canonical.",
         "",
         "## Definition Of Done",
         "",
@@ -235,8 +231,8 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
         lines.extend(
             [
                 f"- This session is already the {_actor_label(actor_actor)} actor root for this shared concern.",
-                "- `WANT.md`, `GOAL.md`, and `TODO.md` here are actor-local session surfaces.",
-                "- `LOGS.md` is actor-local procedural/system trace and `OOPS.md` is actor-local friction.",
+                "- `WANT.md` and `GOAL.md` here are actor-local authored charters.",
+                "- Use `gotta todo`, `gotta notes`, `gotta logs`, and `gotta oops` as the live readable surfaces.",
                 "- Append running notes with `gotta notes append ...` from this actor root; add `--actor <actor>` only when targeting another bound actor intentionally.",
                 "- Append at least one short note before requesting completion or sign-off so shared actor visibility lands before closure.",
                 f"- When materially done, record actor completion through `gotta actor complete {actor_actor}`; use `gotta actor stop {actor_actor}` for a graceful operator-directed wind-down, `gotta actor fail {actor_actor}` for actual failure, and finish durable review with `gotta actor signoff {actor_actor} --summary ...`.",
@@ -265,13 +261,6 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def sync_todo_projection(work_dir: Path) -> None:
-    write_text_atomic(
-        todo_surface_path(work_dir),
-        render_todo_markdown(work_dir, todo_items(work_dir)),
-    )
-
-
 def create_todo_item(
     work_dir: Path,
     *,
@@ -297,7 +286,6 @@ def create_todo_item(
         "timestamp": timestamp or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     append_jsonl(todo_state_path(work_dir), payload)
-    sync_todo_projection(work_dir)
     return payload
 
 
@@ -338,7 +326,6 @@ def set_todo_checked(work_dir: Path, item_id: str, *, checked: bool) -> dict[str
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     append_jsonl(todo_state_path(work_dir), payload)
-    sync_todo_projection(work_dir)
     updated = dict(item)
     updated["checked"] = checked
     return updated

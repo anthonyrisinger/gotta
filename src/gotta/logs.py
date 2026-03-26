@@ -1,4 +1,4 @@
-"""Canonical structured session log state and Markdown projection."""
+"""Canonical structured session log state and on-demand rendering."""
 
 from __future__ import annotations
 
@@ -10,9 +10,8 @@ from gotta.content import (
     SESSION_REPO_ENV,
     load_state_env_at_root,
     session_identity,
-    write_text_atomic,
 )
-from gotta.projection import append_chunk, append_jsonl, read_jsonl_records
+from gotta.projection import append_jsonl, read_jsonl_records
 
 
 LOGS_LOG_NAME = "logs.jsonl"
@@ -21,9 +20,6 @@ LOGS_LOG_NAME = "logs.jsonl"
 def logs_state_path(work_dir: Path) -> Path:
     return work_dir / "state" / LOGS_LOG_NAME
 
-
-def logs_surface_path(work_dir: Path) -> Path:
-    return work_dir / "LOGS.md"
 
 def log_records(work_dir: Path) -> list[dict[str, object]]:
     return read_jsonl_records(logs_state_path(work_dir))
@@ -45,8 +41,9 @@ def logs_payload(work_dir: Path, *, limit: int = 0) -> dict[str, object]:
     records = sorted(visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
     entries = records[-limit:] if limit > 0 else records
     return {
-        "logs": str(logs_surface_path(work_dir)),
-        "logs_log": str(logs_state_path(work_dir)),
+        "state_path": str(logs_state_path(work_dir)),
+        "locator": "logs:session",
+        "follow_command": "gotta logs",
         "entry_count": len(records),
         "entries": entries,
     }
@@ -65,7 +62,8 @@ def render_logs_markdown(work_dir: Path, records: list[dict[str, object]]) -> st
         "# Logs",
         "",
         f"> Generated automatically from `state/{LOGS_LOG_NAME}`.",
-        "> This is a human-readable projection; the structured `logs` log is canonical.",
+        "> Rendered on demand from canonical state.",
+        "> The structured `logs` log is canonical.",
         "> This surface is procedural/system trace. Prefer `gotta notes ...` for actor-authored narration.",
         "> Prefer `gotta logs ...` for chronology, runtime trace, and other procedural inspection.",
         "",
@@ -85,23 +83,6 @@ def render_logs_markdown(work_dir: Path, records: list[dict[str, object]]) -> st
     return "\n".join(lines) + "\n"
 
 
-def render_log_record_markdown(record: dict[str, object]) -> str:
-    timestamp = str(record.get("timestamp") or "unknown-time")
-    message = str(record.get("message") or "").strip() or "unspecified log entry"
-    message_lines = message.splitlines() or ["unspecified log entry"]
-    lines = [f"- `{timestamp}` {message_lines[0]}"]
-    for continuation in message_lines[1:]:
-        lines.append(f"  {continuation}")
-    return "\n".join(lines) + "\n"
-
-
-def sync_logs_projection(work_dir: Path) -> None:
-    write_text_atomic(
-        logs_surface_path(work_dir),
-        render_logs_markdown(work_dir, visible_log_records(work_dir)),
-    )
-
-
 def append_log_record(
     work_dir: Path,
     *,
@@ -116,12 +97,7 @@ def append_log_record(
         "channel": "logs",
     }
     log_path = logs_state_path(work_dir)
-    surface_path = logs_surface_path(work_dir)
     append_jsonl(log_path, payload)
-    if surface_path.exists():
-        append_chunk(surface_path, render_log_record_markdown(payload))
-    else:
-        sync_logs_projection(work_dir)
     return payload
 
 
