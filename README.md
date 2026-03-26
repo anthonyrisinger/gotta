@@ -1,13 +1,26 @@
 # Gotta
 
-`gotta` is a session-rooted CLI for evidence acquisition, operational memory,
-durable continuity, and linked actor workflows.
+`gotta` is a session-rooted CLI for remote discovery, evidence acquisition,
+durable operator memory, and actor-coordinated workflows.
 
-The point is broader than retrieving one more document. `gotta` is designed to
-keep actor work coherent when terminal history, model context windows, or human
-working memory come under pressure. It pushes enough state, provenance, and
-materialized evidence into durable external form. This lets an actor rehydrate
-prior work reliably and continue from grounded context.
+The point is broader than retrieving one more document. `gotta` is for terminal
+work that would otherwise die in scrollback, browser tabs, or compacted model
+context. It externalizes enough evidence, state, provenance, and follow-up
+structure that a session can be reopened and continued from grounded context
+instead of reconstructed from memory.
+
+At a glance:
+
+- `gotta search` routes plain-text remote discovery into provider-native search
+  surfaces
+- `gotta read` materializes local or remote evidence into a durable session
+  graph
+- `gotta session` turns that graph into manifest, timeline, graph, leads,
+  analyze, and scan views
+- `gotta notes`, `gotta logs`, `gotta oops`, and `gotta todo` are live CLI
+  surfaces over canonical JSONL state
+- `gotta actor` coordinates sibling actors inside one shared session without
+  flattening everything into one transcript
 
 The public surface stays small:
 
@@ -56,7 +69,8 @@ It externalizes the parts of the working context that should survive:
 - the session itself as a durable working root
 - canonical task, log, and friction state
 - materialized evidence with native reopen handles
-- synthesis surfaces such as manifest, timeline, graph, leads, and analyze
+- synthesis surfaces such as manifest, timeline, graph, leads, analyze, and
+  scan
 
 That is why `gotta` is session-rooted rather than request-rooted. A request is
 ephemeral. A session can be reopened, inspected, extended, handed off, or
@@ -191,8 +205,13 @@ Durable OAuth state lands under gotta's OS-native state directory:
 
 ## Canonical Session Model
 
-The canonical top-level root is a shared session root under gotta's OS-native
-data directory:
+`gotta` has two first-class session layouts:
+
+- shared-topology sessions under gotta's OS-native data directory
+- exact-root sessions scaffolded intentionally at one concrete path
+
+Shared-topology sessions are the ambient default for stable interactive
+fingerprints such as Codex threads and terminal sessions:
 
 ```text
 <gotta data dir>/sessions/<session-id>/
@@ -206,7 +225,7 @@ Examples:
 - macOS: `~/Library/Application Support/gotta/sessions/<session-id>/`
 - Linux: `~/.local/share/gotta/sessions/<session-id>/`
 
-Each shared session owns:
+Each shared-topology session owns:
 
 - `session.json` for shared session membership and actor metadata
 - `content/` for the shared evidence web and append-only manifest
@@ -234,6 +253,32 @@ The default private session for an unbound fingerprint is:
 sessions/<fingerprint>/actors/<fingerprint>/
 ```
 
+Exact-root sessions are the manual path when you intentionally want one
+workspace-local root with session metadata, actor surfaces, and content
+co-located:
+
+```bash
+gotta session init --session "$WS"
+gotta session bind "$WS"
+```
+
+```text
+<exact-root>/
+  WANT.md
+  GOAL.md
+  state/
+  content/
+  actors/<actor-id>/
+  session.json          # appears once sibling actors are bound
+```
+
+The topology choice is intentional:
+
+- shared-topology sessions are the canonical ambient/default path
+- exact-root sessions are the explicit "this directory is the session" path
+- `gotta session bind` accepts either a shared session id, an exact session
+  root, or an explicit `<session>/<actor>` reference
+
 Stored artifacts have two native reopen handles:
 
 - `artifact:<preferred-name>@<digest12>`
@@ -256,13 +301,14 @@ of prior interactions.
 
 ## Retrieval And Materialization
 
-Provider-first usage without session scaffolding is a core workflow:
+Remote discovery and evidence acquisition are the canonical front door:
 
 ```bash
 gotta jira status
-gotta jira search "retry budget"
-gotta github search "service ownership"
+gotta search jira:retry budget
+gotta search github:service ownership --type code --repo org/repo
 gotta github https://github.com/org/repo/commits/HEAD
+gotta github https://github.com/org/repo/actions/runs/1234567890
 gotta grafana status
 gotta grafana datasources
 gotta grafana search --type dash-db
@@ -281,6 +327,7 @@ gotta slack workspaces
 gotta slack auth
 gotta slack search "handoff failure"
 gotta read https://github.com/org/repo/blob/main/README.md
+gotta read https://slack.com/docs/T12345678/D12345678
 ```
 
 Stable interactive fingerprints like Codex threads and terminal sessions
@@ -294,7 +341,7 @@ creation. Fallback synthetic fingerprints remain conservative and can still
 use provider surfaces sessionlessly until a session is explicitly bound or
 created.
 
-`gotta read` is the canonical retrieval entrypoint. It supports:
+`gotta read` is the canonical acquisition entrypoint. It supports:
 
 - local files and directories
 - bounded local rereads through `--head`, `--tail`, and `--section`
@@ -305,10 +352,10 @@ created.
 - stored content rereads by artifact or digest
 
 This surface is broader than search. It is the acquisition layer for the
-session's evidence web. Slack threads, GitHub pages, Jira issues, Google docs
-and Drive files, accessible shared-drive documents, Grafana dashboards,
-Confluence pages, and Granola notes all become reopenable session artifacts
-rather than transient terminal output.
+session's evidence web. Slack threads and docs, GitHub pages and Actions runs,
+Jira issues, Google Docs and Drive files, shared-drive documents, Grafana
+dashboards, Confluence pages, and Granola notes all become reopenable session
+artifacts rather than transient terminal output.
 
 Granola extends that same model to personal notes and transcripts through the
 local desktop session and Granola's APIs, so meeting notes and transcripts
@@ -344,17 +391,19 @@ work, but the canonical form is `github:foo`.
 - `session graph`
 - `session leads`
 - `session analyze`
+- `session scan`
 
 Examples:
 
 ```bash
 gotta session show
 gotta session manifest --plugin jira
-gotta session timeline --limit 20
-gotta session graph --output mermaid
+gotta session timeline --filter retry --limit 20
+gotta session graph --filter jira --output mermaid
 gotta session leads artifact:ticket.md@0123deadbeef
 gotta session analyze --mode lineage --output mermaid
 gotta session analyze --output markdown
+gotta session scan "retry ownership"
 ```
 
 These surfaces intentionally compress the evidence web without severing it:
@@ -363,16 +412,25 @@ These surfaces intentionally compress the evidence web without severing it:
 - `timeline` reconstructs chronology
 - `graph` renders lineage and continuity
 - `leads` extracts explicit next reads from existing artifacts
-- `analyze` rebuilds cached session synthesis outputs from durable state
+- `analyze` renders focused lineage and semantic synthesis directly from
+  durable state
+- `scan` searches projected artifact text across the materialized corpus
 
-`session analyze` always renders the requested `--output` format to stdout.
-Redirect stdout when you want a durable editor-visible graph or bundle. Textual
-stdout is budgeted by default; pass `--full-output` to disable terminal
-budgeting. Successful operator surfaces emit a compact JSON receipt on stderr
-only when gotta has non-obvious side effects to report, such as truncation or
-artifact locators; pass `--quiet` to suppress informational stderr output. Raw
-Mermaid output requires `--mode lineage` or `--mode semantic`; use `--output
-markdown` for the combined two-graph bundle.
+Where helpful, manifest, timeline, graph, and leads also surface top-N
+hotspots in both text and JSON so the densest actors, providers, plugins, and
+artifact kinds are visible without reading the entire payload.
+
+`session analyze` always renders the requested `--output` format to stdout and
+no longer writes graph bundles or summary artifacts as a side effect. Redirect
+stdout when you want durable editor-visible output. Textual stdout is budgeted
+by default; pass `--full-output` to disable terminal budgeting. Successful
+operator surfaces emit a compact JSON receipt on stderr only when gotta has
+non-obvious side effects to report, such as truncation or artifact locators;
+pass `--quiet` to suppress informational stderr output. Raw Mermaid output
+requires `--mode lineage` or `--mode semantic`; use `--output markdown` for
+the combined two-graph bundle. Text and Markdown analysis outputs now start
+with a compact anchor shortlist plus lineage and lead previews before the
+deeper sections.
 
 Empty `manifest`, `graph`, `leads`, and `analyze` output means the session has
 not materialized enough evidence yet.
@@ -383,8 +441,8 @@ structure rather than a thin summary.
 
 ## Session Coordination
 
-Bind one shared session explicitly, then rewrite the operator-owned charter
-surfaces inside the active actor root:
+When you want one explicit shared session, bind it and then rewrite the
+operator-owned charter surfaces inside the active actor root:
 
 ```bash
 gotta session bind retry-review
@@ -586,7 +644,8 @@ These terms appear throughout `gotta` and its documentation:
 - **synthesis surface** — a compressed, navigable view over the evidence web.
   `manifest` summarizes what has been materialized. `timeline` reconstructs
   chronology. `graph` renders lineage. `leads` extracts followable references.
-  `analyze` rebuilds cached session synthesis.
+  `analyze` renders focused synthesis directly from durable state. `scan`
+  searches projected artifact text across the corpus.
 
 - **friction** — operator-visible misalignment captured in `oops`. Not bug
   tracking. Friction records seams: misleading contracts, continuity gaps,
@@ -615,9 +674,11 @@ and still contribute modules under the shared `gotta` namespace.
 Core ships these top-level plugins:
 
 - `ask`
+- `actor`
 - `confluence`
 - `gdocs`
 - `gdrive`
+- `goal`
 - `grafana`
 - `granola`
 - `github`
@@ -626,13 +687,12 @@ Core ships these top-level plugins:
 - `logs`
 - `notes`
 - `oops`
-- `actor`
 - `read`
+- `search`
 - `session`
 - `slack`
 - `todo`
 - `want`
-- `goal`
 
 `read` is the URL-shaped dispatcher. It routes recognized targets through
 installed provider plugins by asking those plugins whether they own the target.
@@ -669,7 +729,8 @@ If you contribute:
 - preserve the native evidence-first workflow
 - prefer behavior-level cleanup over compatibility ballast
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository baseline.
+See [CONTRIBUTING.md](https://github.com/anthonyrisinger/gotta/blob/main/CONTRIBUTING.md)
+for the repository baseline.
 
 ## Release
 

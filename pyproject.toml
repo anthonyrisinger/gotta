@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gotta"
 version = "0.28.0"
-description = "Session-rooted CLI for evidence acquisition, operational memory, durable continuity, and linked peer workflows"
+description = "Session-rooted CLI for remote discovery, evidence acquisition, durable operator memory, and actor-coordinated workflows"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -15,17 +15,18 @@ dependencies = [
 ]
 keywords = [
     "cli",
-    "evidence",
-    "acquisition",
-    "memory",
-    "continuity",
-    "session",
-    "workflow",
     "ai",
     "agent",
-    "context",
+    "continuity",
+    "discovery",
+    "evidence",
     "investigation",
+    "memory",
+    "operations",
     "retrieval",
+    "search",
+    "session",
+    "workflow",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -34,6 +35,7 @@ classifiers = [
     "Intended Audience :: Information Technology",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -45,8 +47,10 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/anthonyrisinger/gotta"
+Documentation = "https://github.com/anthonyrisinger/gotta#readme"
 Repository = "https://github.com/anthonyrisinger/gotta"
 Issues = "https://github.com/anthonyrisinger/gotta/issues"
+Releases = "https://github.com/anthonyrisinger/gotta/releases"
 
 [project.optional-dependencies]
 dev = [
@@ -62,24 +66,26 @@ dev = [
 gotta = "gotta.main:main"
 
 [project.entry-points."gotta.plugins"]
+actor = "gotta.builtin:actor_plugin"
 ask = "gotta.builtin:ask_plugin"
 confluence = "gotta.builtin:confluence_plugin"
-read = "gotta.builtin:read_plugin"
-oops = "gotta.builtin:oops_plugin"
-todo = "gotta.builtin:todo_plugin"
 gdocs = "gotta.builtin:gdocs_plugin"
-gsheets = "gotta.builtin:gsheets_plugin"
 gdrive = "gotta.builtin:gdrive_plugin"
+goal = "gotta.builtin:goal_plugin"
+grafana = "gotta.builtin:grafana_plugin"
 granola = "gotta.builtin:granola_plugin"
 github = "gotta.builtin:github_plugin"
 jira = "gotta.builtin:jira_plugin"
+gsheets = "gotta.builtin:gsheets_plugin"
 logs = "gotta.builtin:logs_plugin"
 notes = "gotta.builtin:notes_plugin"
-peer = "gotta.builtin:peer_plugin"
+oops = "gotta.builtin:oops_plugin"
+read = "gotta.builtin:read_plugin"
+search = "gotta.builtin:search_plugin"
 session = "gotta.builtin:session_plugin"
 slack = "gotta.builtin:slack_plugin"
+todo = "gotta.builtin:todo_plugin"
 want = "gotta.builtin:want_plugin"
-goal = "gotta.builtin:goal_plugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]
