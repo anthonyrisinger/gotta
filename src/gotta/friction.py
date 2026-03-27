@@ -48,10 +48,14 @@ OOPS_CHANNEL = FrictionChannel(
     default_message="unspecified speed bump",
 )
 
+
 def channel_log_path(session_dir: Path, channel: FrictionChannel) -> Path:
     return session_dir / "state" / f"{channel.stem}.jsonl"
 
-def channel_records(session_dir: Path, channel: FrictionChannel) -> list[dict[str, object]]:
+
+def channel_records(
+    session_dir: Path, channel: FrictionChannel
+) -> list[dict[str, object]]:
     return read_jsonl_records(channel_log_path(session_dir, channel))
 
 
@@ -60,7 +64,9 @@ def visible_channel_records(
     channel: FrictionChannel,
 ) -> list[dict[str, object]]:
     target_actor = (
-        session_actor(session_dir) if session_dir.resolve().parent.name == "actors" else ""
+        session_actor(session_dir)
+        if session_dir.resolve().parent.name == "actors"
+        else ""
     )
     records = channel_records(session_dir, channel)
     if not target_actor:
@@ -68,7 +74,8 @@ def visible_channel_records(
     return [
         record
         for record in records
-        if writer_role(session_dir, target_actor, writer=str(record.get("actor") or "")) != "foreign"
+        if writer_role(session_dir, target_actor, writer=str(record.get("actor") or ""))
+        != "foreign"
     ]
 
 
@@ -144,7 +151,9 @@ def append_channel_record(
     reproducibility: str = "unknown",
     resolution_state: str = "open",
 ) -> dict[str, object]:
-    record_actor = actor.strip() or current_actor(default_actor=session_identity(session_dir))
+    record_actor = actor.strip() or current_actor(
+        default_actor=session_identity(session_dir)
+    )
     payload: dict[str, object] = {
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "actor": record_actor,
@@ -162,10 +171,18 @@ def append_channel_record(
     }
     log_path = channel_log_path(session_dir, channel)
     append_jsonl(log_path, payload)
-    actor_id = session_identity(session_dir) if session_dir.resolve().parent.name == "actors" else ""
-    locator = f"{channel.stem}:actor:{actor_id}" if actor_id else f"{channel.stem}:session"
+    actor_id = (
+        session_identity(session_dir)
+        if session_dir.resolve().parent.name == "actors"
+        else ""
+    )
+    locator = (
+        f"{channel.stem}:actor:{actor_id}" if actor_id else f"{channel.stem}:session"
+    )
     follow_command = (
-        f"gotta {channel.stem} --actor {actor_id}" if actor_id else f"gotta {channel.stem}"
+        f"gotta {channel.stem} --actor {actor_id}"
+        if actor_id
+        else f"gotta {channel.stem}"
     )
     append_activity_event(
         session_dir,
@@ -204,9 +221,13 @@ def recent_channel_lines(
 
 
 def channel_summary(records: list[dict[str, object]]) -> dict[str, object]:
-    severity_counts = Counter(str(record.get("severity") or "unknown") for record in records)
+    severity_counts = Counter(
+        str(record.get("severity") or "unknown") for record in records
+    )
     kind_counts = Counter(str(record.get("kind") or "general") for record in records)
-    surface_counts = Counter(str(record.get("surface") or "unspecified") for record in records)
+    surface_counts = Counter(
+        str(record.get("surface") or "unspecified") for record in records
+    )
     resolution_counts = Counter(
         str(record.get("resolution_state") or "open") for record in records
     )
@@ -229,6 +250,8 @@ def channel_summary(records: list[dict[str, object]]) -> dict[str, object]:
 
 def oops_log_path(session_dir: Path) -> Path:
     return channel_log_path(session_dir, OOPS_CHANNEL)
+
+
 def oops_records(session_dir: Path) -> list[dict[str, object]]:
     return channel_records(session_dir, OOPS_CHANNEL)
 
@@ -252,6 +275,8 @@ def filtered_oops_records(
 
 def render_oops_markdown(records: list[dict[str, object]]) -> str:
     return render_channel_markdown(records, OOPS_CHANNEL)
+
+
 def append_oops_record(
     session_dir: Path,
     *,

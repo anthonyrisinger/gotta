@@ -189,7 +189,11 @@ def load_session(base_url: str, *, allow_reauth: bool = True) -> Session:
             )
         return Session(token=token, cloud_id=cloud_id, base_url=resolved_base_url)
     except ToolError:
-        if allow_reauth and is_interactive() and token_preflight_status(token) == "invalid":
+        if (
+            allow_reauth
+            and is_interactive()
+            and token_preflight_status(token) == "invalid"
+        ):
             run_oauth_bootstrap(base_url=base_url)
             return load_session(base_url, allow_reauth=False)
         raise
@@ -198,7 +202,9 @@ def load_session(base_url: str, *, allow_reauth: bool = True) -> Session:
 def default_base_url() -> str:
     config_env = load_atlassian_config_env()
     return site_root(
-        atl.env_or_config(config_env, JIRA_BASE_URL_ENV, default=DEFAULT_JIRA_BASE_URL).strip()
+        atl.env_or_config(
+            config_env, JIRA_BASE_URL_ENV, default=DEFAULT_JIRA_BASE_URL
+        ).strip()
     )
 
 
@@ -300,7 +306,9 @@ def _search_issue_key(query: str) -> str:
     return ""
 
 
-def _search_payload_for_issue(envelope: dict[str, Any], *, query: str) -> dict[str, Any]:
+def _search_payload_for_issue(
+    envelope: dict[str, Any], *, query: str
+) -> dict[str, Any]:
     key = str(envelope.get("key") or "")
     return _with_jira_visibility(
         {
@@ -396,10 +404,14 @@ def preferred_name(argv: list[str], options: object) -> str:
         issue_key = _issue_key_for_locator(args.issue)
         return f"{issue_key}.json"
     if args.command == "projects":
-        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        suffix = _list_window_suffix(
+            limit=args.limit, offset=args.offset, include_all=bool(args.all)
+        )
         return f"jira-projects{suffix}.{_output_extension(args.output)}"
     if args.command == "sprints":
-        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        suffix = _list_window_suffix(
+            limit=args.limit, offset=args.offset, include_all=bool(args.all)
+        )
         if args.board is not None:
             return f"jira-sprints-board-{args.board}{suffix}.{_output_extension(args.output)}"
         return f"jira-sprints-{_slug(args.project, fallback='jira')}{suffix}.{_output_extension(args.output)}"
@@ -408,8 +420,12 @@ def preferred_name(argv: list[str], options: object) -> str:
         return f"{issue_key}-add-to-sprint.{_output_extension(args.output)}"
     if args.command == "issue-types":
         suffix = _slug(args.project, fallback="jira")
-        window_suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
-        return f"jira-issue-types-{suffix}{window_suffix}.{_output_extension(args.output)}"
+        window_suffix = _list_window_suffix(
+            limit=args.limit, offset=args.offset, include_all=bool(args.all)
+        )
+        return (
+            f"jira-issue-types-{suffix}{window_suffix}.{_output_extension(args.output)}"
+        )
     if args.command == "fields":
         if args.issue:
             issue_key = _issue_key_for_locator(args.issue)
@@ -417,11 +433,15 @@ def preferred_name(argv: list[str], options: object) -> str:
         suffix = _slug(f"{args.project}-{args.type}", fallback="jira")
         return f"jira-fields-{suffix}.{_output_extension(args.output)}"
     if args.command == "link-types":
-        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        suffix = _list_window_suffix(
+            limit=args.limit, offset=args.offset, include_all=bool(args.all)
+        )
         return f"jira-link-types{suffix}.{_output_extension(args.output)}"
     if args.command == "transitions":
         issue_key = _issue_key_for_locator(args.issue)
-        suffix = _list_window_suffix(limit=args.limit, offset=args.offset, include_all=bool(args.all))
+        suffix = _list_window_suffix(
+            limit=args.limit, offset=args.offset, include_all=bool(args.all)
+        )
         return f"jira-transitions-{issue_key}{suffix}.{_output_extension(args.output)}"
     if args.command == "create":
         suffix = _slug(f"{args.project}-{args.title}", fallback="jira")
@@ -533,7 +553,9 @@ def parse_issue_ref(raw: str, *, base_url_override: str = "") -> IssueRef:
             "or /jira/.../issues/ISSUE-123"
         )
     base_url = site_root(f"{parsed.scheme}://{parsed.netloc}")
-    return IssueRef(issue_key=normalize_issue_key(url_match.group(1)), base_url=base_url)
+    return IssueRef(
+        issue_key=normalize_issue_key(url_match.group(1)), base_url=base_url
+    )
 
 
 def _normalize_lookup(value: str) -> str:
@@ -564,7 +586,9 @@ def read_explicit_body(
     return ""
 
 
-def jira_projects_api_url(session: Session, *, start_at: int = 0, max_results: int = 100) -> str:
+def jira_projects_api_url(
+    session: Session, *, start_at: int = 0, max_results: int = 100
+) -> str:
     query = urllib.parse.urlencode({"startAt": start_at, "maxResults": max_results})
     return f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/api/3/project/search?{query}"
 
@@ -587,7 +611,9 @@ def jira_create_issue_types_api_url(session: Session, project_key: str) -> str:
     )
 
 
-def jira_create_fields_api_url(session: Session, project_key: str, issue_type_id: str) -> str:
+def jira_create_fields_api_url(
+    session: Session, project_key: str, issue_type_id: str
+) -> str:
     return (
         f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/api/3/issue/createmeta/"
         f"{urllib.parse.quote(project_key)}/issuetypes/{urllib.parse.quote(issue_type_id)}"
@@ -608,7 +634,9 @@ def jira_comment_api_url(session: Session, issue_key: str) -> str:
     )
 
 
-def jira_transitions_api_url(session: Session, issue_key: str, *, expand_fields: bool = False) -> str:
+def jira_transitions_api_url(
+    session: Session, issue_key: str, *, expand_fields: bool = False
+) -> str:
     params = ""
     if expand_fields:
         params = "?" + urllib.parse.urlencode({"expand": "transitions.fields"})
@@ -619,7 +647,9 @@ def jira_transitions_api_url(session: Session, issue_key: str, *, expand_fields:
 
 
 def jira_issue_link_types_api_url(session: Session) -> str:
-    return f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/api/3/issueLinkType"
+    return (
+        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/api/3/issueLinkType"
+    )
 
 
 def jira_issue_link_api_url(session: Session) -> str:
@@ -730,7 +760,11 @@ def normalize_field_metadata(field_id: str, payload: Any) -> dict[str, Any]:
         "hasDefaultValue": bool(payload.get("hasDefaultValue")),
         "operations": [item for item in operations if isinstance(item, str)],
         "schema": normalize_field_schema(payload.get("schema")),
-        "allowedValues": [normalize_allowed_value(item) for item in allowed_values if isinstance(item, dict)],
+        "allowedValues": [
+            normalize_allowed_value(item)
+            for item in allowed_values
+            if isinstance(item, dict)
+        ],
     }
 
 
@@ -768,8 +802,12 @@ def fetch_projects(base_url: str) -> tuple[Session, list[dict[str, Any]]]:
     return session, projects
 
 
-def fetch_create_issue_types(session: Session, project_key: str) -> list[dict[str, Any]]:
-    payload = api_json("GET", jira_create_issue_types_api_url(session, project_key), session.token)
+def fetch_create_issue_types(
+    session: Session, project_key: str
+) -> list[dict[str, Any]]:
+    payload = api_json(
+        "GET", jira_create_issue_types_api_url(session, project_key), session.token
+    )
     if not isinstance(payload, dict):
         raise ToolError("unexpected Jira issue type metadata response")
     values = payload.get("issueTypes")
@@ -796,7 +834,10 @@ def fetch_create_issue_types(session: Session, project_key: str) -> list[dict[st
 def resolve_issue_type(session: Session, project_key: str, raw: str) -> dict[str, Any]:
     lookup = _normalize_lookup(raw)
     for item in fetch_create_issue_types(session, project_key):
-        if str(item.get("id") or "") == raw or _normalize_lookup(str(item.get("name") or "")) == lookup:
+        if (
+            str(item.get("id") or "") == raw
+            or _normalize_lookup(str(item.get("name") or "")) == lookup
+        ):
             return item
     raise ToolError(
         f"unknown Jira issue type for project {project_key}: {raw}. "
@@ -804,7 +845,9 @@ def resolve_issue_type(session: Session, project_key: str, raw: str) -> dict[str
     )
 
 
-def fetch_create_fields(session: Session, project_key: str, issue_type_id: str) -> dict[str, dict[str, Any]]:
+def fetch_create_fields(
+    session: Session, project_key: str, issue_type_id: str
+) -> dict[str, dict[str, Any]]:
     payload = api_json(
         "GET",
         jira_create_fields_api_url(session, project_key, issue_type_id),
@@ -815,18 +858,26 @@ def fetch_create_fields(session: Session, project_key: str, issue_type_id: str) 
     fields = payload.get("fields")
     if not isinstance(fields, dict):
         fields = {}
-    return {field_id: normalize_field_metadata(field_id, meta) for field_id, meta in fields.items()}
+    return {
+        field_id: normalize_field_metadata(field_id, meta)
+        for field_id, meta in fields.items()
+    }
 
 
 def fetch_edit_fields(issue_ref: IssueRef) -> tuple[Session, dict[str, dict[str, Any]]]:
     session = load_session(issue_ref.base_url)
-    payload = api_json("GET", jira_editmeta_api_url(session, issue_ref.issue_key), session.token)
+    payload = api_json(
+        "GET", jira_editmeta_api_url(session, issue_ref.issue_key), session.token
+    )
     if not isinstance(payload, dict):
         raise ToolError("unexpected Jira edit metadata response")
     fields = payload.get("fields")
     if not isinstance(fields, dict):
         fields = {}
-    return session, {field_id: normalize_field_metadata(field_id, meta) for field_id, meta in fields.items()}
+    return session, {
+        field_id: normalize_field_metadata(field_id, meta)
+        for field_id, meta in fields.items()
+    }
 
 
 def fetch_issue_link_types(base_url: str) -> tuple[Session, list[dict[str, Any]]]:
@@ -936,7 +987,9 @@ def fetch_scrum_boards(
         values = payload.get("values")
         if not isinstance(values, list):
             values = []
-        boards.extend(normalize_board(item) for item in values if isinstance(item, dict))
+        boards.extend(
+            normalize_board(item) for item in values if isinstance(item, dict)
+        )
         if bool(payload.get("isLast")):
             break
         start_at += int(payload.get("maxResults") or len(values) or 50)
@@ -982,7 +1035,9 @@ def fetch_board_sprints(
         values = payload.get("values")
         if not isinstance(values, list):
             values = []
-        sprints.extend(normalize_sprint(item) for item in values if isinstance(item, dict))
+        sprints.extend(
+            normalize_sprint(item) for item in values if isinstance(item, dict)
+        )
         if bool(payload.get("isLast")):
             break
         start_at += int(payload.get("maxResults") or len(values) or 50)
@@ -1013,13 +1068,17 @@ def collect_board_sprints(
         board = fetch_board(session, board_id)
         boards = [board]
         if project_key_or_id:
-            _, project_boards = fetch_scrum_boards(base_url, project_key_or_id=project_key_or_id)
+            _, project_boards = fetch_scrum_boards(
+                base_url, project_key_or_id=project_key_or_id
+            )
             if board["id"] not in {item["id"] for item in project_boards}:
                 raise ToolError(
                     f"board {board_id} is not a scrum board for project {project_key_or_id}"
                 )
     else:
-        session, boards = fetch_scrum_boards(base_url, project_key_or_id=project_key_or_id)
+        session, boards = fetch_scrum_boards(
+            base_url, project_key_or_id=project_key_or_id
+        )
         if project_key_or_id and not boards:
             raise ToolError(f"no scrum boards found for project {project_key_or_id}")
     board_sprints: list[dict[str, Any]] = []
@@ -1053,7 +1112,8 @@ def resolve_current_sprint(
         (board, sprint)
         for board in board_sprints
         for sprint in board.get("sprints", [])
-        if isinstance(sprint, dict) and str(sprint.get("state") or "").casefold() == "active"
+        if isinstance(sprint, dict)
+        and str(sprint.get("state") or "").casefold() == "active"
     ]
     if not active_pairs:
         if board_id is not None:
@@ -1102,7 +1162,9 @@ def resolve_assignment_sprint(
             f"sprint {sprint_id} belongs to board {board['id']}, not board {board_id}"
         )
     if project_key_or_id:
-        _, project_boards = fetch_scrum_boards(base_url, project_key_or_id=project_key_or_id)
+        _, project_boards = fetch_scrum_boards(
+            base_url, project_key_or_id=project_key_or_id
+        )
         if board["id"] not in {item["id"] for item in project_boards}:
             raise ToolError(
                 f"sprint {sprint_id} does not belong to a scrum board for project {project_key_or_id}"
@@ -1144,14 +1206,19 @@ def parse_field_assignments(values: list[str] | None) -> dict[str, list[str]]:
     return assignments
 
 
-def select_allowed_value(field_name: str, raw: str, allowed_values: list[dict[str, Any]]) -> dict[str, Any]:
+def select_allowed_value(
+    field_name: str, raw: str, allowed_values: list[dict[str, Any]]
+) -> dict[str, Any]:
     candidate = _normalize_lookup(raw)
     for item in allowed_values:
         for key in ("id", "key", "name", "value", "displayName", "accountId"):
             value = str(item.get(key) or "")
             if value and (_normalize_lookup(value) == candidate or value == raw):
                 return item
-    options = [item.get("name") or item.get("value") or item.get("key") or item.get("id") for item in allowed_values]
+    options = [
+        item.get("name") or item.get("value") or item.get("key") or item.get("id")
+        for item in allowed_values
+    ]
     rendered = ", ".join(str(option) for option in options if option)
     raise ToolError(
         f"invalid value for Jira field {field_name}: {raw}"
@@ -1159,7 +1226,9 @@ def select_allowed_value(field_name: str, raw: str, allowed_values: list[dict[st
     )
 
 
-def coerce_field_value(field_id: str, meta: dict[str, Any], raw_values: list[str]) -> Any:
+def coerce_field_value(
+    field_id: str, meta: dict[str, Any], raw_values: list[str]
+) -> Any:
     schema = meta.get("schema")
     if not isinstance(schema, dict):
         schema = {}
@@ -1186,7 +1255,9 @@ def coerce_field_value(field_id: str, meta: dict[str, Any], raw_values: list[str
         for raw in raw_values:
             for candidate in [item.strip() for item in raw.split(",") if item.strip()]:
                 if allowed_values:
-                    selected = select_allowed_value(field_name, candidate, allowed_values)
+                    selected = select_allowed_value(
+                        field_name, candidate, allowed_values
+                    )
                     if selected.get("id"):
                         items.append({"id": selected["id"]})
                     elif selected.get("name"):
@@ -1197,16 +1268,22 @@ def coerce_field_value(field_id: str, meta: dict[str, Any], raw_values: list[str
     if field_type == "array":
         split_values: list[str] = []
         for raw in raw_values:
-            split_values.extend([item.strip() for item in raw.split(",") if item.strip()])
+            split_values.extend(
+                [item.strip() for item in raw.split(",") if item.strip()]
+            )
         if item_type == "option":
             if not allowed_values:
                 return [{"value": candidate} for candidate in split_values]
             return [
                 {"id": selected["id"]}
                 if selected.get("id")
-                else {"value": selected.get("value") or selected.get("name") or candidate}
+                else {
+                    "value": selected.get("value") or selected.get("name") or candidate
+                }
                 for candidate in split_values
-                for selected in [select_allowed_value(field_name, candidate, allowed_values)]
+                for selected in [
+                    select_allowed_value(field_name, candidate, allowed_values)
+                ]
             ]
         return split_values
     if field_id == "priority" or system == "priority" or field_type == "priority":
@@ -1239,7 +1316,9 @@ def coerce_field_value(field_id: str, meta: dict[str, Any], raw_values: list[str
             try:
                 return float(raw_values[-1])
             except ValueError as exc:
-                raise ToolError(f"invalid numeric value for Jira field {field_name}: {raw_values[-1]}") from exc
+                raise ToolError(
+                    f"invalid numeric value for Jira field {field_name}: {raw_values[-1]}"
+                ) from exc
     if field_type == "string":
         return raw_values[-1]
     candidate = raw_values[-1].strip()
@@ -1264,7 +1343,9 @@ def normalize_api_error_message(exc: ToolError) -> str:
     details: list[str] = []
     error_messages = payload.get("errorMessages")
     if isinstance(error_messages, list):
-        details.extend(str(item) for item in error_messages if isinstance(item, str) and item)
+        details.extend(
+            str(item) for item in error_messages if isinstance(item, str) and item
+        )
     errors = payload.get("errors")
     if isinstance(errors, dict):
         for field, detail in errors.items():
@@ -1274,7 +1355,6 @@ def normalize_api_error_message(exc: ToolError) -> str:
     if not details:
         return message
     return "; ".join(details)
-
 
 
 def named_object(value: Any, *, include_key: bool = False) -> dict[str, Any] | None:
@@ -1327,7 +1407,9 @@ def adf_text(node: Any) -> str:
                 return text
         return ""
     parts: list[str] = []
-    for child in node.get("content", []) if isinstance(node.get("content"), list) else []:
+    for child in (
+        node.get("content", []) if isinstance(node.get("content"), list) else []
+    ):
         parts.append(adf_text(child))
     text = "".join(parts)
     if node_type in {"paragraph", "heading", "blockquote", "codeBlock"} and text:
@@ -1479,7 +1561,9 @@ def render_adf_block(node: Any, *, level: int = 0) -> str:
         for child in content:
             block = render_adf_block(child, level=level).strip()
             if block:
-                inner.extend(f"> {line}" if line else ">" for line in block.splitlines())
+                inner.extend(
+                    f"> {line}" if line else ">" for line in block.splitlines()
+                )
         return "\n".join(inner)
     if node_type == "codeBlock":
         attrs = node.get("attrs")
@@ -1495,7 +1579,9 @@ def render_adf_block(node: Any, *, level: int = 0) -> str:
         for child in content:
             block = render_adf_block(child, level=level).strip()
             if block:
-                inner.extend(f"> {line}" if line else ">" for line in block.splitlines())
+                inner.extend(
+                    f"> {line}" if line else ">" for line in block.splitlines()
+                )
         return "\n".join(inner)
     return "".join(render_adf_inline(child) for child in content).strip()
 
@@ -1504,7 +1590,9 @@ def adf_doc(blocks: list[dict[str, Any]]) -> dict[str, Any]:
     return {"type": "doc", "version": 1, "content": blocks}
 
 
-def adf_text_node(text: str, *, marks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def adf_text_node(
+    text: str, *, marks: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     node: dict[str, Any] = {"type": "text", "text": text}
     if marks:
         node["marks"] = marks
@@ -1519,7 +1607,9 @@ def _clone_mark(mark: dict[str, Any]) -> dict[str, Any]:
     return cloned
 
 
-def _apply_mark(nodes: list[dict[str, Any]], mark: dict[str, Any]) -> list[dict[str, Any]]:
+def _apply_mark(
+    nodes: list[dict[str, Any]], mark: dict[str, Any]
+) -> list[dict[str, Any]]:
     applied: list[dict[str, Any]] = []
     for node in nodes:
         if node.get("type") != "text":
@@ -1539,7 +1629,11 @@ def _apply_mark(nodes: list[dict[str, Any]], mark: dict[str, Any]) -> list[dict[
 
 
 def _clone_mark_list(marks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_clone_mark(mark) for mark in marks if isinstance(mark, dict) and mark.get("type")]
+    return [
+        _clone_mark(mark)
+        for mark in marks
+        if isinstance(mark, dict) and mark.get("type")
+    ]
 
 
 def parse_markdown_inline(text: str) -> list[dict[str, Any]]:
@@ -1549,30 +1643,45 @@ def parse_markdown_inline(text: str) -> list[dict[str, Any]]:
         if text.startswith("`", index):
             end = text.find("`", index + 1)
             if end != -1:
-                nodes.append(adf_text_node(text[index + 1 : end], marks=[{"type": "code"}]))
+                nodes.append(
+                    adf_text_node(text[index + 1 : end], marks=[{"type": "code"}])
+                )
                 index = end + 1
                 continue
         link_match = re.match(r"\[([^\]]+)\]\(([^)\s]+)\)", text[index:])
         if link_match:
             inner_nodes = parse_markdown_inline(link_match.group(1))
             nodes.extend(
-                _apply_mark(inner_nodes, {"type": "link", "attrs": {"href": link_match.group(2)}})
+                _apply_mark(
+                    inner_nodes,
+                    {"type": "link", "attrs": {"href": link_match.group(2)}},
+                )
             )
             index += len(link_match.group(0))
             continue
         strong_match = re.match(r"\*\*([^*]+)\*\*", text[index:])
         if strong_match:
-            nodes.extend(_apply_mark(parse_markdown_inline(strong_match.group(1)), {"type": "strong"}))
+            nodes.extend(
+                _apply_mark(
+                    parse_markdown_inline(strong_match.group(1)), {"type": "strong"}
+                )
+            )
             index += len(strong_match.group(0))
             continue
         em_match = re.match(r"(?<!\*)\*([^*]+)\*(?!\*)", text[index:])
         if em_match:
-            nodes.extend(_apply_mark(parse_markdown_inline(em_match.group(1)), {"type": "em"}))
+            nodes.extend(
+                _apply_mark(parse_markdown_inline(em_match.group(1)), {"type": "em"})
+            )
             index += len(em_match.group(0))
             continue
         underline_match = re.match(r"_([^_]+)_", text[index:])
         if underline_match:
-            nodes.extend(_apply_mark(parse_markdown_inline(underline_match.group(1)), {"type": "em"}))
+            nodes.extend(
+                _apply_mark(
+                    parse_markdown_inline(underline_match.group(1)), {"type": "em"}
+                )
+            )
             index += len(underline_match.group(0))
             continue
         next_specials = [
@@ -1676,7 +1785,9 @@ def markdown_to_adf(markdown: str) -> dict[str, Any]:
                 index += 1
             if index < len(lines):
                 index += 1
-            blocks.append(code_block_from_markdown("\n".join(code_lines), language=language))
+            blocks.append(
+                code_block_from_markdown("\n".join(code_lines), language=language)
+            )
             continue
         if re.match(r"^\s*[-*+]\s+", line):
             list_lines: list[str] = []
@@ -1706,7 +1817,9 @@ def markdown_to_adf(markdown: str) -> dict[str, Any]:
                 break
             if re.match(r"^\s*\d+[.)]\s+", candidate):
                 break
-            if index + 1 < len(lines) and re.match(r"^\s*(=+|-+)\s*$", lines[index + 1]):
+            if index + 1 < len(lines) and re.match(
+                r"^\s*(=+|-+)\s*$", lines[index + 1]
+            ):
                 break
             paragraph_lines.append(candidate)
             index += 1
@@ -1784,9 +1897,12 @@ def upsert_markdown_section(markdown: str, heading: str, body: str) -> str:
         return append_markdown_section(markdown, heading, body)
     start, end, level = section
     lines = markdown.splitlines()
-    replacement = render_markdown_section(heading, body, level=level).rstrip("\n").splitlines()
+    replacement = (
+        render_markdown_section(heading, body, level=level).rstrip("\n").splitlines()
+    )
     updated_lines = [*lines[:start], *replacement, *lines[end:]]
     return "\n".join(updated_lines).strip() + "\n"
+
 
 def issue_url(base_url: str, issue_key: str) -> str:
     return f"{site_root(base_url)}/browse/{issue_key}"
@@ -1960,7 +2076,9 @@ def search_jira(
     }
     if cursor:
         payload["nextPageToken"] = cursor
-    response = api_json("POST", jira_search_api_url(session), session.token, payload=payload)
+    response = api_json(
+        "POST", jira_search_api_url(session), session.token, payload=payload
+    )
     if not isinstance(response, dict):
         raise ToolError("unexpected Jira search response")
     issues = response.get("issues")
@@ -2015,18 +2133,46 @@ def search_jira(
 
 def default_field_metadata(field_id: str) -> dict[str, Any]:
     defaults: dict[str, dict[str, Any]] = {
-        "summary": {"id": "summary", "name": "Summary", "schema": {"type": "string", "system": "summary"}},
-        "priority": {"id": "priority", "name": "Priority", "schema": {"type": "priority", "system": "priority"}},
-        "assignee": {"id": "assignee", "name": "Assignee", "schema": {"type": "user", "system": "assignee"}},
-        "parent": {"id": "parent", "name": "Parent", "schema": {"type": "issuelink", "system": "parent"}},
-        "labels": {"id": "labels", "name": "Labels", "schema": {"type": "array", "system": "labels", "items": "string"}},
-        "components": {"id": "components", "name": "Components", "schema": {"type": "array", "system": "components", "items": "component"}},
+        "summary": {
+            "id": "summary",
+            "name": "Summary",
+            "schema": {"type": "string", "system": "summary"},
+        },
+        "priority": {
+            "id": "priority",
+            "name": "Priority",
+            "schema": {"type": "priority", "system": "priority"},
+        },
+        "assignee": {
+            "id": "assignee",
+            "name": "Assignee",
+            "schema": {"type": "user", "system": "assignee"},
+        },
+        "parent": {
+            "id": "parent",
+            "name": "Parent",
+            "schema": {"type": "issuelink", "system": "parent"},
+        },
+        "labels": {
+            "id": "labels",
+            "name": "Labels",
+            "schema": {"type": "array", "system": "labels", "items": "string"},
+        },
+        "components": {
+            "id": "components",
+            "name": "Components",
+            "schema": {"type": "array", "system": "components", "items": "component"},
+        },
     }
-    payload = defaults.get(field_id, {"id": field_id, "name": field_id, "schema": {"type": "string"}})
+    payload = defaults.get(
+        field_id, {"id": field_id, "name": field_id, "schema": {"type": "string"}}
+    )
     return normalize_field_metadata(field_id, payload)
 
 
-def metadata_for_field(fields: dict[str, dict[str, Any]], field_id: str) -> dict[str, Any]:
+def metadata_for_field(
+    fields: dict[str, dict[str, Any]], field_id: str
+) -> dict[str, Any]:
     return fields.get(field_id) or default_field_metadata(field_id)
 
 
@@ -2037,7 +2183,9 @@ def apply_named_field(
     field_id: str,
     raw_values: list[str],
 ) -> None:
-    payload_fields[field_id] = coerce_field_value(field_id, metadata_for_field(fields, field_id), raw_values)
+    payload_fields[field_id] = coerce_field_value(
+        field_id, metadata_for_field(fields, field_id), raw_values
+    )
 
 
 def apply_generic_fields(
@@ -2047,7 +2195,9 @@ def apply_generic_fields(
 ) -> None:
     for raw_field, raw_values in assignments.items():
         field_id = resolve_field_id(fields, raw_field)
-        payload_fields[field_id] = coerce_field_value(field_id, fields[field_id], raw_values)
+        payload_fields[field_id] = coerce_field_value(
+            field_id, fields[field_id], raw_values
+        )
 
 
 def render_projects_summary(
@@ -2115,7 +2265,9 @@ def render_issue_types_summary(
 
 def render_fields_summary(fields: dict[str, dict[str, Any]], *, context: str) -> str:
     lines = [f"context: {context}", f"fields: {len(fields)}"]
-    for field_id, meta in sorted(fields.items(), key=lambda item: str(item[1].get("name") or item[0]).casefold()):
+    for field_id, meta in sorted(
+        fields.items(), key=lambda item: str(item[1].get("name") or item[0]).casefold()
+    ):
         line = f"- {meta.get('name') or field_id} - id `{field_id}`"
         details: list[str] = []
         if meta.get("required"):
@@ -2131,7 +2283,13 @@ def render_fields_summary(fields: dict[str, dict[str, Any]], *, context: str) ->
         allowed = meta.get("allowedValues")
         if isinstance(allowed, list) and allowed:
             labels = [
-                str(item.get("name") or item.get("value") or item.get("displayName") or item.get("id") or "")
+                str(
+                    item.get("name")
+                    or item.get("value")
+                    or item.get("displayName")
+                    or item.get("id")
+                    or ""
+                )
                 for item in allowed[:8]
                 if isinstance(item, dict)
             ]
@@ -2139,9 +2297,7 @@ def render_fields_summary(fields: dict[str, dict[str, Any]], *, context: str) ->
             if rendered:
                 more = len(allowed) - len(labels)
                 details.append(
-                    "allowed "
-                    + rendered
-                    + (f" (+{more} more)" if more > 0 else "")
+                    "allowed " + rendered + (f" (+{more} more)" if more > 0 else "")
                 )
         if details:
             line += " - " + "; ".join(details)
@@ -2170,7 +2326,7 @@ def render_transitions_summary(
     ]
     for item in transitions:
         line = f"- {item.get('name') or ''} - id `{item.get('id') or ''}`"
-        to_name = ((item.get("to") or {}).get("name") or "")
+        to_name = (item.get("to") or {}).get("name") or ""
         if to_name:
             line += f", to `{to_name}`"
         fields = item.get("fields")
@@ -2257,7 +2413,9 @@ def add_list_paging_arguments(parser: argparse.ArgumentParser, *, noun: str) -> 
     )
 
 
-def required_missing_fields(fields: dict[str, dict[str, Any]], payload_fields: dict[str, Any]) -> list[str]:
+def required_missing_fields(
+    fields: dict[str, dict[str, Any]], payload_fields: dict[str, Any]
+) -> list[str]:
     missing: list[str] = []
     for field_id, meta in fields.items():
         if not meta.get("required"):
@@ -2276,7 +2434,9 @@ def resolve_link_type(base_url: str, raw: str) -> tuple[Session, dict[str, Any]]
             value = str(item.get(key) or "")
             if value and (_normalize_lookup(value) == candidate or value == raw):
                 return session, item
-    available = ", ".join(str(item.get("name") or "") for item in link_types if item.get("name"))
+    available = ", ".join(
+        str(item.get("name") or "") for item in link_types if item.get("name")
+    )
     raise ToolError(
         f"unknown Jira link type: {raw}"
         + (f". Allowed values: {available}" if available else "")
@@ -2287,9 +2447,14 @@ def resolve_transition(issue_ref: IssueRef, raw: str) -> tuple[Session, dict[str
     session, transitions = fetch_transitions(issue_ref)
     candidate = _normalize_lookup(raw)
     for item in transitions:
-        if str(item.get("id") or "") == raw or _normalize_lookup(str(item.get("name") or "")) == candidate:
+        if (
+            str(item.get("id") or "") == raw
+            or _normalize_lookup(str(item.get("name") or "")) == candidate
+        ):
             return session, item
-    available = ", ".join(str(item.get("name") or "") for item in transitions if item.get("name"))
+    available = ", ".join(
+        str(item.get("name") or "") for item in transitions if item.get("name")
+    )
     raise ToolError(
         f"unknown Jira transition for {issue_ref.issue_key}: {raw}"
         + (f". Allowed values: {available}" if available else "")
@@ -2298,11 +2463,15 @@ def resolve_transition(issue_ref: IssueRef, raw: str) -> tuple[Session, dict[str
 
 def remote_link_global_id(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
-    system = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else url
+    system = (
+        f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else url
+    )
     return f"system={system}&url={url}"
 
 
-def create_remote_link_payload(url: str, *, relationship: str, title: str = "", summary: str = "") -> dict[str, Any]:
+def create_remote_link_payload(
+    url: str, *, relationship: str, title: str = "", summary: str = ""
+) -> dict[str, Any]:
     object_payload: dict[str, Any] = {"url": url, "title": title or url}
     if summary:
         object_payload["summary"] = summary
@@ -2320,7 +2489,9 @@ def preview_markdown_block(markdown: str, *, limit: int = 800) -> str:
     return normalized[:limit] + "\n..."
 
 
-def add_issues_to_sprint(session: Session, sprint_id: int, *, issue_keys: list[str]) -> None:
+def add_issues_to_sprint(
+    session: Session, sprint_id: int, *, issue_keys: list[str]
+) -> None:
     try:
         api_json(
             "POST",
@@ -2348,10 +2519,15 @@ def create_issue(
     issue_key = str(response.get("key") or "")
     if not issue_key:
         raise ToolError("Jira create issue response did not include an issue key")
-    return fetch_issue(IssueRef(issue_key=issue_key, base_url=session.base_url), fields=DEFAULT_GET_FIELDS)
+    return fetch_issue(
+        IssueRef(issue_key=issue_key, base_url=session.base_url),
+        fields=DEFAULT_GET_FIELDS,
+    )
 
 
-def update_issue_fields(session: Session, issue_key: str, *, payload_fields: dict[str, Any]) -> dict[str, Any]:
+def update_issue_fields(
+    session: Session, issue_key: str, *, payload_fields: dict[str, Any]
+) -> dict[str, Any]:
     try:
         api_json(
             "PUT",
@@ -2361,10 +2537,15 @@ def update_issue_fields(session: Session, issue_key: str, *, payload_fields: dic
         )
     except ToolError as exc:
         raise ToolError(normalize_api_error_message(exc)) from exc
-    return fetch_issue(IssueRef(issue_key=issue_key, base_url=session.base_url), fields=DEFAULT_GET_FIELDS)
+    return fetch_issue(
+        IssueRef(issue_key=issue_key, base_url=session.base_url),
+        fields=DEFAULT_GET_FIELDS,
+    )
 
 
-def create_issue_comment(session: Session, issue_key: str, *, body_adf: dict[str, Any]) -> dict[str, Any]:
+def create_issue_comment(
+    session: Session, issue_key: str, *, body_adf: dict[str, Any]
+) -> dict[str, Any]:
     try:
         response = api_json(
             "POST",
@@ -2392,12 +2573,16 @@ def create_issue_link(
         "outwardIssue": {"key": normalize_issue_key(target_issue)},
     }
     try:
-        api_json("POST", jira_issue_link_api_url(session), session.token, payload=payload)
+        api_json(
+            "POST", jira_issue_link_api_url(session), session.token, payload=payload
+        )
     except ToolError as exc:
         raise ToolError(normalize_api_error_message(exc)) from exc
 
 
-def create_remote_link(session: Session, issue_key: str, *, payload: dict[str, Any]) -> dict[str, Any]:
+def create_remote_link(
+    session: Session, issue_key: str, *, payload: dict[str, Any]
+) -> dict[str, Any]:
     try:
         response = api_json(
             "POST",
@@ -2431,8 +2616,10 @@ def transition_issue(
         )
     except ToolError as exc:
         raise ToolError(normalize_api_error_message(exc)) from exc
-    return fetch_issue(IssueRef(issue_key=issue_key, base_url=session.base_url), fields=DEFAULT_GET_FIELDS)
-
+    return fetch_issue(
+        IssueRef(issue_key=issue_key, base_url=session.base_url),
+        fields=DEFAULT_GET_FIELDS,
+    )
 
 
 def markdown_issue(envelope: dict[str, Any]) -> str:
@@ -2484,7 +2671,9 @@ def render_search_markdown(payload: dict[str, Any]) -> str:
         f"- Results: {payload.get('size') or 0}",
     ]
     lines.extend(render_visibility_metadata_lines(payload))
-    lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
+    lines.extend(
+        render_source_metadata_lines(derive_source_metadata_from_payload(payload))
+    )
     next_token = str(payload.get("next") or "")
     if next_token:
         lines.append(f"- Next: `{next_token}`")
@@ -2531,7 +2720,9 @@ def cmd_auth(args: argparse.Namespace) -> int:
         )
         cloud_id = session.cloud_id
         expires_at = status.get("expiresAt")
-        selected_base_url = str(session.base_url or status.get("baseUrl") or base_url).strip()
+        selected_base_url = str(
+            session.base_url or status.get("baseUrl") or base_url
+        ).strip()
     if selected_base_url:
         persist_selected_base_urls(selected_base_url)
     print_json(
@@ -2760,9 +2951,7 @@ def render_write_preview_summary(payload: dict[str, Any]) -> str:
         for item in remote_links:
             if not isinstance(item, dict):
                 continue
-            lines.append(
-                f"- {item.get('relationship') or ''}: {item.get('url') or ''}"
-            )
+            lines.append(f"- {item.get('relationship') or ''}: {item.get('url') or ''}")
     return "\n".join(lines) + "\n"
 
 
@@ -2803,15 +2992,28 @@ def build_create_fields(
     if body_adf is not None:
         payload_fields["description"] = body_adf
     if args.priority:
-        apply_named_field(payload_fields, fields, field_id="priority", raw_values=[args.priority])
+        apply_named_field(
+            payload_fields, fields, field_id="priority", raw_values=[args.priority]
+        )
     if args.assignee:
-        apply_named_field(payload_fields, fields, field_id="assignee", raw_values=[args.assignee])
+        apply_named_field(
+            payload_fields, fields, field_id="assignee", raw_values=[args.assignee]
+        )
     if args.parent:
-        apply_named_field(payload_fields, fields, field_id="parent", raw_values=[args.parent])
+        apply_named_field(
+            payload_fields, fields, field_id="parent", raw_values=[args.parent]
+        )
     if args.labels:
-        apply_named_field(payload_fields, fields, field_id="labels", raw_values=list(args.labels))
+        apply_named_field(
+            payload_fields, fields, field_id="labels", raw_values=list(args.labels)
+        )
     if args.components:
-        apply_named_field(payload_fields, fields, field_id="components", raw_values=list(args.components))
+        apply_named_field(
+            payload_fields,
+            fields,
+            field_id="components",
+            raw_values=list(args.components),
+        )
     apply_generic_fields(payload_fields, fields, parse_field_assignments(args.field))
     return payload_fields, body_markdown, body_adf
 
@@ -2826,32 +3028,67 @@ def build_update_fields(
     if args.summary is not None:
         payload_fields["summary"] = args.summary
     if args.priority:
-        apply_named_field(payload_fields, fields, field_id="priority", raw_values=[args.priority])
+        apply_named_field(
+            payload_fields, fields, field_id="priority", raw_values=[args.priority]
+        )
     if args.assignee:
-        apply_named_field(payload_fields, fields, field_id="assignee", raw_values=[args.assignee])
+        apply_named_field(
+            payload_fields, fields, field_id="assignee", raw_values=[args.assignee]
+        )
     if args.parent:
-        apply_named_field(payload_fields, fields, field_id="parent", raw_values=[args.parent])
+        apply_named_field(
+            payload_fields, fields, field_id="parent", raw_values=[args.parent]
+        )
     if args.labels:
-        apply_named_field(payload_fields, fields, field_id="labels", raw_values=list(args.labels))
+        apply_named_field(
+            payload_fields, fields, field_id="labels", raw_values=list(args.labels)
+        )
     if args.components:
-        apply_named_field(payload_fields, fields, field_id="components", raw_values=list(args.components))
+        apply_named_field(
+            payload_fields,
+            fields,
+            field_id="components",
+            raw_values=list(args.components),
+        )
     apply_generic_fields(payload_fields, fields, parse_field_assignments(args.field))
 
     body_markdown = ""
-    if args.body is not None or args.body_file is not None or args.stdin or args.replace_description or args.append_section or args.prepend_section or args.upsert_section:
+    if (
+        args.body is not None
+        or args.body_file is not None
+        or args.stdin
+        or args.replace_description
+        or args.append_section
+        or args.prepend_section
+        or args.upsert_section
+    ):
         body_input = read_explicit_body(
             args.body,
             args.body_file,
             stdin_flag=args.stdin,
-            required=bool(args.replace_description or args.append_section or args.prepend_section or args.upsert_section or args.body is not None or args.body_file is not None or args.stdin),
+            required=bool(
+                args.replace_description
+                or args.append_section
+                or args.prepend_section
+                or args.upsert_section
+                or args.body is not None
+                or args.body_file is not None
+                or args.stdin
+            ),
             label="update body",
         )
         if args.append_section:
-            body_markdown = append_markdown_section(current_markdown, args.append_section, body_input)
+            body_markdown = append_markdown_section(
+                current_markdown, args.append_section, body_input
+            )
         elif args.prepend_section:
-            body_markdown = prepend_markdown_section(current_markdown, args.prepend_section, body_input)
+            body_markdown = prepend_markdown_section(
+                current_markdown, args.prepend_section, body_input
+            )
         elif args.upsert_section:
-            body_markdown = upsert_markdown_section(current_markdown, args.upsert_section, body_input)
+            body_markdown = upsert_markdown_section(
+                current_markdown, args.upsert_section, body_input
+            )
         else:
             body_markdown = body_input
         payload_fields["description"] = markdown_to_adf(body_markdown)
@@ -2894,7 +3131,9 @@ def cmd_projects(args: argparse.Namespace) -> int:
 
 def cmd_issue_types(args: argparse.Namespace) -> int:
     session, project = resolve_project(args.base_url, args.project)
-    issue_types = fetch_create_issue_types(session, str(project.get("key") or args.project))
+    issue_types = fetch_create_issue_types(
+        session, str(project.get("key") or args.project)
+    )
     paged_issue_types, page = _paginate_items(
         issue_types,
         offset=args.offset,
@@ -2937,7 +3176,9 @@ def cmd_fields(args: argparse.Namespace) -> int:
         session, project = resolve_project(args.base_url, args.project)
         project_key = str(project.get("key") or args.project)
         issue_type = resolve_issue_type(session, project_key, args.type)
-        fields = fetch_create_fields(session, project_key, str(issue_type.get("id") or ""))
+        fields = fetch_create_fields(
+            session, project_key, str(issue_type.get("id") or "")
+        )
         context = f"create {project_key}/{issue_type.get('name') or issue_type.get('id') or ''}"
     if args.output == "json":
         print_json({"context": context, "fields": fields})
@@ -2984,7 +3225,9 @@ def cmd_transitions(args: argparse.Namespace) -> int:
         include_all=bool(args.all),
     )
     if args.output == "json":
-        print_json({**page, "issue": issue_ref.issue_key, "transitions": paged_transitions})
+        print_json(
+            {**page, "issue": issue_ref.issue_key, "transitions": paged_transitions}
+        )
         return 0
     sys.stdout.write(
         render_transitions_summary(
@@ -3009,7 +3252,11 @@ def cmd_sprints(args: argparse.Namespace) -> int:
     )
     paging_unit = "sprints"
     if args.board is not None:
-        board = dict(board_sprints[0] if board_sprints else {"id": str(args.board), "name": "", "type": "scrum"})
+        board = dict(
+            board_sprints[0]
+            if board_sprints
+            else {"id": str(args.board), "name": "", "type": "scrum"}
+        )
         sprints = list(board.get("sprints") or [])
         paged_sprints, page = _paginate_items(
             sprints,
@@ -3287,8 +3534,12 @@ def cmd_update(args: argparse.Namespace) -> int:
     current_markdown = ""
     if isinstance(current.get("descriptionAdf"), dict):
         current_markdown = render_adf_block(current["descriptionAdf"]).strip()
-    payload_fields, body_markdown = build_update_fields(args, fields, current_markdown=current_markdown)
-    current_project_key = str(((current.get("project") or {}).get("key") or args.project or ""))
+    payload_fields, body_markdown = build_update_fields(
+        args, fields, current_markdown=current_markdown
+    )
+    current_project_key = str(
+        ((current.get("project") or {}).get("key") or args.project or "")
+    )
     sprint_target = resolve_requested_sprint(
         issue_ref.base_url,
         current_sprint=args.current_sprint,
@@ -3297,7 +3548,9 @@ def cmd_update(args: argparse.Namespace) -> int:
         board_id=args.board,
     )
     if not payload_fields and sprint_target is None:
-        raise ToolError("nothing to update; pass field edits or a description operation")
+        raise ToolError(
+            "nothing to update; pass field edits or a description operation"
+        )
     preview_target = {"issue": issue_ref.issue_key}
     if sprint_target is not None:
         _, sprint_board, sprint = sprint_target
@@ -3325,7 +3578,9 @@ def cmd_update(args: argparse.Namespace) -> int:
         return write_preview_or_json(preview, output=args.output)
     updated = current
     if payload_fields:
-        updated = update_issue_fields(session, issue_ref.issue_key, payload_fields=payload_fields)
+        updated = update_issue_fields(
+            session, issue_ref.issue_key, payload_fields=payload_fields
+        )
     if sprint_target is not None:
         sprint_session, _, sprint = sprint_target
         add_issues_to_sprint(
@@ -3425,7 +3680,12 @@ def cmd_link(args: argparse.Namespace) -> int:
                 summary=args.summary,
             ),
         )
-        result = {"action": "link", "mode": "applied", "issue": issue_ref.issue_key, "remoteLink": args.target}
+        result = {
+            "action": "link",
+            "mode": "applied",
+            "issue": issue_ref.issue_key,
+            "remoteLink": args.target,
+        }
     else:
         _, link_type = resolve_link_type(session.base_url, args.type)
         target_key = normalize_issue_key(args.target)
@@ -3434,7 +3694,13 @@ def cmd_link(args: argparse.Namespace) -> int:
             "mode": "preview",
             "ready": True,
             "target": {"issue": issue_ref.issue_key},
-            "issueLinks": [{"source": issue_ref.issue_key, "target": target_key, "type": link_type.get("name") or ""}],
+            "issueLinks": [
+                {
+                    "source": issue_ref.issue_key,
+                    "target": target_key,
+                    "type": link_type.get("name") or "",
+                }
+            ],
             "payload": {
                 "type": {"name": str(link_type.get("name") or "")},
                 "inwardIssue": {"key": issue_ref.issue_key},
@@ -3443,13 +3709,29 @@ def cmd_link(args: argparse.Namespace) -> int:
         }
         if not args.apply:
             return write_preview_or_json(preview, output=args.output)
-        create_issue_link(session, source_issue=issue_ref.issue_key, target_issue=target_key, link_type=link_type)
-        result = {"action": "link", "mode": "applied", "issue": issue_ref.issue_key, "linkedIssue": target_key}
+        create_issue_link(
+            session,
+            source_issue=issue_ref.issue_key,
+            target_issue=target_key,
+            link_type=link_type,
+        )
+        result = {
+            "action": "link",
+            "mode": "applied",
+            "issue": issue_ref.issue_key,
+            "linkedIssue": target_key,
+        }
     if args.output == "json":
         print_json(result)
         return 0
     sys.stdout.write(
-        "\n".join([f"action: {result['action']}", f"mode: {result['mode']}", f"issue: {result['issue']}"])
+        "\n".join(
+            [
+                f"action: {result['action']}",
+                f"mode: {result['mode']}",
+                f"issue: {result['issue']}",
+            ]
+        )
         + "\n"
     )
     return 0
@@ -3462,7 +3744,9 @@ def cmd_transition(args: argparse.Namespace) -> int:
     if not isinstance(transition_fields, dict):
         transition_fields = {}
     field_values: dict[str, Any] = {}
-    apply_generic_fields(field_values, transition_fields, parse_field_assignments(args.field))
+    apply_generic_fields(
+        field_values, transition_fields, parse_field_assignments(args.field)
+    )
     missing = required_missing_fields(transition_fields, field_values)
     preview = {
         "action": "transition",
@@ -3471,7 +3755,10 @@ def cmd_transition(args: argparse.Namespace) -> int:
         "target": {"issue": issue_ref.issue_key},
         "fieldValues": field_values,
         "missingRequiredFields": missing,
-        "payload": {"transition": {"id": transition.get("id") or ""}, "fields": field_values},
+        "payload": {
+            "transition": {"id": transition.get("id") or ""},
+            "fields": field_values,
+        },
     }
     if not args.apply:
         return write_preview_or_json(preview, output=args.output)
@@ -3639,7 +3926,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
     )
-    p.add_argument("--check", action="store_true", help="run a token preflight against Atlassian")
+    p.add_argument(
+        "--check", action="store_true", help="run a token preflight against Atlassian"
+    )
     p.add_argument("--output", choices=["json", "summary"], default="summary")
     p.set_defaults(func=cmd_status)
 
@@ -3677,8 +3966,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
     )
-    p.add_argument("--limit", type=positive_int, default=10, help="maximum results to request")
-    p.add_argument("--next", help="continuation token from a previous Jira search response")
+    p.add_argument(
+        "--limit", type=positive_int, default=10, help="maximum results to request"
+    )
+    p.add_argument(
+        "--next", help="continuation token from a previous Jira search response"
+    )
     p.add_argument("--output", choices=["markdown", "json"], default="markdown")
     p.set_defaults(func=cmd_search)
 
@@ -3689,12 +3982,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_base_url(),
         help=f"Jira base URL override (default: {JIRA_BASE_URL_ENV})",
     )
-    p.add_argument("--limit", type=positive_int, default=10, help="maximum results to request")
-    p.add_argument("--next", help="continuation token from a previous Jira search response")
+    p.add_argument(
+        "--limit", type=positive_int, default=10, help="maximum results to request"
+    )
+    p.add_argument(
+        "--next", help="continuation token from a previous Jira search response"
+    )
     p.add_argument("--output", choices=["markdown", "json"], default="markdown")
     p.set_defaults(func=cmd_jql)
 
-    p = sub.add_parser("projects", help="list Jira projects available to the current user")
+    p = sub.add_parser(
+        "projects", help="list Jira projects available to the current user"
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),
@@ -3758,7 +4057,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_link_types)
 
-    p = sub.add_parser("transitions", help="list available Jira transitions for an issue")
+    p = sub.add_parser(
+        "transitions", help="list available Jira transitions for an issue"
+    )
     p.add_argument("issue", help="issue key or URL")
     p.add_argument(
         "--base-url",
@@ -3783,7 +4084,11 @@ def build_parser() -> argparse.ArgumentParser:
     target_mode.add_argument("--sprint", type=positive_int, help="explicit sprint ID")
     p.add_argument("--project", help="project key or ID used to resolve sprint context")
     p.add_argument("--board", type=positive_int, help="explicit scrum board ID")
-    p.add_argument("--apply", action="store_true", help="add the issue to the sprint; default is preview only")
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="add the issue to the sprint; default is preview only",
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),
@@ -3801,7 +4106,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--title", required=True, help="issue summary/title")
     p.add_argument("--body", help="inline Markdown description")
     p.add_argument("--body-file", help="read Markdown description from a file")
-    p.add_argument("--stdin", action="store_true", help="read Markdown description from stdin")
+    p.add_argument(
+        "--stdin", action="store_true", help="read Markdown description from stdin"
+    )
     sprint_mode = p.add_mutually_exclusive_group()
     sprint_mode.add_argument(
         "--current-sprint",
@@ -3809,7 +4116,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="resolve the unique active sprint for the target project or board",
     )
     sprint_mode.add_argument("--sprint", type=positive_int, help="explicit sprint ID")
-    p.add_argument("--board", type=positive_int, help="explicit scrum board ID for sprint resolution")
+    p.add_argument(
+        "--board",
+        type=positive_int,
+        help="explicit scrum board ID for sprint resolution",
+    )
     p.add_argument("--priority", help="priority name or ID")
     p.add_argument("--assignee", help="assignee account ID")
     p.add_argument("--parent", help="parent issue key")
@@ -3855,7 +4166,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="relates to",
         help="relationship label to use for --remote-link entries",
     )
-    p.add_argument("--apply", action="store_true", help="create the issue; default is preview only")
+    p.add_argument(
+        "--apply", action="store_true", help="create the issue; default is preview only"
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),
@@ -3875,8 +4188,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--summary", help="replace the issue summary/title")
     p.add_argument("--body", help="inline Markdown body used for description updates")
-    p.add_argument("--body-file", help="read Markdown body from a file for description updates")
-    p.add_argument("--stdin", action="store_true", help="read Markdown body from stdin for description updates")
+    p.add_argument(
+        "--body-file", help="read Markdown body from a file for description updates"
+    )
+    p.add_argument(
+        "--stdin",
+        action="store_true",
+        help="read Markdown body from stdin for description updates",
+    )
     sprint_mode = p.add_mutually_exclusive_group()
     sprint_mode.add_argument(
         "--current-sprint",
@@ -3884,16 +4203,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="resolve the unique active sprint for the issue project or requested board",
     )
     sprint_mode.add_argument("--sprint", type=positive_int, help="explicit sprint ID")
-    p.add_argument("--board", type=positive_int, help="explicit scrum board ID for sprint resolution")
+    p.add_argument(
+        "--board",
+        type=positive_int,
+        help="explicit scrum board ID for sprint resolution",
+    )
     description_mode = p.add_mutually_exclusive_group()
     description_mode.add_argument(
         "--replace-description",
         action="store_true",
         help="replace the issue description with the provided body",
     )
-    description_mode.add_argument("--append-section", help="append a Markdown section under the given heading")
-    description_mode.add_argument("--prepend-section", help="prepend a Markdown section under the given heading")
-    description_mode.add_argument("--upsert-section", help="replace or append a Markdown section by heading")
+    description_mode.add_argument(
+        "--append-section", help="append a Markdown section under the given heading"
+    )
+    description_mode.add_argument(
+        "--prepend-section", help="prepend a Markdown section under the given heading"
+    )
+    description_mode.add_argument(
+        "--upsert-section", help="replace or append a Markdown section by heading"
+    )
     p.add_argument("--priority", help="priority name or ID")
     p.add_argument("--assignee", help="assignee account ID")
     p.add_argument("--parent", help="parent issue key")
@@ -3917,7 +4246,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="explicit FIELD=VALUE assignment; repeat as needed",
     )
-    p.add_argument("--apply", action="store_true", help="apply the update; default is preview only")
+    p.add_argument(
+        "--apply", action="store_true", help="apply the update; default is preview only"
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),
@@ -3933,8 +4264,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("issue", help="issue key or URL")
     p.add_argument("--body", help="inline Markdown comment body")
     p.add_argument("--body-file", help="read Markdown comment body from a file")
-    p.add_argument("--stdin", action="store_true", help="read Markdown comment body from stdin")
-    p.add_argument("--apply", action="store_true", help="create the comment; default is preview only")
+    p.add_argument(
+        "--stdin", action="store_true", help="read Markdown comment body from stdin"
+    )
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="create the comment; default is preview only",
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),
@@ -3946,7 +4283,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("link", help="preview or add a Jira issue link or remote link")
     p.add_argument("issue", help="source issue key or URL")
     p.add_argument("target", help="target issue key or external URL")
-    p.add_argument("--type", default="Relates", help="issue link type name or ID when linking another issue")
+    p.add_argument(
+        "--type",
+        default="Relates",
+        help="issue link type name or ID when linking another issue",
+    )
     p.add_argument(
         "--relationship",
         default="relates to",
@@ -3954,7 +4295,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--title", help="title override for remote links")
     p.add_argument("--summary", help="summary text for remote links")
-    p.add_argument("--apply", action="store_true", help="create the link; default is preview only")
+    p.add_argument(
+        "--apply", action="store_true", help="create the link; default is preview only"
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),
@@ -3972,7 +4315,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="transition FIELD=VALUE assignment; repeat as needed",
     )
-    p.add_argument("--apply", action="store_true", help="run the transition; default is preview only")
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="run the transition; default is preview only",
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),

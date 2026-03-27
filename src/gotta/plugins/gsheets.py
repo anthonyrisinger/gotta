@@ -18,7 +18,10 @@ from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+)
 from gotta.providers.google import (
     GOOGLE_SHEET_MIME,
     OAUTH_DIR,
@@ -327,7 +330,9 @@ def project(argv: list[str], capture: Capture) -> bytes:
     return render_previews_markdown(meta, previews).encode("utf-8")
 
 
-def normalize_search_result(item: dict[str, object], *, matched_by: set[str]) -> dict[str, object]:
+def normalize_search_result(
+    item: dict[str, object], *, matched_by: set[str]
+) -> dict[str, object]:
     owners = item.get("owners")
     owner_names: list[str] = []
     if isinstance(owners, list):
@@ -363,7 +368,9 @@ def merge_search_results(
                 continue
             current = merged.get(spreadsheet_id)
             if current is None:
-                merged[spreadsheet_id] = normalize_search_result(item, matched_by={source})
+                merged[spreadsheet_id] = normalize_search_result(
+                    item, matched_by={source}
+                )
                 continue
             matched_by = set(current.get("matchedBy") or [])
             matched_by.add(source)
@@ -449,7 +456,9 @@ def render_search_markdown(payload: dict[str, object]) -> str:
         f"- _Mode_: `{payload.get('mode') or 'auto'}`",
         f"- _Matches_: {payload.get('resultCount') or len(results)}",
     ]
-    lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
+    lines.extend(
+        render_source_metadata_lines(derive_source_metadata_from_payload(payload))
+    )
     lines.append("")
     for item in results:
         if not isinstance(item, dict):
@@ -491,9 +500,7 @@ def _preview_payload(
     if not isinstance(values, list):
         values = []
     string_values = [
-        [str(cell) for cell in row]
-        for row in values
-        if isinstance(row, list)
+        [str(cell) for cell in row] for row in values if isinstance(row, list)
     ]
     properties = _find_sheet(meta, sheet_name) or {}
     grid = properties.get("gridProperties")
@@ -508,7 +515,9 @@ def _preview_payload(
     }
 
 
-def render_previews_markdown(meta: dict[str, Any], previews: list[dict[str, Any]]) -> str:
+def render_previews_markdown(
+    meta: dict[str, Any], previews: list[dict[str, Any]]
+) -> str:
     lines = [spreadsheet_summary(meta).rstrip(), ""]
     for preview in previews:
         title = str(preview.get("sheetTitle") or "(sheet)")
@@ -677,7 +686,9 @@ def cmd_get(args: argparse.Namespace) -> int:
     if args.output == "csv":
         previews = bundle.get("previews")
         if not isinstance(previews, list) or len(previews) != 1:
-            raise GoogleError("`--output csv` requires `--sheet` or `--range` to select exactly one sheet view")
+            raise GoogleError(
+                "`--output csv` requires `--sheet` or `--range` to select exactly one sheet view"
+            )
         preview = previews[0]
         values = preview.get("values")
         if not isinstance(values, list):
@@ -733,16 +744,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_auth)
 
-    p = sub.add_parser("status", help="inspect local Google OAuth readiness for Sheets access")
+    p = sub.add_parser(
+        "status", help="inspect local Google OAuth readiness for Sheets access"
+    )
     p.add_argument("--output", choices=["json", "summary"], default="summary")
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("get", help="fetch one Google Sheet by URL or spreadsheet ID")
     p.add_argument("ref", help="Google Sheets URL or spreadsheet ID")
     p.add_argument("--sheet", help="optional sheet/tab title to narrow the preview")
-    p.add_argument("--range", help="optional A1 range; defaults to a bounded preview per sheet")
-    p.add_argument("--rows", type=int, default=DEFAULT_PREVIEW_ROWS, help="preview row count per sheet")
-    p.add_argument("--cols", type=int, default=DEFAULT_PREVIEW_COLS, help="preview column count per sheet")
+    p.add_argument(
+        "--range", help="optional A1 range; defaults to a bounded preview per sheet"
+    )
+    p.add_argument(
+        "--rows",
+        type=int,
+        default=DEFAULT_PREVIEW_ROWS,
+        help="preview row count per sheet",
+    )
+    p.add_argument(
+        "--cols",
+        type=int,
+        default=DEFAULT_PREVIEW_COLS,
+        help="preview column count per sheet",
+    )
     p.add_argument(
         "--output",
         choices=["markdown", "meta", "json", "csv"],
@@ -751,7 +776,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_get)
 
-    p = sub.add_parser("search", help="search Google Sheets by title or indexed content")
+    p = sub.add_parser(
+        "search", help="search Google Sheets by title or indexed content"
+    )
     p.add_argument("query", help="search query")
     p.add_argument("--limit", type=int, default=DEFAULT_SEARCH_LIMIT)
     p.add_argument(

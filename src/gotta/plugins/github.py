@@ -34,15 +34,21 @@ BLOB_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$")
 TREE_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/tree/([^/]+)(?:/(.*))?$")
 PULL_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)(/.*)?$")
 ISSUE_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/issues/([0-9]+)(/.*)?$")
-COMMIT_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/commit/([0-9a-f]{7,40})(/.*)?$")
+COMMIT_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/commit/([0-9a-f]{7,40})(/.*)?$"
+)
 COMMITS_ROOT_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/commits/?$")
 COMMITS_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/commits/([^/]+)(/.*)?$")
 ACTIONS_JOB_RE = re.compile(
     r"^https://github\.com/([^/]+)/([^/]+)/actions/runs/([0-9]+)/job/([0-9]+)(/.*)?$"
 )
-ACTIONS_RUN_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/actions/runs/([0-9]+)(/.*)?$")
+ACTIONS_RUN_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/actions/runs/([0-9]+)(/.*)?$"
+)
 RELEASES_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/releases/?$")
-RELEASE_TAG_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/releases/tag/([^/]+)(/.*)?$")
+RELEASE_TAG_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/releases/tag/([^/]+)(/.*)?$"
+)
 REPO_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/?$")
 README_CANDIDATES = (
     "readme.md",
@@ -265,7 +271,9 @@ def _preferred_render_name(parsed: ParsedArgs, extension: str) -> str:
                 suffix = f"{suffix}-{_slug('/'.join(parts[4:]))}"
             return render_name(suffix)
         if len(parts) >= 5 and parts[2] == "blob":
-            return render_name(f"{repo}-blob-{_slug(parts[3])}-{_slug('/'.join(parts[4:]))}")
+            return render_name(
+                f"{repo}-blob-{_slug(parts[3])}-{_slug('/'.join(parts[4:]))}"
+            )
         if len(parts) >= 3 and parts[2] == "releases":
             if len(parts) >= 5 and parts[3] == "tag":
                 return render_name(f"{repo}-release-{_slug(parts[4])}")
@@ -285,7 +293,9 @@ def _parse_limit_value(args: list[str], index: int, *, context: str) -> tuple[in
     try:
         value = max(1, min(int(args[index + 1]), 100))
     except ValueError:
-        raise SystemExit(die(f"{context} requires an integer after `--limit`", code=2)) from None
+        raise SystemExit(
+            die(f"{context} requires an integer after `--limit`", code=2)
+        ) from None
     return value, index + 2
 
 
@@ -304,7 +314,13 @@ def is_interactive() -> bool:
 
 def guess_lang_from_path(path: str) -> str:
     basename = Path(path).name.lower()
-    if basename in {"readme", "readme.md", "readme.markdown", "readme.mdown", "readme.mkd"}:
+    if basename in {
+        "readme",
+        "readme.md",
+        "readme.markdown",
+        "readme.mdown",
+        "readme.mkd",
+    }:
         return "markdown"
     suffix = Path(path).suffix.lower()
     return {
@@ -394,7 +410,9 @@ def gh_json(gh: str, args: list[str]) -> bytes:
     env["GH_PAGER"] = "cat"
     proc = subprocess.run([gh, *args], check=False, capture_output=True, env=env)
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.decode("utf-8", errors="replace").strip() or "gh command failed")
+        raise RuntimeError(
+            proc.stderr.decode("utf-8", errors="replace").strip() or "gh command failed"
+        )
     return proc.stdout
 
 
@@ -613,13 +631,19 @@ def markdown_commit_list(
         commit = item.get("commit")
         if not isinstance(commit, dict):
             commit = {}
-        message = str(commit.get("message") or "").strip().splitlines()[0] if commit else ""
+        message = (
+            str(commit.get("message") or "").strip().splitlines()[0] if commit else ""
+        )
         author = commit.get("author")
         if not isinstance(author, dict):
             author = {}
         author_name = str(author.get("name") or "")
         authored_at = str(author.get("date") or "")
-        summary = f"[{sha}]({html_url})" if html_url and sha else (sha or html_url or "commit")
+        summary = (
+            f"[{sha}]({html_url})"
+            if html_url and sha
+            else (sha or html_url or "commit")
+        )
         if message:
             summary = f"{summary} {message}"
         lines.append(f"- {summary}")
@@ -685,7 +709,9 @@ WORKFLOW_RUN_JSON_FIELDS = (
 )
 
 
-def workflow_run_payload(gh: str, *, owner: str, repo: str, run_id: str) -> dict[str, object]:
+def workflow_run_payload(
+    gh: str, *, owner: str, repo: str, run_id: str
+) -> dict[str, object]:
     payload = gh_json_object(
         gh,
         [
@@ -734,10 +760,14 @@ def markdown_workflow_run(
     repo: str,
     include_jobs: bool,
 ) -> str:
-    display_title = str(payload.get("displayTitle") or payload.get("name") or "workflow run")
+    display_title = str(
+        payload.get("displayTitle") or payload.get("name") or "workflow run"
+    )
     run_number = str(payload.get("number") or "").strip()
     url = str(payload.get("url") or "")
-    workflow_name = str(payload.get("workflowName") or payload.get("name") or "").strip()
+    workflow_name = str(
+        payload.get("workflowName") or payload.get("name") or ""
+    ).strip()
     event = str(payload.get("event") or "").strip()
     status = str(payload.get("status") or "").strip()
     conclusion = str(payload.get("conclusion") or "").strip()
@@ -866,7 +896,9 @@ def markdown_workflow_job(
     if labels:
         rendered_labels = [str(label).strip() for label in labels if str(label).strip()]
         if rendered_labels:
-            lines.append(f"- **Labels:** {', '.join(f'`{label}`' for label in rendered_labels)}")
+            lines.append(
+                f"- **Labels:** {', '.join(f'`{label}`' for label in rendered_labels)}"
+            )
     if include_steps and steps:
         lines.extend(["", "## Steps", ""])
         for step in steps:
@@ -1078,7 +1110,9 @@ def _search_api_payload(
 
 def _search_item_identity(item: dict[str, object], *, search_type: str) -> str:
     if search_type == "repo":
-        return str(item.get("html_url") or item.get("full_name") or item.get("name") or "")
+        return str(
+            item.get("html_url") or item.get("full_name") or item.get("name") or ""
+        )
     return str(item.get("html_url") or item.get("url") or "")
 
 
@@ -1148,7 +1182,8 @@ def _exclude_owner_items(
     return [
         item
         for item in items
-        if _search_item_owner(item, search_type=search_type).casefold() not in excluded_owners
+        if _search_item_owner(item, search_type=search_type).casefold()
+        not in excluded_owners
     ]
 
 
@@ -1480,9 +1515,13 @@ def markdown_search(payload: dict[str, object], *, include_details: bool) -> str
         search_plan = str(payload.get("searchPlan") or "")
         global_result_count = int(payload.get("globalResultCount") or 0)
         if search_plan == "owned-only":
-            lines.append("- _Search scope_: owned repositories and visible organizations only")
+            lines.append(
+                "- _Search scope_: owned repositories and visible organizations only"
+            )
         elif search_plan == "global-excluding-owned":
-            lines.append("- _Search scope_: global GitHub excluding owned-scope results")
+            lines.append(
+                "- _Search scope_: global GitHub excluding owned-scope results"
+            )
             if global_result_count:
                 lines.append(f"- _Global hits_: {global_result_count}")
     filename = str(payload.get("filename") or "")
@@ -1498,7 +1537,9 @@ def markdown_search(payload: dict[str, object], *, include_details: bool) -> str
     if match:
         lines.append(f"- _Match_: `{match}`")
     lines.extend(render_visibility_metadata_lines(payload))
-    lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
+    lines.extend(
+        render_source_metadata_lines(derive_source_metadata_from_payload(payload))
+    )
     lines.append("")
     if search_type == "repo":
         for item in results:
@@ -1542,7 +1583,11 @@ def markdown_search(payload: dict[str, object], *, include_details: bool) -> str
             repository = str(item.get("repository") or "")
             path = str(item.get("path") or "")
             url = str(item.get("url") or "")
-            label = f"{repository}:{path}" if repository and path else (path or repository or "code result")
+            label = (
+                f"{repository}:{path}"
+                if repository and path
+                else (path or repository or "code result")
+            )
             line = f"- [{label}]({url})" if url else f"- {label}"
             sha = str(item.get("sha") or "")
             if sha:
@@ -1722,7 +1767,9 @@ def fetch_content_file(
     ref: str,
     path: str,
 ) -> dict[str, object]:
-    payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/contents/{path}?ref={ref}"])
+    payload = gh_json_object(
+        gh, ["api", f"repos/{owner}/{repo}/contents/{path}?ref={ref}"]
+    )
     if str(payload.get("type") or "") != "file":
         raise RuntimeError("GitHub API returned a non-file payload")
     return payload
@@ -1861,18 +1908,28 @@ def markdown_directory(
     lines.append(f"- **URL:** {github_tree_url(owner, repo, ref, path)}")
     lines.append(f"- **Ref:** `{ref}`")
     if readme_path:
-        lines.append(f"- **README:** [{Path(readme_path).name}]({github_blob_url(owner, repo, ref, readme_path)})")
+        lines.append(
+            f"- **README:** [{Path(readme_path).name}]({github_blob_url(owner, repo, ref, readme_path)})"
+        )
     if readme_summary:
         lines.append(f"- **README excerpt:** {readme_summary}")
     lines.extend(["", "## Contents", ""])
-    for entry in sorted(entries, key=lambda item: (str(item.get("type") or ""), str(item.get("name") or "").casefold())):
+    for entry in sorted(
+        entries,
+        key=lambda item: (
+            str(item.get("type") or ""),
+            str(item.get("name") or "").casefold(),
+        ),
+    ):
         name = str(entry.get("name") or "")
         entry_path = str(entry.get("path") or "")
         entry_type = str(entry.get("type") or "")
         if not name or not entry_path:
             continue
         if entry_type == "dir":
-            lines.append(f"- [{name}/]({github_tree_url(owner, repo, ref, entry_path)})")
+            lines.append(
+                f"- [{name}/]({github_tree_url(owner, repo, ref, entry_path)})"
+            )
             continue
         if entry_type == "file":
             lines.append(f"- [{name}]({github_blob_url(owner, repo, ref, entry_path)})")
@@ -1901,7 +1958,9 @@ def markdown_repo_directory(
         readme_path=readme_path,
         readme_summary=readme_summary,
     ).splitlines()
-    contents = directory_markdown[4:] if len(directory_markdown) >= 4 else directory_markdown
+    contents = (
+        directory_markdown[4:] if len(directory_markdown) >= 4 else directory_markdown
+    )
     return "\n".join([repo_markdown, "", *contents]).rstrip() + "\n"
 
 
@@ -2094,7 +2153,9 @@ def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
         raise SystemExit(die(USAGE))
     parsed_url = urllib.parse.urlparse(url)
     fragment = parsed_url.fragment
-    return ParsedArgs(command="render", output=output, url=url, fragment=fragment, limit=limit)
+    return ParsedArgs(
+        command="render", output=output, url=url, fragment=fragment, limit=limit
+    )
 
 
 def canonical_locator(argv: list[str]) -> str:
@@ -2155,7 +2216,9 @@ def _blob_content_type(path: str, data: bytes) -> str:
     return "text/plain" if looks_text(data) else "application/octet-stream"
 
 
-def _blob_json_payload(path: str, data: bytes, *, owner: str, repo: str, ref: str) -> dict[str, object]:
+def _blob_json_payload(
+    path: str, data: bytes, *, owner: str, repo: str, ref: str
+) -> dict[str, object]:
     return {
         "path": path,
         "type": "file",
@@ -2242,7 +2305,9 @@ def _canonicalize_capture_url(target: str) -> str:
     ):
         filtered = [
             (key, value)
-            for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            for key, value in urllib.parse.parse_qsl(
+                parsed.query, keep_blank_values=True
+            )
             if key.casefold() != "token"
         ]
         return urllib.parse.urlunsplit(
@@ -2259,10 +2324,7 @@ def _canonicalize_capture_url(target: str) -> str:
 
 def _canonicalize_capture_value(value: object) -> object:
     if isinstance(value, dict):
-        return {
-            key: _canonicalize_capture_value(item)
-            for key, item in value.items()
-        }
+        return {key: _canonicalize_capture_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_canonicalize_capture_value(item) for item in value]
     if isinstance(value, str):
@@ -2330,7 +2392,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
         )
         payload = _canonicalize_capture_value(payload)
         return Capture(
-            data=json_bytes(_object_capture_payload("workflow_job", payload, owner=owner, repo=repo)),
+            data=json_bytes(
+                _object_capture_payload("workflow_job", payload, owner=owner, repo=repo)
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2339,7 +2403,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
                 "github_owner": owner,
                 "github_repo": repo,
                 "source_created_at": str(payload.get("created_at") or ""),
-                "source_updated_at": str(payload.get("completed_at") or payload.get("started_at") or ""),
+                "source_updated_at": str(
+                    payload.get("completed_at") or payload.get("started_at") or ""
+                ),
             },
         )
     if match := ACTIONS_RUN_RE.match(url):
@@ -2347,7 +2413,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
         payload = workflow_run_payload(gh, owner=owner, repo=repo, run_id=run_id)
         payload = _canonicalize_capture_value(payload)
         return Capture(
-            data=json_bytes(_object_capture_payload("workflow_run", payload, owner=owner, repo=repo)),
+            data=json_bytes(
+                _object_capture_payload("workflow_run", payload, owner=owner, repo=repo)
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2356,7 +2424,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
                 "github_owner": owner,
                 "github_repo": repo,
                 "source_created_at": str(payload.get("createdAt") or ""),
-                "source_updated_at": str(payload.get("updatedAt") or payload.get("startedAt") or ""),
+                "source_updated_at": str(
+                    payload.get("updatedAt") or payload.get("startedAt") or ""
+                ),
             },
         )
     if match := BLOB_RE.match(url):
@@ -2369,7 +2439,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
             if not is_readme_path(path):
                 raise RuntimeError(str(exc)) from exc
             parent_path = str(Path(path).parent).replace("\\", "/").strip(".")
-            readme = load_directory_readme(gh, owner=owner, repo=repo, ref=ref, path=parent_path)
+            readme = load_directory_readme(
+                gh, owner=owner, repo=repo, ref=ref, path=parent_path
+            )
             if readme is None:
                 raise RuntimeError(str(exc)) from exc
             path, blob = readme
@@ -2476,7 +2548,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
         payload = with_visibility_metadata(payload, provider="github", locator=url)
         payload = _canonicalize_capture_value(payload)
         return Capture(
-            data=json_bytes(_object_capture_payload("pr", payload, owner=owner, repo=repo)),
+            data=json_bytes(
+                _object_capture_payload("pr", payload, owner=owner, repo=repo)
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2505,7 +2579,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
         payload = with_visibility_metadata(payload, provider="github", locator=url)
         payload = _canonicalize_capture_value(payload)
         return Capture(
-            data=json_bytes(_object_capture_payload("issue", payload, owner=owner, repo=repo)),
+            data=json_bytes(
+                _object_capture_payload("issue", payload, owner=owner, repo=repo)
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2522,10 +2598,14 @@ def capture(argv: list[str], _options: Any) -> Capture:
         payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/commits/{sha}"])
         payload = with_visibility_metadata(payload, provider="github", locator=url)
         payload = _canonicalize_capture_value(payload)
-        commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
+        commit = (
+            payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
+        )
         author = commit.get("author") if isinstance(commit, dict) else {}
         return Capture(
-            data=json_bytes(_object_capture_payload("commit", payload, owner=owner, repo=repo)),
+            data=json_bytes(
+                _object_capture_payload("commit", payload, owner=owner, repo=repo)
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2554,7 +2634,11 @@ def capture(argv: list[str], _options: Any) -> Capture:
         if path:
             api_target += f"&path={urllib.parse.quote(path, safe='/')}"
         raw_payload = gh_json_value(gh, ["api", api_target])
-        payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        payload = (
+            [item for item in raw_payload if isinstance(item, dict)]
+            if isinstance(raw_payload, list)
+            else []
+        )
         payload = _canonicalize_capture_value(payload)
         authored_dates = [
             str(item.get("commit", {}).get("author", {}).get("date") or "")
@@ -2562,7 +2646,11 @@ def capture(argv: list[str], _options: Any) -> Capture:
             if isinstance(item, dict)
         ]
         return Capture(
-            data=json_bytes(_object_capture_payload("commits", payload, owner=owner, repo=repo, ref=ref, path=path)),
+            data=json_bytes(
+                _object_capture_payload(
+                    "commits", payload, owner=owner, repo=repo, ref=ref, path=path
+                )
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2572,18 +2660,26 @@ def capture(argv: list[str], _options: Any) -> Capture:
                 "github_repo": repo,
                 "github_ref": ref,
                 "github_path": path,
-                "source_created_at": min((value for value in authored_dates if value), default=""),
-                "source_updated_at": max((value for value in authored_dates if value), default=""),
+                "source_created_at": min(
+                    (value for value in authored_dates if value), default=""
+                ),
+                "source_updated_at": max(
+                    (value for value in authored_dates if value), default=""
+                ),
             },
         )
     if match := RELEASE_TAG_RE.match(url):
         owner, repo, tag, _ = match.groups()
-        payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/releases/tags/{tag}"])
+        payload = gh_json_object(
+            gh, ["api", f"repos/{owner}/{repo}/releases/tags/{tag}"]
+        )
         payload = with_visibility_metadata(payload, provider="github", locator=url)
         payload = _canonicalize_capture_value(payload)
         published = str(payload.get("published_at") or payload.get("created_at") or "")
         return Capture(
-            data=json_bytes(_object_capture_payload("release", payload, owner=owner, repo=repo)),
+            data=json_bytes(
+                _object_capture_payload("release", payload, owner=owner, repo=repo)
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2597,12 +2693,23 @@ def capture(argv: list[str], _options: Any) -> Capture:
         )
     if match := RELEASES_RE.match(url):
         owner, repo = match.groups()
-        raw_payload = gh_json_value(gh, ["api", f"repos/{owner}/{repo}/releases?per_page=20"])
-        payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        raw_payload = gh_json_value(
+            gh, ["api", f"repos/{owner}/{repo}/releases?per_page=20"]
+        )
+        payload = (
+            [item for item in raw_payload if isinstance(item, dict)]
+            if isinstance(raw_payload, list)
+            else []
+        )
         payload = _canonicalize_capture_value(payload)
-        published = [str(item.get("published_at") or item.get("created_at") or "") for item in payload]
+        published = [
+            str(item.get("published_at") or item.get("created_at") or "")
+            for item in payload
+        ]
         return Capture(
-            data=json_bytes(_object_capture_payload("releases", payload, owner=owner, repo=repo)),
+            data=json_bytes(
+                _object_capture_payload("releases", payload, owner=owner, repo=repo)
+            ),
             name=_preferred_render_name(parsed, "json"),
             type="application/json",
             meta={
@@ -2610,8 +2717,12 @@ def capture(argv: list[str], _options: Any) -> Capture:
                 "github_kind": "releases",
                 "github_owner": owner,
                 "github_repo": repo,
-                "source_created_at": min((value for value in published if value), default=""),
-                "source_updated_at": max((value for value in published if value), default=""),
+                "source_created_at": min(
+                    (value for value in published if value), default=""
+                ),
+                "source_updated_at": max(
+                    (value for value in published if value), default=""
+                ),
             },
         )
     if match := REPO_RE.match(url):
@@ -2629,13 +2740,19 @@ def capture(argv: list[str], _options: Any) -> Capture:
         payload = with_visibility_metadata(payload, provider="github", locator=url)
         payload = _canonicalize_capture_value(payload)
         default_branch_ref = payload.get("defaultBranchRef")
-        default_branch = str(default_branch_ref.get("name") or "") if isinstance(default_branch_ref, dict) else ""
+        default_branch = (
+            str(default_branch_ref.get("name") or "")
+            if isinstance(default_branch_ref, dict)
+            else ""
+        )
         entries: list[dict[str, object]] = []
         readme_path = ""
         readme_summary = ""
         view = {}
         if default_branch:
-            entries = list_directory_entries(gh, owner=owner, repo=repo, ref=default_branch, path="")
+            entries = list_directory_entries(
+                gh, owner=owner, repo=repo, ref=default_branch, path=""
+            )
             readme_path, readme_summary = readme_rollup(
                 gh,
                 owner=owner,
@@ -2678,7 +2795,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
                 "github_repo": repo,
                 "github_ref": default_branch,
                 "source_created_at": str(payload.get("createdAt") or ""),
-                "source_updated_at": str(payload.get("updatedAt") or payload.get("pushedAt") or ""),
+                "source_updated_at": str(
+                    payload.get("updatedAt") or payload.get("pushedAt") or ""
+                ),
             },
             view=view,
         )
@@ -2689,10 +2808,16 @@ def project(argv: list[str], capture: Capture) -> bytes:
     kind = str(capture.meta.get("github_kind") or "").strip()
     if kind == "search":
         payload = json.loads(capture.data.decode("utf-8"))
-        parsed = parse_args(argv, emit_help=False) if argv else ParsedArgs(command="search", output="markdown")
+        parsed = (
+            parse_args(argv, emit_help=False)
+            if argv
+            else ParsedArgs(command="search", output="markdown")
+        )
         if parsed.output == "json":
             return pretty_json(capture.data)
-        return markdown_search(payload, include_details=(parsed.output != "summary")).encode("utf-8")
+        return markdown_search(
+            payload, include_details=(parsed.output != "summary")
+        ).encode("utf-8")
     owner = str(capture.meta.get("github_owner") or "").strip()
     repo = str(capture.meta.get("github_repo") or "").strip()
     ref = str(capture.meta.get("github_ref") or "").strip()
@@ -2701,13 +2826,17 @@ def project(argv: list[str], capture: Capture) -> bytes:
         if not argv:
             if looks_text(capture.data):
                 return capture.data
-            return markdown_binary_blob(owner=owner, repo=repo, ref=ref, path=path).encode("utf-8")
+            return markdown_binary_blob(
+                owner=owner, repo=repo, ref=ref, path=path
+            ).encode("utf-8")
         parsed = parse_args(argv, emit_help=False)
         if parsed.output == "json":
             payload = capture.view.get("payload")
             if isinstance(payload, dict):
                 return json_bytes(payload)
-            return json_bytes(_blob_json_payload(path, capture.data, owner=owner, repo=repo, ref=ref))
+            return json_bytes(
+                _blob_json_payload(path, capture.data, owner=owner, repo=repo, ref=ref)
+            )
         if parsed.output == "summary":
             return markdown_text_blob_summary(
                 owner=owner,
@@ -2718,7 +2847,9 @@ def project(argv: list[str], capture: Capture) -> bytes:
             ).encode("utf-8")
         if looks_text(capture.data):
             return capture.data
-        return markdown_binary_blob(owner=owner, repo=repo, ref=ref, path=path).encode("utf-8")
+        return markdown_binary_blob(owner=owner, repo=repo, ref=ref, path=path).encode(
+            "utf-8"
+        )
     payload = json.loads(capture.data.decode("utf-8"))
     if kind == "tree":
         entries = payload.get("entries") if isinstance(payload, dict) else []
@@ -2778,7 +2909,12 @@ def project(argv: list[str], capture: Capture) -> bytes:
                 hinted_blob = capture.view["hinted_blob"]
                 if isinstance(hinted_blob, bytes) and looks_text(hinted_blob):
                     return hinted_blob
-                return markdown_binary_blob(owner=owner, repo=repo, ref=str(payload.get("ref") or ref), path=hinted_path).encode("utf-8")
+                return markdown_binary_blob(
+                    owner=owner,
+                    repo=repo,
+                    ref=str(payload.get("ref") or ref),
+                    path=hinted_path,
+                ).encode("utf-8")
             if entries:
                 return markdown_repo_directory(
                     repo_payload,
@@ -2800,7 +2936,12 @@ def project(argv: list[str], capture: Capture) -> bytes:
             hinted_blob = capture.view["hinted_blob"]
             if isinstance(hinted_blob, bytes) and looks_text(hinted_blob):
                 return hinted_blob
-            return markdown_binary_blob(owner=owner, repo=repo, ref=str(payload.get("ref") or ref), path=hinted_path).encode("utf-8")
+            return markdown_binary_blob(
+                owner=owner,
+                repo=repo,
+                ref=str(payload.get("ref") or ref),
+                path=hinted_path,
+            ).encode("utf-8")
         if entries:
             return markdown_repo_directory(
                 repo_payload,
@@ -2822,8 +2963,14 @@ def project(argv: list[str], capture: Capture) -> bytes:
         "workflow_run",
         "workflow_job",
     }:
-        parsed = parse_args(argv, emit_help=False) if argv else ParsedArgs(command="render", output="markdown")
-        object_payload = payload.get("payload") if isinstance(payload, dict) else payload
+        parsed = (
+            parse_args(argv, emit_help=False)
+            if argv
+            else ParsedArgs(command="render", output="markdown")
+        )
+        object_payload = (
+            payload.get("payload") if isinstance(payload, dict) else payload
+        )
         if parsed.output == "json":
             return pretty_json(capture.data)
         if kind == "issue":
@@ -2877,7 +3024,9 @@ def project(argv: list[str], capture: Capture) -> bytes:
         releases = object_payload if isinstance(object_payload, list) else []
         if parsed.output == "summary":
             releases = releases[:10]
-        return markdown_release_list(owner=owner, repo=repo, payload=releases).encode("utf-8")
+        return markdown_release_list(owner=owner, repo=repo, payload=releases).encode(
+            "utf-8"
+        )
     return capture.data
 
 
@@ -2939,9 +3088,13 @@ def main(argv: list[str]) -> int:
         except RuntimeError as exc:
             return die(str(exc), code=1)
         if parsed.output == "json":
-            render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+            render_bytes(
+                json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+            )
             return 0
-        emit_markdown(markdown_search(payload, include_details=(parsed.output == "markdown")))
+        emit_markdown(
+            markdown_search(payload, include_details=(parsed.output == "markdown"))
+        )
         return 0
     url, fragment = split_render_url(parsed.url)
 
@@ -2969,7 +3122,9 @@ def main(argv: list[str]) -> int:
                 )
             )
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := ACTIONS_RUN_RE.match(url):
@@ -2990,7 +3145,9 @@ def main(argv: list[str]) -> int:
                 )
             )
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := BLOB_RE.match(url):
@@ -3026,7 +3183,9 @@ def main(argv: list[str]) -> int:
                     "size": len(blob),
                 }
                 render_bytes(
-                    json.dumps(fallback_payload, indent=2, sort_keys=True).encode("utf-8"),
+                    json.dumps(fallback_payload, indent=2, sort_keys=True).encode(
+                        "utf-8"
+                    ),
                     "json",
                 )
                 return 0
@@ -3044,7 +3203,9 @@ def main(argv: list[str]) -> int:
             render_content(blob, fallback_path)
             return 0
         if parsed.output == "json":
-            render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+            render_bytes(
+                json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+            )
             return 0
         if parsed.output == "summary":
             emit_markdown(
@@ -3073,13 +3234,18 @@ def main(argv: list[str]) -> int:
         owner, repo, ref, path = match.groups()
         path = normalize_ref_path(path)
         try:
-            entries = list_directory_entries(gh, owner=owner, repo=repo, ref=ref, path=path)
+            entries = list_directory_entries(
+                gh, owner=owner, repo=repo, ref=ref, path=path
+            )
         except RuntimeError as exc:
             return die(str(exc), code=1)
         if len(entries) == 1 and str(entries[0].get("type") or "") == "file":
             payload = entries[0]
             if parsed.output == "json":
-                render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+                render_bytes(
+                    json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
+                    "json",
+                )
                 return 0
             file_path = str(payload.get("path") or path)
             if parsed.output == "summary":
@@ -3100,13 +3266,21 @@ def main(argv: list[str]) -> int:
             if looks_text(blob):
                 render_content(blob, file_path)
                 return 0
-            emit_markdown(markdown_binary_blob(owner=owner, repo=repo, ref=ref, path=file_path))
+            emit_markdown(
+                markdown_binary_blob(owner=owner, repo=repo, ref=ref, path=file_path)
+            )
             return 0
         if parsed.output == "json":
-            render_bytes(json.dumps(entries, indent=2, sort_keys=True).encode("utf-8"), "json")
+            render_bytes(
+                json.dumps(entries, indent=2, sort_keys=True).encode("utf-8"), "json"
+            )
             return 0
         if parsed.output == "summary":
-            emit_markdown(markdown_directory(owner=owner, repo=repo, ref=ref, path=path, entries=entries))
+            emit_markdown(
+                markdown_directory(
+                    owner=owner, repo=repo, ref=ref, path=path, entries=entries
+                )
+            )
             return 0
         if fragment:
             try:
@@ -3174,7 +3348,9 @@ def main(argv: list[str]) -> int:
                 )
             )
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := ISSUE_RE.match(url):
@@ -3198,16 +3374,14 @@ def main(argv: list[str]) -> int:
             return die(str(exc), code=1)
         payload = with_visibility_metadata(payload, provider="github", locator=url)
         if parsed.output == "markdown":
-            emit_markdown(
-                markdown_issue_or_pr(payload, "issue", include_body=True)
-            )
+            emit_markdown(markdown_issue_or_pr(payload, "issue", include_body=True))
             return 0
         if parsed.output == "summary":
-            emit_markdown(
-                markdown_issue_or_pr(payload, "issue", include_body=False)
-            )
+            emit_markdown(markdown_issue_or_pr(payload, "issue", include_body=False))
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := COMMIT_RE.match(url):
@@ -3229,7 +3403,9 @@ def main(argv: list[str]) -> int:
                 )
             )
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := COMMITS_ROOT_RE.match(url):
@@ -3265,7 +3441,9 @@ def main(argv: list[str]) -> int:
                 except RuntimeError:
                     default_branch = ""
                 if default_branch and default_branch != ref:
-                    default_history = f"https://github.com/{owner}/{repo}/commits/{default_branch}"
+                    default_history = (
+                        f"https://github.com/{owner}/{repo}/commits/{default_branch}"
+                    )
                     head_history = f"https://github.com/{owner}/{repo}/commits/HEAD"
                     if path:
                         default_history = f"{default_history}/{path}"
@@ -3281,11 +3459,21 @@ def main(argv: list[str]) -> int:
                         guidance += f"Try `{fallback}`, `{head_history}`, or `{default_history}`."
                     return die(guidance, code=1)
             return die(message, code=1)
-        payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        payload = (
+            [item for item in raw_payload if isinstance(item, dict)]
+            if isinstance(raw_payload, list)
+            else []
+        )
         if parsed.output in {"summary", "markdown"}:
-            emit_markdown(markdown_commit_list(payload, owner=owner, repo=repo, ref=ref, path=path))
+            emit_markdown(
+                markdown_commit_list(
+                    payload, owner=owner, repo=repo, ref=ref, path=path
+                )
+            )
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := RELEASE_TAG_RE.match(url):
@@ -3293,14 +3481,18 @@ def main(argv: list[str]) -> int:
             return _unsupported_render_limit_error()
         owner, repo, tag, _ = match.groups()
         try:
-            payload = gh_json_object(gh, ["api", f"repos/{owner}/{repo}/releases/tags/{tag}"])
+            payload = gh_json_object(
+                gh, ["api", f"repos/{owner}/{repo}/releases/tags/{tag}"]
+            )
         except RuntimeError as exc:
             return die(str(exc), code=1)
         payload = with_visibility_metadata(payload, provider="github", locator=url)
         if parsed.output in {"summary", "markdown"}:
             emit_markdown(markdown_release(payload, owner=owner, repo=repo))
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := RELEASES_RE.match(url):
@@ -3308,17 +3500,29 @@ def main(argv: list[str]) -> int:
             return _unsupported_render_limit_error()
         owner, repo = match.groups()
         try:
-            raw_payload = gh_json_value(gh, ["api", f"repos/{owner}/{repo}/releases?per_page=20"])
+            raw_payload = gh_json_value(
+                gh, ["api", f"repos/{owner}/{repo}/releases?per_page=20"]
+            )
         except RuntimeError as exc:
             return die(str(exc), code=1)
-        payload = [item for item in raw_payload if isinstance(item, dict)] if isinstance(raw_payload, list) else []
+        payload = (
+            [item for item in raw_payload if isinstance(item, dict)]
+            if isinstance(raw_payload, list)
+            else []
+        )
         if parsed.output == "markdown":
-            emit_markdown(markdown_release_list(owner=owner, repo=repo, payload=payload))
+            emit_markdown(
+                markdown_release_list(owner=owner, repo=repo, payload=payload)
+            )
             return 0
         if parsed.output == "summary":
-            emit_markdown(markdown_release_list(owner=owner, repo=repo, payload=payload[:10]))
+            emit_markdown(
+                markdown_release_list(owner=owner, repo=repo, payload=payload[:10])
+            )
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     if match := REPO_RE.match(url):
@@ -3396,7 +3600,9 @@ def main(argv: list[str]) -> int:
                 return 0
             emit_markdown(markdown_repo(payload))
             return 0
-        render_bytes(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json")
+        render_bytes(
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), "json"
+        )
         return 0
 
     return die(f"unsupported GitHub URL format: {url}")

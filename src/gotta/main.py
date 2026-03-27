@@ -16,7 +16,12 @@ import json
 from gotta.builtin import SessionAccessMode, get_plugin
 from gotta.compat import UTC, datetime, tomllib
 from gotta.actors import resolve_actor_context, seed_actor_context
-from gotta.dispatch import available_plugins, print_usage, run_plugin, system_exit_status
+from gotta.dispatch import (
+    available_plugins,
+    print_usage,
+    run_plugin,
+    system_exit_status,
+)
 from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 from gotta.actor import (
@@ -32,6 +37,7 @@ from gotta.content import (
     CONTEXT_SOURCE_ENV,
     current_context_binding,
     default_session_id,
+    ensure_private_dir,
     SESSION_ACTIVATION_ENV,
     SESSION_CREATED_ENV,
     SESSION_ENV,
@@ -50,6 +56,7 @@ from gotta.content import (
     session_is_initialized,
     shared_session_root,
     sh_quote,
+    write_text_atomic,
     write_session_state,
 )
 from gotta import session as session_plugin
@@ -132,7 +139,9 @@ def _gotta_main(argv: list[str]) -> int:
         print("")
         print("Canonical operator path: `gotta ...`")
         print("")
-        print("Builtin non-session surfaces: `gotta version`, `gotta --version`, `gotta search`")
+        print(
+            "Builtin non-session surfaces: `gotta version`, `gotta --version`, `gotta search`"
+        )
         print("")
         print(
             "Session synthesis surfaces live under `gotta session`: "
@@ -174,9 +183,7 @@ def _gotta_main(argv: list[str]) -> int:
     plugin, plugin_argv = invocation
     if plugin not in available_plugins():
         plugins = ", ".join(available_plugins())
-        return die(
-            f"unknown gotta plugin: {plugin}. available plugins: {plugins}"
-        )
+        return die(f"unknown gotta plugin: {plugin}. available plugins: {plugins}")
     return run_plugin(plugin, plugin_argv)
 
 
@@ -194,7 +201,7 @@ _AUTO_BOOTSTRAP_CONTEXT_SOURCES = {"codex_thread", "terminal_session"}
 
 @contextmanager
 def _session_creation_lock(base_dir: Path, context_id: str):
-    base_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(base_dir)
     lock_path = base_dir / f".{_session_token(context_id)}.lock"
     deadline = time.monotonic() + _SESSION_LOCK_TIMEOUT_SECONDS
     fd: int | None = None
@@ -325,8 +332,8 @@ def _create_session_root(
     )
     session_dir = session_plugin._group_session_root(resolved_root)
     content_dir = session_dir / "content"
-    session_dir.mkdir(parents=True, exist_ok=True)
-    content_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(session_dir)
+    ensure_private_dir(content_dir)
     dirs = resolve_dirs(
         CommonOptions(
             session_dir=str(resolved_root),
@@ -339,7 +346,9 @@ def _create_session_root(
     write_session_state(
         dirs,
         {
-            SESSION_CREATED_ENV: load_state_env_at_root(root).get(SESSION_CREATED_ENV, "")
+            SESSION_CREATED_ENV: load_state_env_at_root(root).get(
+                SESSION_CREATED_ENV, ""
+            )
             or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             SESSION_REPO_ENV: str(repo_root) if repo_root is not None else "",
             SESSION_ID_ENV: current_session_id,
@@ -370,9 +379,7 @@ def _create_session_root(
     if not isinstance(members, list):
         members = []
     normalized_members = [
-        topology.normalize_identity(str(item))
-        for item in members
-        if str(item).strip()
+        topology.normalize_identity(str(item)) for item in members if str(item).strip()
     ]
     if actor_branch and actor and actor not in normalized_members:
         normalized_members.append(actor)
@@ -390,13 +397,15 @@ def _create_session_root(
             },
         )
     payload["session_id"] = current_session_id
-    payload.setdefault("created_at", datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    payload.setdefault(
+        "created_at", datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     payload["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload["members"] = sorted(dict.fromkeys(normalized_members))
     payload["actors"] = actors
-    metadata_path.write_text(
+    write_text_atomic(
+        metadata_path,
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
     return dirs.session_dir.resolve(), True
 
@@ -405,9 +414,11 @@ def _bind_session_root(context_id: str, context_source: str) -> tuple[Path, bool
     fingerprint = _session_token(context_id)
     session_id = fingerprint
     root = topology.session_root_for(session_id, fingerprint)
-    shared_session_root(session_id).mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(shared_session_root(session_id))
     created = False
-    with _session_creation_lock(DEFAULT_SESSION_ROOT.expanduser().resolve(), context_id):
+    with _session_creation_lock(
+        DEFAULT_SESSION_ROOT.expanduser().resolve(), context_id
+    ):
         if not session_is_initialized(root):
             root, _created = _create_session_root(
                 root,
@@ -483,9 +494,7 @@ def _ensure_scaffolded_session(
 ) -> tuple[Path, bool]:
     shared_session = topology.parse_shared_session_root(root)
     if shared_session is not None:
-        raise RuntimeError(
-            f"shared session roots require an actor: {root}"
-        )
+        raise RuntimeError(f"shared session roots require an actor: {root}")
     created = False
     if not session_is_initialized(root):
         root, created = _create_session_root(
@@ -517,6 +526,8 @@ def _flag_value(argv: list[str], flag: str) -> str | None:
         if token.startswith(f"{flag}="):
             return token.split("=", 1)[1]
     return None
+
+
 def _explicit_actor_arg(argv: list[str]) -> str | None:
     return _flag_value(argv, "--actor")
 
@@ -631,7 +642,11 @@ def _creation_receipt_lines(
     bound: bool,
 ) -> list[str]:
     shared_session_id = topology.parse_grouped_session_root(root)
-    shared_id = shared_session_id[0] if shared_session_id is not None else topology.parse_shared_session_root(root)
+    shared_id = (
+        shared_session_id[0]
+        if shared_session_id is not None
+        else topology.parse_shared_session_root(root)
+    )
     shared_topology = bool(shared_id)
     bind_target = shared_id or sh_quote(str(root))
     reuse_flag = "<shared-session-id>" if shared_topology else "<session-root>"
@@ -866,14 +881,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         created = False
         bound_current_context = False
-        init_command = plugin_name == "session" and len(effective) >= 2 and effective[1] == "init"
-        if plugin_name == "session" and len(effective) >= 2 and effective[1] in {"bind"}:
+        init_command = (
+            plugin_name == "session" and len(effective) >= 2 and effective[1] == "init"
+        )
+        if (
+            plugin_name == "session"
+            and len(effective) >= 2
+            and effective[1] in {"bind"}
+        ):
             return _gotta_main(normalized)
         if session_access == "none":
             return _gotta_main(normalized)
         if explicit_session:
             if init_command:
-                target_identity = topology.normalize_identity(_active_identity(context_id))
+                target_identity = topology.normalize_identity(
+                    _active_identity(context_id)
+                )
                 root = resolve_session_reference(
                     explicit_session,
                     identity=target_identity,
@@ -911,7 +934,9 @@ def main(argv: list[str] | None = None) -> int:
                         explicit_root,
                         explicit_actor,
                     )
-                    root = session_plugin._actor_session_dir(explicit_root, resolved_actor)
+                    root = session_plugin._actor_session_dir(
+                        explicit_root, resolved_actor
+                    )
                 elif explicit_root is not None:
                     root = explicit_root
                 else:
@@ -969,13 +994,21 @@ def main(argv: list[str] | None = None) -> int:
                 )
             root = None
         scaffold_created = False
-        if auto_bootstrap and root is not None and session_access in {"read", "ambient"}:
+        if (
+            auto_bootstrap
+            and root is not None
+            and session_access in {"read", "ambient"}
+        ):
             root, scaffold_created = _ensure_scaffolded_session(
                 root,
                 context_id=context_id,
                 context_source=context_source,
             )
-        if session_access == "read" and root is not None and not session_is_initialized(root):
+        if (
+            session_access == "read"
+            and root is not None
+            and not session_is_initialized(root)
+        ):
             if not shared_root_command:
                 existing = _existing_actor_root_for_session(
                     root,
@@ -1031,7 +1064,9 @@ def main(argv: list[str] | None = None) -> int:
                         context_source=context_source,
                     )
                 else:
-                    _hydrate_environment(root, context_id=context_id, context_source=context_source)
+                    _hydrate_environment(
+                        root, context_id=context_id, context_source=context_source
+                    )
                     seed_actor_context(acting_actor)
                     if explicit_actor:
                         os.environ[SESSION_ACTOR_ENV] = content_session_identity(root)

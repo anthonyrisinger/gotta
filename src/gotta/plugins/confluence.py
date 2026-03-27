@@ -25,7 +25,10 @@ from gotta.drawio import DRAWIO_MIME, summarize_drawio
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+)
 from gotta.providers import atlassian as atl
 
 
@@ -163,7 +166,14 @@ def route_target(target: str) -> list[str] | None:
         return query_route(
             "search",
             target.removeprefix("confluence:search "),
-            valued_flags=("--space", "--type", "--limit", "--next", "--output", "--base-url"),
+            valued_flags=(
+                "--space",
+                "--type",
+                "--limit",
+                "--next",
+                "--output",
+                "--base-url",
+            ),
             boolean_flags=("--title-only",),
         )
     if target.startswith("confluence:cql "):
@@ -203,7 +213,9 @@ def _is_blogpost_ref(raw: str) -> bool:
     parsed = urllib.parse.urlparse(candidate)
     if not parsed.scheme or not parsed.netloc:
         return False
-    return bool(re.search(r"/wiki/(?:spaces/[^/]+/)?blog(?:/[^/]+)*/\d+(?:/|$)", parsed.path))
+    return bool(
+        re.search(r"/wiki/(?:spaces/[^/]+/)?blog(?:/[^/]+)*/\d+(?:/|$)", parsed.path)
+    )
 
 
 def parse_page_ref(raw: str, *, allow_blogpost: bool = False) -> PageRef:
@@ -301,13 +313,19 @@ def load_session(page_ref: PageRef, *, allow_reauth: bool = True) -> Session:
             )
         return Session(token=token, cloud_id=cloud_id, base_url=resolved_base_url)
     except ToolError:
-        if allow_reauth and is_interactive() and token_preflight_status(token) == "invalid":
+        if (
+            allow_reauth
+            and is_interactive()
+            and token_preflight_status(token) == "invalid"
+        ):
             run_oauth_bootstrap(base_url=page_ref.base_url)
             return load_session(page_ref, allow_reauth=False)
         raise
 
 
-def page_api_url(session: Session, page_id: str, *, body_format: str = "storage") -> str:
+def page_api_url(
+    session: Session, page_id: str, *, body_format: str = "storage"
+) -> str:
     params = urllib.parse.urlencode({"body-format": body_format})
     return (
         f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
@@ -315,7 +333,9 @@ def page_api_url(session: Session, page_id: str, *, body_format: str = "storage"
     )
 
 
-def blogpost_api_url(session: Session, page_id: str, *, body_format: str = "storage") -> str:
+def blogpost_api_url(
+    session: Session, page_id: str, *, body_format: str = "storage"
+) -> str:
     params = urllib.parse.urlencode({"body-format": body_format})
     return (
         f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
@@ -349,7 +369,9 @@ def pages_api_url(
 
 
 def pages_collection_url(session: Session) -> str:
-    return f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/pages"
+    return (
+        f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/pages"
+    )
 
 
 def comment_api_url(
@@ -462,9 +484,7 @@ def build_text_search_cql(args: argparse.Namespace) -> str:
     return " AND ".join(clauses)
 
 
-def normalize_search_result(
-    result: dict[str, Any], *, base_url: str
-) -> dict[str, Any]:
+def normalize_search_result(result: dict[str, Any], *, base_url: str) -> dict[str, Any]:
     content = result.get("content")
     if not isinstance(content, dict):
         content = {}
@@ -478,7 +498,9 @@ def normalize_search_result(
         "title": result.get("title") or content.get("title"),
         "id": content.get("id") or result.get("id"),
         "type": content.get("type") or result.get("entityType"),
-        "url": absolutize_confluence_url(str(result.get("url") or ""), base_url=base_url),
+        "url": absolutize_confluence_url(
+            str(result.get("url") or ""), base_url=base_url
+        ),
     }
     excerpt = result.get("excerpt")
     if excerpt:
@@ -519,7 +541,9 @@ def render_search_markdown(payload: dict[str, Any]) -> str:
         f"- _Type_: `{payload.get('type') or 'page'}`",
         f"- _Matches_: {payload.get('size') or len(results)}",
     ]
-    lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
+    lines.extend(
+        render_source_metadata_lines(derive_source_metadata_from_payload(payload))
+    )
     if payload.get("next"):
         lines.append(f"- _Next_: `{payload['next']}`")
     if payload.get("previous"):
@@ -534,7 +558,9 @@ def render_search_markdown(payload: dict[str, Any]) -> str:
         content_type = str(item.get("type") or "")
         space_key = str(item.get("spaceKey") or "")
         space_name = str(item.get("spaceName") or "")
-        modified = str(item.get("lastModified") or item.get("friendlyLastModified") or "")
+        modified = str(
+            item.get("lastModified") or item.get("friendlyLastModified") or ""
+        )
         line = f"- [{title}]({url})"
         details: list[str] = []
         if content_id:
@@ -636,7 +662,11 @@ def resolve_page_id(session: Session, page_ref: PageRef) -> str:
     if not isinstance(payload, dict):
         raise ToolError("unexpected space lookup response")
     results = payload.get("results")
-    if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict):
+    if (
+        not isinstance(results, list)
+        or len(results) != 1
+        or not isinstance(results[0], dict)
+    ):
         raise ToolError(
             f"could not resolve unique Confluence homepage for space {page_ref.space_key}"
         )
@@ -683,7 +713,9 @@ def _fetch_blogpost_payload(session: Session, page_id: str) -> dict[str, Any]:
     return page
 
 
-def _fetch_page_like_payload(session: Session, page_id: str) -> tuple[str, dict[str, Any]]:
+def _fetch_page_like_payload(
+    session: Session, page_id: str
+) -> tuple[str, dict[str, Any]]:
     try:
         return "page", _fetch_page_payload(session, page_id)
     except ToolError as exc:
@@ -746,7 +778,9 @@ def list_pages(
     if not isinstance(links, dict):
         links = {}
     next_link = str(links.get("next") or "")
-    return [item for item in results if isinstance(item, dict)], extract_cursor(next_link)
+    return [item for item in results if isinstance(item, dict)], extract_cursor(
+        next_link
+    )
 
 
 def find_child_pages_by_title(
@@ -781,7 +815,9 @@ def find_child_pages_by_title(
     return matches
 
 
-def summarize_storage_html(storage_html: str, *, preview_chars: int = 240) -> dict[str, Any]:
+def summarize_storage_html(
+    storage_html: str, *, preview_chars: int = 240
+) -> dict[str, Any]:
     normalized = re.sub(r"\s+", " ", storage_html).strip()
     preview = normalized[:preview_chars]
     if len(normalized) > preview_chars:
@@ -887,7 +923,9 @@ def fetch_read_target(
 ) -> tuple[Session, str, dict[str, Any]]:
     session: Session | None = None
     try:
-        session = load_session(PageRef(base_url=content_ref.base_url), allow_reauth=allow_reauth)
+        session = load_session(
+            PageRef(base_url=content_ref.base_url), allow_reauth=allow_reauth
+        )
         if content_ref.comment_id:
             comment = _fetch_comment_payload(
                 session,
@@ -966,7 +1004,9 @@ def update_page(
         updated = api_json("PUT", url, session.token, payload=payload)
         if not isinstance(updated, dict):
             raise ToolError("unexpected update response")
-        persisted = api_json("GET", page_api_url(session, str(page["id"])), session.token)
+        persisted = api_json(
+            "GET", page_api_url(session, str(page["id"])), session.token
+        )
         if not isinstance(persisted, dict):
             raise ToolError("unexpected persisted page response after update")
         expected_version = int(page["version"]["number"]) + 1
@@ -1055,7 +1095,10 @@ def replace_between(
 
 def apply_operation(body: str, operation: dict[str, Any], *, index: int) -> str:
     op_type = str(operation.get("type", "")).strip()
-    label = str(operation.get("label", f"operation {index}")).strip() or f"operation {index}"
+    label = (
+        str(operation.get("label", f"operation {index}")).strip()
+        or f"operation {index}"
+    )
     try:
         if op_type == "replace":
             old = read_explicit_input(
@@ -1208,14 +1251,21 @@ def strip_matching_leading_h1(markdown: str, *, title: str) -> str:
         r"^(?:[ \t]*\r?\n)*[ \t]{0,3}#(?!#)[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*(?:\r?\n|$)",
         markdown,
     )
-    if atx_match and _normalize_heading_title(str(atx_match.group("title") or "")) == title_norm:
+    if (
+        atx_match
+        and _normalize_heading_title(str(atx_match.group("title") or "")) == title_norm
+    ):
         return markdown[atx_match.end() :].lstrip("\r\n")
 
     setext_match = re.match(
         r"^(?:[ \t]*\r?\n)*(?P<title>[^\r\n]+)\r?\n[ \t]*=+[ \t]*(?:\r?\n|$)",
         markdown,
     )
-    if setext_match and _normalize_heading_title(str(setext_match.group("title") or "")) == title_norm:
+    if (
+        setext_match
+        and _normalize_heading_title(str(setext_match.group("title") or ""))
+        == title_norm
+    ):
         return markdown[setext_match.end() :].lstrip("\r\n")
 
     return markdown
@@ -1340,7 +1390,9 @@ def _attachment_download_url(
             link = str(links.get("download") or "").strip()
     if not link:
         return ""
-    return absolutize_confluence_url(link, base_url=f"{session.base_url.rstrip('/')}/wiki")
+    return absolutize_confluence_url(
+        link, base_url=f"{session.base_url.rstrip('/')}/wiki"
+    )
 
 
 def _resolve_drawio_attachment(
@@ -1361,7 +1413,9 @@ def _resolve_drawio_attachment(
         return attachment
     if custom_content_id.isdigit():
         try:
-            payload = api_json("GET", attachment_api_url(session, custom_content_id), session.token)
+            payload = api_json(
+                "GET", attachment_api_url(session, custom_content_id), session.token
+            )
         except ToolError as exc:
             if _is_not_found_error(exc):
                 return None
@@ -1375,15 +1429,21 @@ def _render_drawio_macro_html(
     session: Session | None,
     params: dict[str, str],
 ) -> str:
-    diagram_name = params.get("diagramDisplayName") or params.get("diagramName") or "(unnamed)"
+    diagram_name = (
+        params.get("diagramDisplayName") or params.get("diagramName") or "(unnamed)"
+    )
     page_id = params.get("pageId") or ""
     custom_content_id = params.get("custContentId") or params.get("contentId") or ""
     width = params.get("width") or ""
     height = params.get("height") or ""
-    details = [f"<strong>Embedded draw.io diagram:</strong> <code>{html.escape(diagram_name)}</code>"]
+    details = [
+        f"<strong>Embedded draw.io diagram:</strong> <code>{html.escape(diagram_name)}</code>"
+    ]
     meta_items: list[str] = []
     if custom_content_id:
-        meta_items.append(f"Custom content ID: <code>{html.escape(custom_content_id)}</code>")
+        meta_items.append(
+            f"Custom content ID: <code>{html.escape(custom_content_id)}</code>"
+        )
     if page_id:
         meta_items.append(f"Page ID: <code>{html.escape(page_id)}</code>")
     if width or height:
@@ -1405,13 +1465,21 @@ def _render_drawio_macro_html(
             title = str(attachment.get("title") or "").strip()
             attachment_id = str(attachment.get("id") or "").strip()
             media_type = str(attachment.get("mediaType") or "").strip()
-            download_url = _attachment_download_url(session, attachment, page_id=page_id)
+            download_url = _attachment_download_url(
+                session, attachment, page_id=page_id
+            )
             if attachment_id:
-                meta_items.append(f"Attachment ID: <code>{html.escape(attachment_id)}</code>")
+                meta_items.append(
+                    f"Attachment ID: <code>{html.escape(attachment_id)}</code>"
+                )
             if media_type:
-                meta_items.append(f"Attachment MIME type: <code>{html.escape(media_type)}</code>")
+                meta_items.append(
+                    f"Attachment MIME type: <code>{html.escape(media_type)}</code>"
+                )
             if title and title != diagram_name:
-                meta_items.append(f"Attachment title: <code>{html.escape(title)}</code>")
+                meta_items.append(
+                    f"Attachment title: <code>{html.escape(title)}</code>"
+                )
             if download_url:
                 try:
                     data = api_bytes("GET", download_url, session.token)
@@ -1425,7 +1493,9 @@ def _render_drawio_macro_html(
                         if summary.get("parsed"):
                             pages = summary.get("pages")
                             if isinstance(pages, list):
-                                structure_items.append(f"Pages: <code>{len(pages)}</code>")
+                                structure_items.append(
+                                    f"Pages: <code>{len(pages)}</code>"
+                                )
                                 for page in pages[:5]:
                                     if not isinstance(page, dict):
                                         continue
@@ -1446,7 +1516,9 @@ def _render_drawio_macro_html(
                                         item += f"; labels: {label_preview}"
                                     structure_items.append(item)
                                 if len(pages) > 5:
-                                    structure_items.append(f"... {len(pages) - 5} more page(s)")
+                                    structure_items.append(
+                                        f"... {len(pages) - 5} more page(s)"
+                                    )
                         elif summary.get("decoded"):
                             structure_items.append(
                                 "Diagram bytes resolved, but gotta could not parse the draw.io XML into graph structure."
@@ -1529,7 +1601,9 @@ def _projection_is_lossy(markdown: str) -> bool:
     )
 
 
-def render_storage_to_markdown(storage_html: str, *, session: Session | None = None) -> str:
+def render_storage_to_markdown(
+    storage_html: str, *, session: Session | None = None
+) -> str:
     storage_html = _replace_drawio_macros(storage_html, session=session)
     storage_html = _sanitize_storage_html_for_markdown(storage_html)
     try:
@@ -1681,7 +1755,10 @@ def _markdown_from_capture(capture: Capture) -> bytes:
         capture.data.decode("utf-8", errors="replace"),
         session=session,
     )
-    title = str(capture.meta.get("source_title") or ("Confluence Comment" if kind == "comment" else "(untitled)"))
+    title = str(
+        capture.meta.get("source_title")
+        or ("Confluence Comment" if kind == "comment" else "(untitled)")
+    )
     lines = [f"# {title}", ""]
     url = str(capture.meta.get("source_url") or "")
     content_id = str(capture.meta.get("content_id") or "")
@@ -1734,8 +1811,15 @@ def capture(argv: list[str], _options: object) -> Capture:
             )
         raise NotImplementedError("confluence capture does not support this command")
     session, content_kind, content = fetch_read_target(parse_content_ref(args.page))
-    body = comment_storage_value(content) if content_kind == "comment" else storage_value(content)
-    fallback = _slug(Path(urllib.parse.urlparse(args.page).path.rstrip("/")).name or args.page, fallback="confluence")
+    body = (
+        comment_storage_value(content)
+        if content_kind == "comment"
+        else storage_value(content)
+    )
+    fallback = _slug(
+        Path(urllib.parse.urlparse(args.page).path.rstrip("/")).name or args.page,
+        fallback="confluence",
+    )
     return Capture(
         data=body.encode("utf-8"),
         name=_content_capture_name(content_kind, content, fallback),
@@ -1798,7 +1882,9 @@ def project(argv: list[str], capture: Capture) -> bytes:
             "id": capture.meta.get("content_id") or capture.meta.get("page_id") or "",
             "type": capture.meta.get("content_kind") or "page",
             "title": capture.meta.get("source_title") or "",
-            "body": {"storage": {"value": capture.data.decode("utf-8", errors="replace")}},
+            "body": {
+                "storage": {"value": capture.data.decode("utf-8", errors="replace")}
+            },
         }
     )
 
@@ -1882,7 +1968,9 @@ def format_create_page_preview(
         },
         "siblingExists": bool(sibling_matches),
         "siblingCount": len(sibling_matches),
-        "siblings": [normalize_page_summary(match, session) for match in sibling_matches],
+        "siblings": [
+            normalize_page_summary(match, session) for match in sibling_matches
+        ],
         "bodyPreview": summarize_storage_html(body_html),
     }
 
@@ -1929,7 +2017,9 @@ def render_create_page_preview(payload: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def format_created_page_result(page: dict[str, Any], session: Session) -> dict[str, Any]:
+def format_created_page_result(
+    page: dict[str, Any], session: Session
+) -> dict[str, Any]:
     result = normalize_page_summary(page, session)
     result["mode"] = "created"
     return result
@@ -2100,8 +2190,12 @@ def cmd_cql(args: argparse.Namespace) -> int:
 
 
 def cmd_replace(args: argparse.Namespace) -> int:
-    old = read_explicit_input(args.old_inline, args.from_file, input_name="--from/--from-file")
-    new = read_explicit_input(args.new_inline, args.to_file, input_name="--to/--to-file")
+    old = read_explicit_input(
+        args.old_inline, args.from_file, input_name="--from/--from-file"
+    )
+    new = read_explicit_input(
+        args.new_inline, args.to_file, input_name="--to/--to-file"
+    )
     session, page = fetch_page(parse_page_ref(args.page))
     ensure_base_version(page, args.base_version)
     before = storage_value(page)
@@ -2120,7 +2214,9 @@ def cmd_replace(args: argparse.Namespace) -> int:
 
 def cmd_replace_section(args: argparse.Namespace) -> int:
     replacement = read_explicit_input(
-        args.replacement, args.replacement_file, input_name="--replacement/--replacement-file"
+        args.replacement,
+        args.replacement_file,
+        input_name="--replacement/--replacement-file",
     )
     session, page = fetch_page(parse_page_ref(args.page))
     ensure_base_version(page, args.base_version)
@@ -2207,7 +2303,9 @@ def cmd_auth(args: argparse.Namespace) -> int:
         oauth_state = run_oauth_bootstrap(base_url=base_url)
         cloud_id = oauth_state.get("cloud_id")
         expires_at = oauth_state.get("expires_at")
-        selected_site_url = str(oauth_state.get("base_url") or site_root(base_url)).strip()
+        selected_site_url = str(
+            oauth_state.get("base_url") or site_root(base_url)
+        ).strip()
     else:
         session = load_session(PageRef(base_url=site_root(base_url)))
         status = atlassian_status_payload(
@@ -2216,7 +2314,9 @@ def cmd_auth(args: argparse.Namespace) -> int:
         )
         cloud_id = session.cloud_id
         expires_at = status.get("expiresAt")
-        selected_site_url = str(session.base_url or status.get("baseUrl") or site_root(base_url)).strip()
+        selected_site_url = str(
+            session.base_url or status.get("baseUrl") or site_root(base_url)
+        ).strip()
     selected_confluence_url = f"{selected_site_url}/wiki" if selected_site_url else ""
     if selected_confluence_url:
         persist_selected_base_urls(selected_confluence_url)
@@ -2380,17 +2480,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("status", help="inspect local Confluence/Atlassian auth readiness")
+    p = sub.add_parser(
+        "status", help="inspect local Confluence/Atlassian auth readiness"
+    )
     p.add_argument(
         "--base-url",
         default=default_base_url(),
         help=f"Confluence base URL override (default: {CONFLUENCE_BASE_URL_ENV})",
     )
-    p.add_argument("--check", action="store_true", help="run a token preflight against Atlassian")
+    p.add_argument(
+        "--check", action="store_true", help="run a token preflight against Atlassian"
+    )
     p.add_argument("--output", choices=["json", "summary"], default="summary")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("get", help="fetch Confluence page, blog post, or comment content")
+    p = sub.add_parser(
+        "get", help="fetch Confluence page, blog post, or comment content"
+    )
     p.add_argument("page", help=CONTENT_ARG_HELP)
     p.add_argument(
         "--output",
@@ -2545,7 +2651,9 @@ def build_parser() -> argparse.ArgumentParser:
         "render-markdown",
         help="convert markdown to Confluence storage HTML for safe insertion",
     )
-    p.add_argument("markdown", nargs="?", help="inline markdown; reads stdin if omitted")
+    p.add_argument(
+        "markdown", nargs="?", help="inline markdown; reads stdin if omitted"
+    )
     p.add_argument("--file", help="file containing markdown")
     p.set_defaults(func=cmd_render_markdown)
 

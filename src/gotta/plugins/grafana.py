@@ -26,7 +26,10 @@ from gotta.config import (
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.routing import query_route, split_locator_tail, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+)
 
 
 GRAFANA_BASE_URL_ENV = "GOTTA_GRAFANA_BASE_URL"
@@ -36,7 +39,9 @@ GRAFANA_ORG_ID_ENV = "GOTTA_GRAFANA_ORG_ID"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 5000
 DEFAULT_DATASOURCE_LIST_LIMIT = 100
-DASHBOARD_URL_RE = re.compile(r"^https?://[^/]+(?:/[^?#]*)?/d(?:-solo)?/(?P<uid>[^/?#]+)")
+DASHBOARD_URL_RE = re.compile(
+    r"^https?://[^/]+(?:/[^?#]*)?/d(?:-solo)?/(?P<uid>[^/?#]+)"
+)
 DEFAULT_USER_AGENT = "gotta/grafana-plugin"
 
 
@@ -89,7 +94,9 @@ def nonnegative_int(raw: str) -> int:
     return value
 
 
-def _list_window_suffix(*, limit: int, offset: int, include_all: bool, default_limit: int) -> str:
+def _list_window_suffix(
+    *, limit: int, offset: int, include_all: bool, default_limit: int
+) -> str:
     parts: list[str] = []
     if include_all:
         parts.append("all")
@@ -144,7 +151,9 @@ def _normalize_base_url(raw: str) -> str:
         raise ToolError(
             f"invalid Grafana base URL: {raw}. Expected https://grafana.example.com"
         )
-    return urllib.parse.urlunparse(parsed._replace(path=parsed.path.rstrip("/"), query="", fragment=""))
+    return urllib.parse.urlunparse(
+        parsed._replace(path=parsed.path.rstrip("/"), query="", fragment="")
+    )
 
 
 def _load_session(
@@ -157,8 +166,12 @@ def _load_session(
     resolved_base_url = _normalize_base_url(
         str(base_url or "").strip() or _env_or_config(config_env, GRAFANA_BASE_URL_ENV)
     )
-    resolved_token = str(token or "").strip() or _env_or_config(config_env, GRAFANA_TOKEN_ENV)
-    resolved_org_id = str(org_id or "").strip() or _env_or_config(config_env, GRAFANA_ORG_ID_ENV)
+    resolved_token = str(token or "").strip() or _env_or_config(
+        config_env, GRAFANA_TOKEN_ENV
+    )
+    resolved_org_id = str(org_id or "").strip() or _env_or_config(
+        config_env, GRAFANA_ORG_ID_ENV
+    )
     return Session(
         base_url=resolved_base_url,
         token=resolved_token,
@@ -203,7 +216,9 @@ def _grafana_json(
         charset = exc.headers.get_content_charset() or "utf-8"
         body = exc.read().decode(charset, errors="replace")
         message = body.strip() or exc.reason or f"HTTP {exc.code}"
-        raise ToolError(f"Grafana API request failed ({exc.code}) for {path}: {message}") from exc
+        raise ToolError(
+            f"Grafana API request failed ({exc.code}) for {path}: {message}"
+        ) from exc
     except urllib.error.URLError as exc:
         raise ToolError(f"Grafana API request failed for {path}: {exc.reason}") from exc
     try:
@@ -247,7 +262,9 @@ def _require_configured_session(session: Session) -> None:
     if not session.base_url:
         raise ToolError(f"missing Grafana base URL; set {GRAFANA_BASE_URL_ENV}")
     if not session.token:
-        raise ToolError(f"missing Grafana service account token; set {GRAFANA_TOKEN_ENV}")
+        raise ToolError(
+            f"missing Grafana service account token; set {GRAFANA_TOKEN_ENV}"
+        )
 
 
 def _relative_or_full_url(base_url: str, raw: str) -> str:
@@ -294,7 +311,9 @@ def _status_payload(
         permissions = _grafana_json(session, "/api/access-control/user/permissions")
         payload["permissionsStatus"] = "usable"
         if isinstance(permissions, dict):
-            payload["dashboardRead"] = "yes" if "dashboards:read" in permissions else "unknown"
+            payload["dashboardRead"] = (
+                "yes" if "dashboards:read" in permissions else "unknown"
+            )
             payload["permissionKeys"] = sorted(str(key) for key in permissions)[:50]
     except ToolError as exc:
         permissions_error = str(exc)
@@ -369,7 +388,11 @@ def _persist_auth_updates(updates: dict[str, str]) -> Path:
 
 
 def _search_params(args: argparse.Namespace) -> list[tuple[str, str]]:
-    params: list[tuple[str, str]] = [("query", args.query), ("limit", str(args.limit)), ("page", str(args.page))]
+    params: list[tuple[str, str]] = [
+        ("query", args.query),
+        ("limit", str(args.limit)),
+        ("page", str(args.page)),
+    ]
     if args.type:
         params.append(("type", args.type))
     for tag in args.tag:
@@ -398,7 +421,9 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
         if not isinstance(item, dict):
             continue
         url = _relative_or_full_url(session.base_url, str(item.get("url") or ""))
-        folder_url = _relative_or_full_url(session.base_url, str(item.get("folderUrl") or ""))
+        folder_url = _relative_or_full_url(
+            session.base_url, str(item.get("folderUrl") or "")
+        )
         results.append(
             {
                 "id": item.get("id"),
@@ -430,6 +455,8 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
         "results": results,
         "size": len(results),
     }
+
+
 def _search_markdown(payload: dict[str, Any]) -> str:
     query = str(payload.get("query") or "").strip()
     query_text = f"`{query}`" if query else "_all_"
@@ -440,7 +467,9 @@ def _search_markdown(payload: dict[str, Any]) -> str:
             derive_source_metadata_from_payload(
                 {
                     "plugin": "grafana",
-                    "locator": canonical_locator(_search_locator_argv_from_payload(payload)),
+                    "locator": canonical_locator(
+                        _search_locator_argv_from_payload(payload)
+                    ),
                     "url": payload.get("baseUrl") or "",
                     "source_updated_at": "",
                 }
@@ -469,7 +498,9 @@ def _search_markdown(payload: dict[str, Any]) -> str:
         if item.get("url"):
             lines.append(f"- URL: {item.get('url')}")
         tags = list(item.get("tags") or [])
-        lines.append(f"- Tags: {', '.join(str(tag) for tag in tags) if tags else '_none_'}")
+        lines.append(
+            f"- Tags: {', '.join(str(tag) for tag in tags) if tags else '_none_'}"
+        )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -740,7 +771,9 @@ def _effective_query_context(
 ) -> tuple[str, str, str, str]:
     dashboard_context = _dashboard_ref_context(str(args.dashboard or ""))
     dashboard_ref = str(args.dashboard or "").strip()
-    from_time = str(args.from_time or "").strip() or dashboard_context.from_time or "now-1h"
+    from_time = (
+        str(args.from_time or "").strip() or dashboard_context.from_time or "now-1h"
+    )
     to_time = str(args.to_time or "").strip() or dashboard_context.to_time or "now"
     org_id = str(args.org_id or "").strip() or dashboard_context.org_id
     return dashboard_ref, org_id, from_time, to_time
@@ -784,8 +817,8 @@ def _frame_series(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _query_payload(args: argparse.Namespace) -> dict[str, Any]:
-    dashboard_ref, effective_org_id, effective_from_time, effective_to_time = _effective_query_context(
-        args
+    dashboard_ref, effective_org_id, effective_from_time, effective_to_time = (
+        _effective_query_context(args)
     )
     session = _load_session(
         base_url=args.base_url,
@@ -887,7 +920,9 @@ def _query_markdown(payload: dict[str, Any]) -> str:
         f"- Query: `{payload.get('query') or ''}`",
     ]
     if dashboard:
-        lines.append(f"- Dashboard: {dashboard.get('title') or ''} (`{dashboard.get('uid') or ''}`)")
+        lines.append(
+            f"- Dashboard: {dashboard.get('title') or ''} (`{dashboard.get('uid') or ''}`)"
+        )
         if dashboard.get("url"):
             lines.append(f"- Dashboard URL: {dashboard.get('url')}")
     lines.append("")
@@ -964,7 +999,10 @@ def _normalize_datasources_locator_tail(args: argparse.Namespace) -> list[str]:
     parts = ["datasources"]
     if getattr(args, "all", False):
         parts.append("--all")
-    elif int(getattr(args, "limit", DEFAULT_DATASOURCE_LIST_LIMIT)) != DEFAULT_DATASOURCE_LIST_LIMIT:
+    elif (
+        int(getattr(args, "limit", DEFAULT_DATASOURCE_LIST_LIMIT))
+        != DEFAULT_DATASOURCE_LIST_LIMIT
+    ):
         parts.extend(["--limit", str(args.limit)])
     if int(getattr(args, "offset", 0)):
         parts.extend(["--offset", str(args.offset)])
@@ -974,14 +1012,16 @@ def _normalize_datasources_locator_tail(args: argparse.Namespace) -> list[str]:
 
 
 def _normalize_query_locator_tail(args: argparse.Namespace) -> list[str]:
-    dashboard_ref, effective_org_id, effective_from_time, effective_to_time = _effective_query_context(
-        args
+    dashboard_ref, effective_org_id, effective_from_time, effective_to_time = (
+        _effective_query_context(args)
     )
     parts = ["query"]
     if args.datasource:
         parts.extend(["--datasource", args.datasource])
     if dashboard_ref:
-        parts.extend(["--dashboard", _dashboard_uid_from_ref(dashboard_ref) or dashboard_ref])
+        parts.extend(
+            ["--dashboard", _dashboard_uid_from_ref(dashboard_ref) or dashboard_ref]
+        )
     if effective_org_id:
         parts.extend(["--org-id", effective_org_id])
     if args.range:
@@ -1021,7 +1061,14 @@ def route_target(target: str) -> list[str] | None:
             return query_route(
                 "query",
                 rest.removeprefix("query ").strip(),
-                valued_flags=("--datasource", "--dashboard", "--org-id", "--from", "--to", "--output"),
+                valued_flags=(
+                    "--datasource",
+                    "--dashboard",
+                    "--org-id",
+                    "--from",
+                    "--to",
+                    "--output",
+                ),
                 boolean_flags=("--range",),
             )
         if rest.startswith("get "):
@@ -1045,25 +1092,36 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    auth = sub.add_parser("auth", help="persist Grafana base URL and service-account token")
+    auth = sub.add_parser(
+        "auth", help="persist Grafana base URL and service-account token"
+    )
     status = sub.add_parser("status", help="inspect Grafana auth and read readiness")
-    datasources = sub.add_parser("datasources", help="list readable Grafana datasources")
+    datasources = sub.add_parser(
+        "datasources", help="list readable Grafana datasources"
+    )
     search = sub.add_parser("search", help="search saved Grafana objects")
     query = sub.add_parser("query", help="run a datasource query through Grafana")
     get = sub.add_parser("get", help="fetch one dashboard by URL or uid")
 
     for parser_ in (auth, status, datasources, search, query, get):
-        parser_.add_argument("--base-url", help=f"Grafana base URL override (default: {GRAFANA_BASE_URL_ENV})")
+        parser_.add_argument(
+            "--base-url",
+            help=f"Grafana base URL override (default: {GRAFANA_BASE_URL_ENV})",
+        )
         parser_.add_argument(
             "--service-account-token",
             help=f"Grafana service account token override (default: {GRAFANA_TOKEN_ENV})",
         )
-        parser_.add_argument("--org-id", help=f"Grafana org id override (default: {GRAFANA_ORG_ID_ENV})")
+        parser_.add_argument(
+            "--org-id", help=f"Grafana org id override (default: {GRAFANA_ORG_ID_ENV})"
+        )
 
     auth.add_argument("--output", choices=["json", "summary"], default="summary")
     status.add_argument("--output", choices=["json", "summary"], default="summary")
     datasources.add_argument("--output", choices=["json", "summary"], default="summary")
-    datasources.add_argument("--limit", type=positive_int, default=DEFAULT_DATASOURCE_LIST_LIMIT)
+    datasources.add_argument(
+        "--limit", type=positive_int, default=DEFAULT_DATASOURCE_LIST_LIMIT
+    )
     datasources.add_argument(
         "--offset",
         type=nonnegative_int,
@@ -1076,7 +1134,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="show all datasources explicitly instead of the default bounded page",
     )
 
-    search.add_argument("query", nargs="?", default="", help="optional Grafana search query")
+    search.add_argument(
+        "query", nargs="?", default="", help="optional Grafana search query"
+    )
     search.add_argument("--type", choices=["dash-folder", "dash-db"], default="")
     search.add_argument("--tag", action="append", default=[])
     search.add_argument("--folder-uid", action="append", default=[])
@@ -1084,12 +1144,21 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument("--starred", action="store_true")
     search.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     search.add_argument("--page", type=int, default=1)
-    search.add_argument("--output", choices=["markdown", "summary", "json"], default="markdown")
+    search.add_argument(
+        "--output", choices=["markdown", "summary", "json"], default="markdown"
+    )
 
-    query.add_argument("expr", help="datasource query expression (for AMP/Prometheus datasources, this is PromQL)")
+    query.add_argument(
+        "expr",
+        help="datasource query expression (for AMP/Prometheus datasources, this is PromQL)",
+    )
     source_group = query.add_mutually_exclusive_group(required=True)
-    source_group.add_argument("--datasource", help="Grafana datasource uid or exact name")
-    source_group.add_argument("--dashboard", help="Infer datasource from one dashboard uid or URL")
+    source_group.add_argument(
+        "--datasource", help="Grafana datasource uid or exact name"
+    )
+    source_group.add_argument(
+        "--dashboard", help="Infer datasource from one dashboard uid or URL"
+    )
     query.add_argument(
         "--range",
         action="store_true",
@@ -1107,10 +1176,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Grafana relative or absolute end time (default: inherit from dashboard URL or now)",
     )
-    query.add_argument("--output", choices=["markdown", "summary", "json"], default="summary")
+    query.add_argument(
+        "--output", choices=["markdown", "summary", "json"], default="summary"
+    )
 
     get.add_argument("ref", help="Grafana dashboard URL or uid")
-    get.add_argument("--output", choices=["markdown", "summary", "json"], default="markdown")
+    get.add_argument(
+        "--output", choices=["markdown", "summary", "json"], default="markdown"
+    )
     return parser
 
 
@@ -1136,7 +1209,9 @@ def canonical_locator(argv: list[str]) -> str:
 def preferred_name(argv: list[str], _options: Any) -> str:
     args = _parse_cli(argv)
     if args.command in {"status", "auth", "datasources"}:
-        extension = "json" if getattr(args, "output", "summary") == "json" else "summary"
+        extension = (
+            "json" if getattr(args, "output", "summary") == "json" else "summary"
+        )
         if args.command == "datasources":
             suffix = _list_window_suffix(
                 limit=args.limit,
@@ -1155,15 +1230,21 @@ def preferred_name(argv: list[str], _options: Any) -> str:
         suffix = "-".join(part for part in suffix_parts if part) or "all"
         return f"grafana-search-{suffix}.json"
     if args.command == "query":
-        extension = {"markdown": "md", "summary": "summary", "json": "json"}[args.output]
+        extension = {"markdown": "md", "summary": "summary", "json": "json"}[
+            args.output
+        ]
         return f"grafana-query-{_slug(args.expr, fallback='grafana')}.{extension}"
     return f"{_dashboard_uid_from_ref(args.ref) or 'grafana-dashboard'}.json"
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
     updates = {
-        GRAFANA_BASE_URL_ENV: _normalize_base_url(args.base_url) if args.base_url else "",
-        GRAFANA_TOKEN_ENV: args.service_account_token.strip() if args.service_account_token else "",
+        GRAFANA_BASE_URL_ENV: _normalize_base_url(args.base_url)
+        if args.base_url
+        else "",
+        GRAFANA_TOKEN_ENV: args.service_account_token.strip()
+        if args.service_account_token
+        else "",
         GRAFANA_ORG_ID_ENV: args.org_id.strip() if args.org_id else "",
     }
     if any(updates.values()):

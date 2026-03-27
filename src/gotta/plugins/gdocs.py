@@ -18,7 +18,10 @@ from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+)
 from gotta.providers.google import (
     GOOGLE_DOCS_API_URL,
     GOOGLE_DOC_MIME,
@@ -127,7 +130,8 @@ def document_meta(access_token: str, doc_id: str) -> dict[str, object]:
         fields="id,name,createdTime,modifiedTime,webViewLink,owners(displayName,emailAddress)",
     )
     meta["url"] = str(
-        drive_meta.get("webViewLink") or f"https://docs.google.com/document/d/{doc_id}/edit"
+        drive_meta.get("webViewLink")
+        or f"https://docs.google.com/document/d/{doc_id}/edit"
     )
     if drive_meta.get("createdTime"):
         meta["createdTime"] = drive_meta.get("createdTime")
@@ -148,7 +152,9 @@ def document_json(access_token: str, doc_id: str) -> dict[str, object]:
 def html_to_markdown(data: bytes) -> bytes:
     pandoc = shutil.which("pandoc")
     if not pandoc:
-        raise GoogleError("pandoc is required for markdown conversion but is not installed")
+        raise GoogleError(
+            "pandoc is required for markdown conversion but is not installed"
+        )
     proc = subprocess.run(
         [pandoc, "-f", "html", "-t", "gfm", "--wrap=none"],
         input=data,
@@ -210,7 +216,10 @@ def _canonicalize_google_redirect_url(target: str) -> str:
         parsed = urllib.parse.urlsplit(unescaped)
     except ValueError:
         return target
-    if parsed.netloc.lower() not in {"www.google.com", "google.com"} or parsed.path != "/url":
+    if (
+        parsed.netloc.lower() not in {"www.google.com", "google.com"}
+        or parsed.path != "/url"
+    ):
         return target
     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     for key in ("q", "url"):
@@ -330,7 +339,9 @@ def project(argv: list[str], capture: Capture) -> bytes:
     return _markdown_prelude(doc_id, meta) + body
 
 
-def normalize_search_result(item: dict[str, object], *, matched_by: set[str]) -> dict[str, object]:
+def normalize_search_result(
+    item: dict[str, object], *, matched_by: set[str]
+) -> dict[str, object]:
     owners = item.get("owners")
     owner_names: list[str] = []
     if isinstance(owners, list):
@@ -553,7 +564,9 @@ def render_search_markdown(payload: dict[str, object]) -> str:
         f"- _Mode_: `{payload.get('mode') or 'auto'}`",
         f"- _Matches_: {payload.get('resultCount') or len(results)}",
     ]
-    lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
+    lines.extend(
+        render_source_metadata_lines(derive_source_metadata_from_payload(payload))
+    )
     lines.append("")
     for item in results:
         if not isinstance(item, dict):
@@ -622,7 +635,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_auth)
 
-    p = sub.add_parser("status", help="inspect local Google OAuth readiness for Docs access")
+    p = sub.add_parser(
+        "status", help="inspect local Google OAuth readiness for Docs access"
+    )
     p.add_argument("--output", choices=["json", "summary"], default="summary")
     p.set_defaults(func=cmd_status)
 

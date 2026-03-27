@@ -26,8 +26,10 @@ from gotta.content import (
     append_activity_event,
     current_actor,
     discover_state_env,
+    ensure_private_dir,
     env_mapping,
     load_state_env_at_root,
+    PRIVATE_FILE_MODE,
     resolve_session_reference,
     resolve_dirs,
     session_identity,
@@ -40,6 +42,7 @@ from gotta.content import (
     state_env_path,
     stdin_has_meaningful_text,
     session_surface_initialized,
+    write_text_atomic,
     write_session_state,
 )
 from gotta.friction import OOPS_CHANNEL, oops_log_path, visible_channel_records
@@ -99,6 +102,8 @@ def _normalize_actor_status(value: object) -> str:
     if status == "configured":
         return "bound"
     return status
+
+
 ACTOR_STALL_SECONDS = 180
 ACTOR_RUNNING_STATUS = {
     "starting",
@@ -160,7 +165,7 @@ def _session_dir(
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
             "contexts adopt and scaffold their deterministic session on first "
-            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            'session-aware use. Use `gotta session init --session "$WS"` only '
             "when you intentionally want to scaffold one exact root."
         )
     if explicit_actor:
@@ -179,7 +184,7 @@ def _session_dir(
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
             "contexts adopt and scaffold their deterministic session on first "
-            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            'session-aware use. Use `gotta session init --session "$WS"` only '
             "when you intentionally want to scaffold one exact root."
         )
     if not session_surface_initialized(current):
@@ -247,7 +252,7 @@ def _shared_session_dir(
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
             "contexts adopt and scaffold their deterministic session on first "
-            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            'session-aware use. Use `gotta session init --session "$WS"` only '
             "when you intentionally want to scaffold one exact root."
         )
     return _group_session_root(current)
@@ -261,7 +266,10 @@ def _read_scope(
         explicit_session=explicit_session,
         explicit_actor=None,
     ).resolve()
-    if current.parent.name == "actors" or topology.parse_grouped_session_root(current) is not None:
+    if (
+        current.parent.name == "actors"
+        or topology.parse_grouped_session_root(current) is not None
+    ):
         actor_name = session_identity(current)
         if actor_name:
             return current, actor_name
@@ -371,7 +379,11 @@ def argv_positionals(
 
 
 def charter_session_access_mode(argv: list[str]) -> str:
-    return "write" if (argv_has_flag(argv, "--stdin") or argv_has_flag(argv, "--from-file")) else "read"
+    return (
+        "write"
+        if (argv_has_flag(argv, "--stdin") or argv_has_flag(argv, "--from-file"))
+        else "read"
+    )
 
 
 def _read_charter_text_source(
@@ -387,7 +399,9 @@ def _read_charter_text_source(
     if from_file:
         if from_file == "-":
             return sys.stdin.read()
-        return session_relative_path(session_root, from_file).read_text(encoding="utf-8")
+        return session_relative_path(session_root, from_file).read_text(
+            encoding="utf-8"
+        )
     if use_stdin:
         return sys.stdin.read()
     raise SystemExit(f"missing {value_name} text; use --stdin or --from-file")
@@ -430,7 +444,9 @@ def _native_surface_preferred_name(surface: str, *, actor_name: str = "") -> str
 
 
 def _surface_actor_scope(work_dir: Path) -> str:
-    return session_identity(work_dir) if work_dir.resolve().parent.name == "actors" else ""
+    return (
+        session_identity(work_dir) if work_dir.resolve().parent.name == "actors" else ""
+    )
 
 
 def run_charter_surface(
@@ -540,8 +556,7 @@ def run_charter_surface(
         ),
         value_name=value_name,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(payload + "\n", encoding="utf-8")
+    write_text_atomic(path, payload + "\n")
     actor_scope = _surface_actor_scope(work_dir)
     surface_key = "want" if surface_name == WANT_FILE else "goal"
     append_activity_event(
@@ -626,7 +641,9 @@ def _actor_session_ref(actor_name: str) -> str:
     return _normalize_actor_name(actor_name)
 
 
-def _actor_charter_command(actor_name: str, surface: str, *, mode: str = "--stdin") -> str:
+def _actor_charter_command(
+    actor_name: str, surface: str, *, mode: str = "--stdin"
+) -> str:
     return f"gotta {surface} --actor {_actor_session_ref(actor_name)} {mode}"
 
 
@@ -692,7 +709,9 @@ def _actor_registry_from_state(state: dict[str, str]) -> dict[str, dict[str, str
             normalized = _resolve_actor_name(str(actor_id))
             if not isinstance(actor_payload, dict):
                 raise SystemExit(f"invalid actor registry payload for {normalized}")
-            spec = _actor_template_spec(str(actor_payload.get("template") or normalized))
+            spec = _actor_template_spec(
+                str(actor_payload.get("template") or normalized)
+            )
             registry[normalized] = {
                 "label": str(
                     actor_payload.get("label")
@@ -703,7 +722,9 @@ def _actor_registry_from_state(state: dict[str, str]) -> dict[str, dict[str, str
                     or (spec.default_model if spec else ACTOR_DEFAULT_MODEL)
                 ).strip(),
                 "resume_uuid": str(actor_payload.get("resume_uuid") or "").strip(),
-                "template": str(actor_payload.get("template") or (spec.actor_id if spec else "")).strip(),
+                "template": str(
+                    actor_payload.get("template") or (spec.actor_id if spec else "")
+                ).strip(),
             }
     for actor_id, actor_payload in registry.items():
         spec = _actor_template_spec(str(actor_payload.get("template") or actor_id))
@@ -755,12 +776,14 @@ def _load_session_metadata(work_dir: Path) -> dict[str, object]:
 
 def _write_session_metadata(work_dir: Path, payload: dict[str, object]) -> None:
     path = _session_metadata_path(work_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     cleaned = dict(payload)
     cleaned["session_id"] = session_shared_id(work_dir)
-    cleaned.setdefault("created_at", datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    cleaned.setdefault(
+        "created_at", datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     cleaned["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    path.write_text(json.dumps(cleaned, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_text_atomic(path, json.dumps(cleaned, indent=2, sort_keys=True) + "\n")
 
 
 def _actor_registry_from_metadata(work_dir: Path) -> dict[str, dict[str, str]]:
@@ -776,10 +799,18 @@ def _actor_registry_from_metadata(work_dir: Path) -> dict[str, dict[str, str]]:
                 raise SystemExit(f"invalid session actor payload for {normalized}")
             spec = _actor_template_spec(str(actor_payload.get("template") or ""))
             registry[normalized] = {
-                "label": str(actor_payload.get("label") or (spec.label if spec else normalized)).strip() or normalized,
-                "model": str(actor_payload.get("model") or (spec.default_model if spec else ACTOR_DEFAULT_MODEL)).strip(),
+                "label": str(
+                    actor_payload.get("label") or (spec.label if spec else normalized)
+                ).strip()
+                or normalized,
+                "model": str(
+                    actor_payload.get("model")
+                    or (spec.default_model if spec else ACTOR_DEFAULT_MODEL)
+                ).strip(),
                 "resume_uuid": str(actor_payload.get("resume_uuid") or "").strip(),
-                "template": str(actor_payload.get("template") or (spec.actor_id if spec else "")).strip(),
+                "template": str(
+                    actor_payload.get("template") or (spec.actor_id if spec else "")
+                ).strip(),
             }
     raw_members = payload.get(SESSION_MEMBERS_METADATA_KEY)
     if isinstance(raw_members, list):
@@ -864,7 +895,9 @@ def _store_actor_registry(work_dir: Path, registry: dict[str, dict[str, str]]) -
     _write_session_metadata(work_dir, metadata)
 
 
-def _resolve_bound_actor_name(work_dir: Path, actor_ref: str, *, kind: str = "actor") -> str:
+def _resolve_bound_actor_name(
+    work_dir: Path, actor_ref: str, *, kind: str = "actor"
+) -> str:
     normalized = _normalize_actor_name(actor_ref)
     if not normalized:
         raise SystemExit(f"missing {kind}")
@@ -1002,9 +1035,9 @@ def _write_actor_state(
         else _normalize_actor_name(actor_name)
     )
     state_dir = _actor_state_link_root(work_dir)
-    state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(state_dir)
     path = _actor_state_path(work_dir, normalized)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     merged = _read_actor_state(work_dir, normalized)
     for key, value in payload.items():
         if value is None:
@@ -1018,7 +1051,7 @@ def _write_actor_state(
     merged["status"] = status
     if status not in ACTOR_STATE_STATUS:
         raise SystemExit(f"invalid actor status: {status}")
-    path.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_text_atomic(path, json.dumps(merged, indent=2, sort_keys=True) + "\n")
     return path
 
 
@@ -1063,8 +1096,8 @@ def _bootstrap_actor_want(*, actor_name: str, label: str) -> str:
 
         Native rewrite:
 
-        - `{_actor_charter_command(actor_name, 'want')}`
-        - `{_actor_charter_command(actor_name, 'want', mode='--from-file <path>')}`
+        - `{_actor_charter_command(actor_name, "want")}`
+        - `{_actor_charter_command(actor_name, "want", mode="--from-file <path>")}`
         """
     )
 
@@ -1126,7 +1159,9 @@ def _bootstrap_goal(
     )
 
 
-def _bootstrap_actor_goal(*, actor_name: str, label: str, actor_dir: Path, work_dir: Path) -> str:
+def _bootstrap_actor_goal(
+    *, actor_name: str, label: str, actor_dir: Path, work_dir: Path
+) -> str:
     actor_name = _normalize_actor_name(actor_name)
     return _finish(
         f"""
@@ -1141,7 +1176,7 @@ def _bootstrap_actor_goal(*, actor_name: str, label: str, actor_dir: Path, work_
         Bootstrap facts:
 
         - Actor session root: `{actor_dir}`
-        - Actor-local authored charters: `{actor_dir / WANT_FILE}`, `{actor_dir / 'GOAL.md'}`
+        - Actor-local authored charters: `{actor_dir / WANT_FILE}`, `{actor_dir / "GOAL.md"}`
         - Actor-local live surfaces: `gotta todo`, `gotta notes`, `gotta logs`, `gotta oops`
 
         Rewrite rule:
@@ -1157,14 +1192,15 @@ def _bootstrap_actor_goal(*, actor_name: str, label: str, actor_dir: Path, work_
 
         Native rewrite:
 
-        - `{_actor_charter_command(actor_name, 'goal')}`
-        - `{_actor_charter_command(actor_name, 'goal', mode='--from-file <path>')}`
+        - `{_actor_charter_command(actor_name, "goal")}`
+        - `{_actor_charter_command(actor_name, "goal", mode="--from-file <path>")}`
         """
     )
 
+
 def _seed_file(path: Path, content: str) -> None:
     if not path.exists():
-        path.write_text(content, encoding="utf-8")
+        write_text_atomic(path, content)
 
 
 def _seed_actor_surface(
@@ -1174,7 +1210,7 @@ def _seed_actor_surface(
     *,
     work_dir: Path,
 ) -> None:
-    actor_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(actor_dir)
     _seed_file(
         actor_dir / WANT_FILE,
         _bootstrap_actor_want(actor_name=actor_name, label=label),
@@ -1220,7 +1256,7 @@ def _ensure_symlink(path: Path, target: Path) -> None:
             path.unlink()
         else:
             return
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     try:
         path.symlink_to(desired)
     except FileExistsError:
@@ -1237,12 +1273,16 @@ def _ensure_symlink(path: Path, target: Path) -> None:
 
 
 def _append_chunk(path: Path, chunk: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+    ensure_private_dir(path.parent)
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, PRIVATE_FILE_MODE)
     try:
         os.write(fd, chunk.encode("utf-8"))
     finally:
         os.close(fd)
+    try:
+        path.chmod(PRIVATE_FILE_MODE)
+    except OSError:
+        pass
 
 
 def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
@@ -1317,7 +1357,7 @@ def _find_upward_file(start: Path, name: str) -> Path | None:
 def _copy_if_present(source: Path | None, destination: Path) -> None:
     if source is None or not source.is_file():
         return
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(destination.parent)
     shutil.copy2(source, destination)
 
 
@@ -1360,7 +1400,7 @@ def _write_state_file(work_dir: Path, values: dict[str, str]) -> None:
             continue
         lines.append(f"export {key}={sh_quote(str(value))}")
     path = state_env_path(work_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     text = "\n".join(lines) + "\n"
     if path.exists():
         try:
@@ -1368,7 +1408,7 @@ def _write_state_file(work_dir: Path, values: dict[str, str]) -> None:
                 return
         except OSError:
             pass
-    path.write_text(text, encoding="utf-8")
+    write_text_atomic(path, text)
 
 
 def _seed_session_files(
@@ -1460,7 +1500,9 @@ def scaffold_session(session_dir: Path, *, repo: Path | None = None) -> None:
         except (subprocess.CalledProcessError, FileNotFoundError):
             repo_path = None
     actors = _actor_registry(session_dir)
-    created_at = current.get(SESSION_CREATED_ENV) or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    created_at = current.get(SESSION_CREATED_ENV) or datetime.now(tz=UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     home = Path.home()
     agents_src = _find_upward_file(repo_path, "AGENTS.md") if repo_path else None
     voice_src = _find_upward_file(repo_path, "VOICE.md") if repo_path else None
@@ -1514,7 +1556,9 @@ def _ensure_actor_session_exports(
     return env_mapping(dirs)
 
 
-def _ensure_actor_parent_links(session_root: Path, actor_name: str, actor_dir: Path) -> None:
+def _ensure_actor_parent_links(
+    session_root: Path, actor_name: str, actor_dir: Path
+) -> None:
     return None
 
 
@@ -1562,24 +1606,44 @@ def _record_session_activity(
         actor_scope = _surface_actor_scope(work_dir)
         if resolved == (work_dir / WANT_FILE).resolve():
             resolved_locator = _native_surface_locator("want", actor_name=actor_scope)
-            resolved_name = _native_surface_preferred_name("want", actor_name=actor_scope)
-            resolved_follow = _native_surface_follow_command("want", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name(
+                "want", actor_name=actor_scope
+            )
+            resolved_follow = _native_surface_follow_command(
+                "want", actor_name=actor_scope
+            )
         elif resolved == (work_dir / "GOAL.md").resolve():
             resolved_locator = _native_surface_locator("goal", actor_name=actor_scope)
-            resolved_name = _native_surface_preferred_name("goal", actor_name=actor_scope)
-            resolved_follow = _native_surface_follow_command("goal", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name(
+                "goal", actor_name=actor_scope
+            )
+            resolved_follow = _native_surface_follow_command(
+                "goal", actor_name=actor_scope
+            )
         elif resolved == todo_state_path(work_dir).resolve():
             resolved_locator = _native_surface_locator("todo", actor_name=actor_scope)
-            resolved_name = _native_surface_preferred_name("todo", actor_name=actor_scope)
-            resolved_follow = _native_surface_follow_command("todo", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name(
+                "todo", actor_name=actor_scope
+            )
+            resolved_follow = _native_surface_follow_command(
+                "todo", actor_name=actor_scope
+            )
         elif resolved == logs_state_path(work_dir).resolve():
             resolved_locator = _native_surface_locator("logs", actor_name=actor_scope)
-            resolved_name = _native_surface_preferred_name("logs", actor_name=actor_scope)
-            resolved_follow = _native_surface_follow_command("logs", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name(
+                "logs", actor_name=actor_scope
+            )
+            resolved_follow = _native_surface_follow_command(
+                "logs", actor_name=actor_scope
+            )
         elif resolved == oops_log_path(work_dir).resolve():
             resolved_locator = _native_surface_locator("oops", actor_name=actor_scope)
-            resolved_name = _native_surface_preferred_name("oops", actor_name=actor_scope)
-            resolved_follow = _native_surface_follow_command("oops", actor_name=actor_scope)
+            resolved_name = _native_surface_preferred_name(
+                "oops", actor_name=actor_scope
+            )
+            resolved_follow = _native_surface_follow_command(
+                "oops", actor_name=actor_scope
+            )
         else:
             resolved_locator = _session_relative_locator(work_dir, resolved)
             resolved_name = resolved.name
@@ -1588,7 +1652,9 @@ def _record_session_activity(
         resolved_locator = locator.strip() or f"{plugin}:{surface}"
         resolved_name = preferred_name.strip() or resolved_locator
         resolved_follow = follow_command.strip()
-    activity_actor = actor.strip() or current_actor(default_actor=session_identity(work_dir))
+    activity_actor = actor.strip() or current_actor(
+        default_actor=session_identity(work_dir)
+    )
     payload = {
         "plugin": plugin,
         "surface": surface,
@@ -1600,7 +1666,9 @@ def _record_session_activity(
         "detail": detail,
         "time_field": "session_recorded_at",
     }
-    normalized_target = _normalize_actor_name(target_actor) if target_actor.strip() else ""
+    normalized_target = (
+        _normalize_actor_name(target_actor) if target_actor.strip() else ""
+    )
     if normalized_target and normalized_target != activity_actor:
         payload["target_actor"] = normalized_target
     append_activity_event(work_dir, payload)
@@ -1642,7 +1710,9 @@ def _append_actor_event(
         )
 
 
-def _actor_log_line(session_root: Path, actor_name: str, message: str, *, author: str = "") -> None:
+def _actor_log_line(
+    session_root: Path, actor_name: str, message: str, *, author: str = ""
+) -> None:
     normalized_actor = _normalize_actor_name(actor_name)
     log_author = author.strip() or current_actor(default_actor=normalized_actor)
     if log_author == normalized_actor:
@@ -1670,8 +1740,12 @@ def _record_actor_surface_activity(
         actor=actor.strip() or current_actor(default_actor=normalized_actor),
         target_actor=normalized_actor,
         locator=_native_surface_locator(surface, actor_name=normalized_actor),
-        preferred_name=_native_surface_preferred_name(surface, actor_name=normalized_actor),
-        follow_command=_native_surface_follow_command(surface, actor_name=normalized_actor),
+        preferred_name=_native_surface_preferred_name(
+            surface, actor_name=normalized_actor
+        ),
+        follow_command=_native_surface_follow_command(
+            surface, actor_name=normalized_actor
+        ),
         detail=detail,
     )
 
@@ -1687,7 +1761,11 @@ def _want_rewrite_pending(work_dir: Path) -> bool:
 def _goal_rewrite_pending(goal_path: Path) -> bool:
     if not goal_path.is_file():
         return True
-    return goal_path.read_text(encoding="utf-8").strip().startswith("# Seed Goal Placeholder")
+    return (
+        goal_path.read_text(encoding="utf-8")
+        .strip()
+        .startswith("# Seed Goal Placeholder")
+    )
 
 
 def _actor_want_rewrite_pending(work_root: Path, actor_name: str) -> bool:
@@ -1695,22 +1773,28 @@ def _actor_want_rewrite_pending(work_root: Path, actor_name: str) -> bool:
     if not path.is_file():
         return True
     current = path.read_text(encoding="utf-8").strip()
-    return current == _bootstrap_actor_want(
-        actor_name=actor_name,
-        label=_actor_label(actor_name, work_dir=work_root),
-    ).strip()
+    return (
+        current
+        == _bootstrap_actor_want(
+            actor_name=actor_name,
+            label=_actor_label(actor_name, work_dir=work_root),
+        ).strip()
+    )
 
 
 def _actor_goal_rewrite_pending(work_root: Path, actor_name: str) -> bool:
     path = _actor_goal_path(work_root, actor_name)
     if not path.is_file():
         return True
-    return path.read_text(encoding="utf-8").strip() == _bootstrap_actor_goal(
-        actor_name=actor_name,
-        label=_actor_label(actor_name, work_dir=work_root),
-        actor_dir=_actor_session_dir(work_root, actor_name),
-        work_dir=work_root,
-    ).strip()
+    return (
+        path.read_text(encoding="utf-8").strip()
+        == _bootstrap_actor_goal(
+            actor_name=actor_name,
+            label=_actor_label(actor_name, work_dir=work_root),
+            actor_dir=_actor_session_dir(work_root, actor_name),
+            work_dir=work_root,
+        ).strip()
+    )
 
 
 def _actor_launch_blockers(work_root: Path, *, actor_name: str = "") -> list[str]:
@@ -1801,7 +1885,11 @@ def _actor_activity_summary(
     if author and target_actor and author != target_actor:
         author_prefix = f"{author}: "
     if event == "note":
-        return (author_prefix + cleaned_detail) if cleaned_detail else (author_prefix + "note").strip()
+        return (
+            (author_prefix + cleaned_detail)
+            if cleaned_detail
+            else (author_prefix + "note").strip()
+        )
     label = event.replace("_", " ")
     if cleaned_detail:
         return f"{label}: {author_prefix}{cleaned_detail}".strip()
@@ -1829,7 +1917,10 @@ def _actor_event_records(work_dir: Path, actor_name: str) -> list[dict[str, obje
         timestamp = str(payload.get("timestamp") or "").strip()
         detail = str(payload.get("detail") or "").strip()
         author = str(payload.get("author") or "").strip()
-        if writer_role(work_dir, normalized_actor, writer=author or normalized_actor) == "foreign":
+        if (
+            writer_role(work_dir, normalized_actor, writer=author or normalized_actor)
+            == "foreign"
+        ):
             continue
         events.append(
             {
@@ -1849,7 +1940,9 @@ def _actor_event_records(work_dir: Path, actor_name: str) -> list[dict[str, obje
     return events
 
 
-def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
+def _actor_recent_activity(
+    work_dir: Path, actor_name: str, *, limit: int = 5
+) -> dict[str, object]:
     events = _actor_event_records(work_dir, actor_name)
     if not events:
         return {
@@ -1866,11 +1959,7 @@ def _actor_recent_activity(work_dir: Path, actor_name: str, *, limit: int = 5) -
         ),
         reverse=True,
     )
-    lifecycle = [
-        item
-        for item in ordered
-        if str(item.get("event") or "") != "note"
-    ]
+    lifecycle = [item for item in ordered if str(item.get("event") or "") != "note"]
     recent_activity = [
         {
             "timestamp": str(item.get("timestamp") or ""),
@@ -1917,7 +2006,9 @@ def _actor_note_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
                 "summary": first_line.strip() or message,
             }
         )
-    ordered = sorted(notes, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+    ordered = sorted(
+        notes, key=lambda item: str(item.get("timestamp") or ""), reverse=True
+    )
     latest = ordered[0] if ordered else {}
     notes_stale = False
     latest_timestamp = str(latest.get("timestamp") or "")
@@ -1962,7 +2053,9 @@ def _reset_note_check_feedback(work_dir: Path, actor_name: str) -> None:
 
 def _record_note_check(work_dir: Path, actor_name: str, *, reader: str = "") -> None:
     normalized_actor = _normalize_actor_name(actor_name)
-    normalized_reader = _normalize_actor_name(reader.strip() or current_actor(default_actor=""))
+    normalized_reader = _normalize_actor_name(
+        reader.strip() or current_actor(default_actor="")
+    )
     if not normalized_reader or normalized_reader == normalized_actor:
         return
     summary = _actor_note_check_summary(work_dir, normalized_actor)
@@ -1970,14 +2063,19 @@ def _record_note_check(work_dir: Path, actor_name: str, *, reader: str = "") -> 
         work_dir,
         normalized_actor,
         {
-            "note_checks_since_update": int(summary.get("note_checks_since_update") or 0) + 1,
+            "note_checks_since_update": int(
+                summary.get("note_checks_since_update") or 0
+            )
+            + 1,
             "last_note_check_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "last_note_check_by": normalized_reader,
         },
     )
 
 
-def _actor_progress_summary(work_dir: Path, actor_name: str, *, limit: int = 5) -> dict[str, object]:
+def _actor_progress_summary(
+    work_dir: Path, actor_name: str, *, limit: int = 5
+) -> dict[str, object]:
     normalized_actor = _normalize_actor_name(actor_name)
     actor_root = _actor_session_dir(work_dir, normalized_actor)
     events: list[dict[str, object]] = []
@@ -2057,7 +2155,10 @@ def _actor_progress_summary(work_dir: Path, actor_name: str, *, limit: int = 5) 
             if str(payload.get("actor") or "").strip() != normalized_actor:
                 continue
             locator = str(
-                payload.get("canonical_locator") or payload.get("locator") or payload.get("preferred_name") or ""
+                payload.get("canonical_locator")
+                or payload.get("locator")
+                or payload.get("preferred_name")
+                or ""
             ).strip()
             append_progress_event(
                 timestamp=str(payload.get("fetched_at") or ""),
@@ -2090,7 +2191,9 @@ def _actor_progress_summary(work_dir: Path, actor_name: str, *, limit: int = 5) 
     progress_kind = (
         "evidence"
         if any(str(item.get("event") or "") == "evidence" for item in ordered)
-        else "narration" if ordered else "none"
+        else "narration"
+        if ordered
+        else "none"
     )
     progress_stale = False
     latest_timestamp = str(latest.get("timestamp") or "")
@@ -2149,7 +2252,10 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
         except ValueError:
             started_dt = None
-        if started_dt is not None and (time.time() - started_dt.timestamp()) > ACTOR_STALL_SECONDS:
+        if (
+            started_dt is not None
+            and (time.time() - started_dt.timestamp()) > ACTOR_STALL_SECONDS
+        ):
             derived_status = "stalled"
             heartbeat_stale = True
     signoff_at = str(state.get("signoff_at") or "")
@@ -2162,8 +2268,13 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     note_summary = _actor_note_summary(work_dir, actor_name)
     note_check_summary = _actor_note_check_summary(work_dir, actor_name)
     progress = _actor_progress_summary(work_dir, actor_name)
-    lifecycle_entries = [dict(item) for item in recent_activity.get("recent_lifecycle", [])]
-    if lifecycle_entries and str(lifecycle_entries[0].get("event") or "") == "runtime_exit":
+    lifecycle_entries = [
+        dict(item) for item in recent_activity.get("recent_lifecycle", [])
+    ]
+    if (
+        lifecycle_entries
+        and str(lifecycle_entries[0].get("event") or "") == "runtime_exit"
+    ):
         lifecycle_detail = str(lifecycle_entries[0].get("detail") or "")
         request_labels = {
             "stop_requested": "graceful stop request",
@@ -2185,14 +2296,20 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             )
     if lifecycle_entries:
         recent_activity["recent_lifecycle"] = lifecycle_entries
-        recent_activity["last_lifecycle_at"] = str(lifecycle_entries[0].get("timestamp") or "")
+        recent_activity["last_lifecycle_at"] = str(
+            lifecycle_entries[0].get("timestamp") or ""
+        )
         recent_activity["last_lifecycle_summary"] = str(
             lifecycle_entries[0].get("summary") or ""
         )
     evidence_live = int(evidence["artifact_count"]) > 0
     if signoff_at:
         derived_status = "signed_off"
-    notes_status = "present" if actor_notes_ready(work_dir, _normalize_actor_name(actor_name)) else "empty"
+    notes_status = (
+        "present"
+        if actor_notes_ready(work_dir, _normalize_actor_name(actor_name))
+        else "empty"
+    )
     runtime_note = ""
     if status in {"starting", "active"} and runtime_live is False:
         if requested_status in {"completed", "failed", "signed_off"}:
@@ -2205,7 +2322,11 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         )
     if derived_status in {"starting", "active"} and evidence_live:
         derived_status = "producing_evidence"
-    if requested_status and derived_status in {"starting", "active", "producing_evidence"}:
+    if requested_status and derived_status in {
+        "starting",
+        "active",
+        "producing_evidence",
+    }:
         derived_status = "closing"
     still_running = derived_status in ACTOR_RUNNING_STATUS and not heartbeat_stale
     request_note = ""
@@ -2244,9 +2365,13 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     progress_stale = bool(progress.get("progress_stale"))
     last_note_at = str(note_summary.get("last_note_at") or "")
     last_artifact_at = str(evidence.get("last_artifact_at") or "")
-    note_checks_since_update = int(note_check_summary.get("note_checks_since_update") or 0)
+    note_checks_since_update = int(
+        note_check_summary.get("note_checks_since_update") or 0
+    )
     needs_note_refresh = bool(
-        evidence_live and last_artifact_at and (not last_note_at or last_artifact_at > last_note_at)
+        evidence_live
+        and last_artifact_at
+        and (not last_note_at or last_artifact_at > last_note_at)
     )
     low_signal_progress = (
         bool(runtime_live)
@@ -2300,9 +2425,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 "still missing. "
                 + (evidence_note + " " if evidence_note else "")
                 + "Land one final short actor-authored note before runtime exit so the close-out "
-                "has voice, then recheck actor status."
-                + request_note
-                + runtime_note
+                "has voice, then recheck actor status." + request_note + runtime_note
             )
     elif derived_status == "producing_evidence":
         if notes_ready and needs_note_refresh:
@@ -2355,7 +2478,9 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + request_note
                 + runtime_note
             )
-    elif derived_status in {"starting", "active"} and notes_ready and needs_note_refresh:
+    elif (
+        derived_status in {"starting", "active"} and notes_ready and needs_note_refresh
+    ):
         next_step = (
             "actor is still active and new actor-attributed evidence landed after the last short "
             "note. "
@@ -2377,9 +2502,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "actor is live and non-note signal is already landing through friction or shared "
             "evidence, but the first short actor note has not landed yet. Give the runtime a brief "
             "window to turn that signal into a short note before treating this as a "
-            "visibility failure."
-            + request_note
-            + runtime_note
+            "visibility failure." + request_note + runtime_note
         )
     elif derived_status in {"starting", "active"} and voice_setup:
         next_step = (
@@ -2455,7 +2578,12 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             + evidence_note
             + " Keep or reject that evidence intentionally instead of assuming it vanished."
         )
-    elif derived_status in {"pending", "bound"} and notes_ready and evidence_live and needs_note_refresh:
+    elif (
+        derived_status in {"pending", "bound"}
+        and notes_ready
+        and evidence_live
+        and needs_note_refresh
+    ):
         next_step = (
             "actor already has actor-authored narration and shared evidence, but new evidence "
             "landed after the last short note. "
@@ -2547,7 +2675,8 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         "still_running": still_running,
         "runtime_live": runtime_live,
         "review_ready": bool(
-            derived_status in {"completed", "signed_off"} and (notes_ready or evidence_live)
+            derived_status in {"completed", "signed_off"}
+            and (notes_ready or evidence_live)
         ),
         "next_step": next_step,
         **note_summary,
@@ -2589,21 +2718,34 @@ def _ensure_actor_todo_items(work_dir: Path, actor_name: str) -> None:
 
 def _sync_actor_todo_state(work_dir: Path) -> None:
     actor_ids = _selected_actor_ids(work_dir)
-    actor_payloads = {actor: _actor_status_payload(work_dir, actor) for actor in actor_ids}
+    actor_payloads = {
+        actor: _actor_status_payload(work_dir, actor) for actor in actor_ids
+    }
     launched_actor_ids = [
         actor
         for actor in actor_ids
-        if str(actor_payloads[actor].get("status") or "pending") not in {"pending", "bound"}
+        if str(actor_payloads[actor].get("status") or "pending")
+        not in {"pending", "bound"}
     ]
     for actor_name in launched_actor_ids:
         _ensure_actor_todo_items(work_dir, actor_name)
     items_by_key = {
-        str(item.get("managed_key") or ""): item for item in todo_items(work_dir) if item.get("managed_key")
+        str(item.get("managed_key") or ""): item
+        for item in todo_items(work_dir)
+        if item.get("managed_key")
     }
     for actor_name in launched_actor_ids:
         payload = actor_payloads[actor_name]
-        materially_complete = bool(payload.get("notes_ready") or payload.get("evidence_live"))
-        terminal = str(payload.get("status") or "") in {"completed", "failed", "rejected", "signed_off", "incomplete"}
+        materially_complete = bool(
+            payload.get("notes_ready") or payload.get("evidence_live")
+        )
+        terminal = str(payload.get("status") or "") in {
+            "completed",
+            "failed",
+            "rejected",
+            "signed_off",
+            "incomplete",
+        }
         signed_off = str(payload.get("status") or "") == "signed_off"
         for marker, checked in (
             (_actor_todo_marker(actor_name, "initial"), materially_complete),
@@ -2678,7 +2820,9 @@ def _ensure_actor_surface(work_dir: Path, actor_name: str) -> Path:
         work_dir,
         actor_name,
         {
-            "status": str(_read_actor_state(work_dir, actor_name).get("status") or "pending"),
+            "status": str(
+                _read_actor_state(work_dir, actor_name).get("status") or "pending"
+            ),
         },
     )
     return actor_dir
@@ -2688,7 +2832,9 @@ def _bind_actor(session_root: Path, actor_name: str) -> str:
     actor, created = _bind_actor_identity(session_root, actor_name)
     already_bound = _actor_is_selected(session_root, actor)
     _ensure_actor_surface(session_root, actor)
-    current_status = str(_read_actor_state(session_root, actor).get("status") or "pending")
+    current_status = str(
+        _read_actor_state(session_root, actor).get("status") or "pending"
+    )
     if current_status in {
         "",
         "pending",
@@ -2721,7 +2867,9 @@ def _bind_actor(session_root: Path, actor_name: str) -> str:
         )
     if already_bound:
         return f"{actor} ({_actor_label(actor, work_dir=session_root)}) already bound{suffix}"
-    _append_actor_event(session_root, actor, event="bound", detail="bound actor session")
+    _append_actor_event(
+        session_root, actor, event="bound", detail="bound actor session"
+    )
     _actor_log_line(session_root, actor, "bound session")
     created_note = " [new actor]" if created else ""
     return (
@@ -2744,7 +2892,9 @@ def _read_text_source(
     if from_file:
         if from_file == "-":
             return sys.stdin.read()
-        return session_relative_path(session_root, from_file).read_text(encoding="utf-8")
+        return session_relative_path(session_root, from_file).read_text(
+            encoding="utf-8"
+        )
     if use_stdin:
         return sys.stdin.read()
     if inline is not None:
@@ -2771,7 +2921,9 @@ def _read_text_items_source(
         if from_file == "-":
             raw = sys.stdin.read()
         else:
-            raw = session_relative_path(session_root, from_file).read_text(encoding="utf-8")
+            raw = session_relative_path(session_root, from_file).read_text(
+                encoding="utf-8"
+            )
     elif use_stdin:
         raw = sys.stdin.read()
     elif inline_items:

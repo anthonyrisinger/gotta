@@ -29,7 +29,9 @@ def _set_default_session_root(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", root)
 
 
-def _grouped_root(registry: Path, context_id: str, *, identity: str | None = None) -> Path:
+def _grouped_root(
+    registry: Path, context_id: str, *, identity: str | None = None
+) -> Path:
     fingerprint = cli._session_token(context_id)
     return registry / fingerprint / "actors" / (identity or fingerprint)
 
@@ -90,7 +92,9 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     first_err = capsys.readouterr().err
     session_root = Path(seen[-1][1])
     assert session_root.parent.name == "actors"
-    assert session_root.parent.parent == (tmp_path / "session" / cli._session_token("thread-123"))
+    assert session_root.parent.parent == (
+        tmp_path / "session" / cli._session_token("thread-123")
+    )
     assert session_root.name == cli._session_token("thread-123")
     assert (session_root / "state" / "env").exists()
     assert (session_root / "content").is_dir()
@@ -101,7 +105,10 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     assert (session_root / "GOAL.md").is_file()
     assert "created a new gotta session" in first_err
     assert "this context is now bound to that session root" in first_err
-    assert "same-context fresh-process commands should resolve here automatically" in first_err
+    assert (
+        "same-context fresh-process commands should resolve here automatically"
+        in first_err
+    )
     assert f"`gotta session bind {cli._session_token('thread-123')}`" in first_err
     assert "`--session <shared-session-id>`" in first_err
 
@@ -428,7 +435,9 @@ def test_main_top_level_search_accepts_explicit_search_alias(
         )
 
     monkeypatch.setattr(github, "capture", fake_github_capture)
-    monkeypatch.setattr(github, "project", lambda argv, capture: b"# Search Results\n\n- one\n")
+    monkeypatch.setattr(
+        github, "project", lambda argv, capture: b"# Search Results\n\n- one\n"
+    )
 
     assert cli.main(["search", "github:search", "platform"]) == 0
     receipt = _last_stderr_json(capsys.readouterr().err)
@@ -492,7 +501,9 @@ def test_main_quiet_suppresses_success_receipt(
             meta={"projector": "github", "github_kind": "search"},
         ),
     )
-    monkeypatch.setattr(github, "project", lambda argv, capture: b"# Search Results\n\n- one\n")
+    monkeypatch.setattr(
+        github, "project", lambda argv, capture: b"# Search Results\n\n- one\n"
+    )
 
     assert cli.main(["search", "github:platform", "--quiet"]) == 0
     captured = capsys.readouterr()
@@ -504,7 +515,9 @@ def test_main_session_analyze_emits_no_side_effect_receipt(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session-root"
-    dirs = content.resolve_dirs(content.CommonOptions(session_dir=str(root)), create=True)
+    dirs = content.resolve_dirs(
+        content.CommonOptions(session_dir=str(root)), create=True
+    )
     sessionlib.scaffold_session(root)
     content.materialize_bytes(
         b"# Example\n\nhello world\n",
@@ -520,7 +533,10 @@ def test_main_session_analyze_emits_no_side_effect_receipt(
     _set_default_session_root(monkeypatch, tmp_path / "registry")
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["session", "analyze", "--session", str(root), "--mode", "lineage"]) == 0
+    assert (
+        cli.main(["session", "analyze", "--session", str(root), "--mode", "lineage"])
+        == 0
+    )
     captured = capsys.readouterr()
 
     assert captured.out.startswith("session:")
@@ -798,7 +814,9 @@ def test_main_exact_root_session_show_stays_on_exact_root_after_bind(
     assert cli.main(["actor", "bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
 
-    assert cli.main(["session", "show", "--session", str(root), "--output", "json"]) == 0
+    assert (
+        cli.main(["session", "show", "--session", str(root), "--output", "json"]) == 0
+    )
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["GOTTA_SESSION_DIR"] == str(root.resolve())
@@ -807,9 +825,7 @@ def test_main_exact_root_session_show_stays_on_exact_root_after_bind(
     assert payload["GOTTA_SESSION_ACTOR"] == ""
 
 
-def test_main_preserves_session_subcommands(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_main_preserves_session_subcommands(tmp_path: Path, monkeypatch) -> None:
     seen: list[list[str]] = []
 
     def fake_gotta_main(argv: list[str] | None = None) -> int:
@@ -840,9 +856,7 @@ def test_main_session_init_creates_scaffolded_bound_session(
     assert (session_root / "GOAL.md").is_file()
 
 
-def test_main_preserves_read_option_ordering(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_main_preserves_read_option_ordering(tmp_path: Path, monkeypatch) -> None:
     seen: list[list[str]] = []
 
     def fake_gotta_main(argv: list[str] | None = None) -> int:
@@ -859,9 +873,7 @@ def test_main_preserves_read_option_ordering(
     assert seen == [["read", "--head", "120", "README.md"], ["read", "--help"]]
 
 
-def test_main_preserves_todo_subcommands(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_main_preserves_todo_subcommands(tmp_path: Path, monkeypatch) -> None:
     seen: list[list[str]] = []
 
     def fake_gotta_main(argv: list[str] | None = None) -> int:
@@ -994,7 +1006,9 @@ def test_main_cross_actor_note_append_preserves_acting_actor(
     claude_root = registry / "demo" / "actors" / claude
     notes_records = [
         json.loads(line)
-        for line in (claude_root / "state" / "notes.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (claude_root / "state" / "notes.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     assert notes_records[-1]["actor"] == claude
@@ -1002,7 +1016,9 @@ def test_main_cross_actor_note_append_preserves_acting_actor(
 
     activity_records = [
         json.loads(line)
-        for line in (claude_root / "state" / "activity.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (claude_root / "state" / "activity.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     assert activity_records[-1]["action"] == "append"
@@ -1174,7 +1190,12 @@ def test_main_read_only_explicit_session_inspection_uses_existing_actor_root(
     )
     shared_root.joinpath("session.json").write_text("{}\n", encoding="utf-8")
 
-    assert cli.main(["session", "timeline", "--session", "retry-review", "--output", "json"]) == 0
+    assert (
+        cli.main(
+            ["session", "timeline", "--session", "retry-review", "--output", "json"]
+        )
+        == 0
+    )
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
@@ -1210,7 +1231,9 @@ def test_main_uses_term_session_id_for_deterministic_binding_on_write_surfaces(
 
     session_root = Path(seen[-1][1])
     assert session_root.parent.name == "actors"
-    assert session_root.parent.parent == (tmp_path / "session" / cli._session_token("term-session-1"))
+    assert session_root.parent.parent == (
+        tmp_path / "session" / cli._session_token("term-session-1")
+    )
     assert session_root.name == cli._session_token("term-session-1")
     assert seen[-1][0] == ["todo", "append", "real task"]
     assert seen[-1][2] == "term-session-1"
@@ -1315,7 +1338,9 @@ def test_main_warns_actor_when_supervisor_requested_failed_disposition(
     err = capsys.readouterr().err
 
     assert seen == [["logs"]]
-    assert "Supervisor requested `failed` (operator chose to stop this actor run)." in err
+    assert (
+        "Supervisor requested `failed` (operator chose to stop this actor run)." in err
+    )
     assert "Any further activity may be discarded." in err
     assert f"gotta actor signoff {claude} --summary ..." in err
 
@@ -1361,7 +1386,10 @@ def test_main_warns_actor_when_supervisor_requested_graceful_stop(
     err = capsys.readouterr().err
 
     assert seen == [["logs"]]
-    assert "Supervisor requested a graceful stop (finish the current wave and close out)." in err
+    assert (
+        "Supervisor requested a graceful stop (finish the current wave and close out)."
+        in err
+    )
     assert f"gotta actor signoff {claude} --summary ..." in err
 
 
@@ -1610,7 +1638,9 @@ def test_main_stop_warning_suppresses_note_check_pulse(
     err = capsys.readouterr().err
 
     assert seen == [["logs"]]
-    assert "Supervisor requested `failed` (operator chose to stop this actor run)." in err
+    assert (
+        "Supervisor requested `failed` (operator chose to stop this actor run)." in err
+    )
     assert "Supervisor has checked your notes" not in err
 
 
@@ -1657,7 +1687,9 @@ def test_main_shared_session_inspection_does_not_emit_note_check_pulse(
     for key, value in content.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
-    assert cli.main(["session", "doctor", "--session", str(registry / "actor-root")]) == 0
+    assert (
+        cli.main(["session", "doctor", "--session", str(registry / "actor-root")]) == 0
+    )
     err = capsys.readouterr().err
 
     assert seen == [["session", "doctor", "--session", str(registry / "actor-root")]]

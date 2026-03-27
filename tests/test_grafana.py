@@ -22,7 +22,9 @@ def test_grafana_status_reports_missing_config(tmp_path: Path, monkeypatch) -> N
     assert grafana.GRAFANA_BASE_URL_ENV in payload["nextStep"]
 
 
-def test_grafana_auth_persists_canonical_env(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_grafana_auth_persists_canonical_env(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     config_file = tmp_path / "gotta.toml"
     config_file.write_text("[providers.grafana.env]\n", encoding="utf-8")
     monkeypatch.setenv("GOTTA_CONFIG_FILE", str(config_file))
@@ -82,7 +84,9 @@ def test_grafana_search_renders_markdown(monkeypatch, capsys) -> None:
     assert "# Grafana Search" in output
     assert "- Query: `production`" in output
     assert "Production Overview" in output
-    assert "https://grafana.example.com/d/demo-dashboard-uid/production-overview" in output
+    assert (
+        "https://grafana.example.com/d/demo-dashboard-uid/production-overview" in output
+    )
 
 
 def test_grafana_datasources_renders_summary(monkeypatch, capsys) -> None:
@@ -125,14 +129,37 @@ def test_grafana_datasources_supports_limit_and_offset(monkeypatch, capsys) -> N
         assert path == "/api/datasources"
         assert method == "GET"
         return [
-            {"uid": "ds-1", "name": "Datasource One", "type": "prometheus", "url": "", "access": "proxy"},
-            {"uid": "ds-2", "name": "Datasource Two", "type": "prometheus", "url": "", "access": "proxy"},
-            {"uid": "ds-3", "name": "Datasource Three", "type": "loki", "url": "", "access": "proxy"},
+            {
+                "uid": "ds-1",
+                "name": "Datasource One",
+                "type": "prometheus",
+                "url": "",
+                "access": "proxy",
+            },
+            {
+                "uid": "ds-2",
+                "name": "Datasource Two",
+                "type": "prometheus",
+                "url": "",
+                "access": "proxy",
+            },
+            {
+                "uid": "ds-3",
+                "name": "Datasource Three",
+                "type": "loki",
+                "url": "",
+                "access": "proxy",
+            },
         ]
 
     monkeypatch.setattr(grafana, "_grafana_json", fake_json)
 
-    assert grafana.main(["datasources", "--limit", "1", "--offset", "1", "--output", "json"]) == 0
+    assert (
+        grafana.main(
+            ["datasources", "--limit", "1", "--offset", "1", "--output", "json"]
+        )
+        == 0
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["totalCount"] == 3
@@ -168,7 +195,10 @@ def test_grafana_search_can_list_dashboards(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(grafana, "_grafana_json", fake_json)
 
-    assert grafana.main(["search", "--type", "dash-db", "prod", "--output", "summary"]) == 0
+    assert (
+        grafana.main(["search", "--type", "dash-db", "prod", "--output", "summary"])
+        == 0
+    )
 
     output = capsys.readouterr().out
     assert "surface\tsearch" in output
@@ -292,7 +322,10 @@ def test_grafana_query_inherits_dashboard_url_context(monkeypatch, capsys) -> No
                             "targets": [
                                 {
                                     "expr": "sum(agent_up)",
-                                    "datasource": {"type": "prometheus", "uid": "prom-main"},
+                                    "datasource": {
+                                        "type": "prometheus",
+                                        "uid": "prom-main",
+                                    },
                                 }
                             ],
                         }
@@ -401,7 +434,9 @@ def test_grafana_get_renders_markdown(monkeypatch, capsys) -> None:
     output = capsys.readouterr().out
     assert "# Production Overview" in output
     assert "`demo-dashboard-uid`" in output
-    assert "https://grafana.example.com/d/demo-dashboard-uid/production-overview" in output
+    assert (
+        "https://grafana.example.com/d/demo-dashboard-uid/production-overview" in output
+    )
 
 
 def test_grafana_requires_explicit_get_for_dashboard_ref(capsys) -> None:
@@ -417,16 +452,18 @@ def test_grafana_route_and_locator_contract() -> None:
     assert grafana.route_target("grafana:status") == ["status"]
     assert grafana.route_target("grafana:datasources") == ["datasources"]
     assert grafana.route_target("grafana:search") == ["search"]
-    assert (
-        grafana.route_target("grafana:search --type dash-db")
-        == ["search", "--type", "dash-db"]
-    )
+    assert grafana.route_target("grafana:search --type dash-db") == [
+        "search",
+        "--type",
+        "dash-db",
+    ]
     assert grafana.route_target("grafana:search production") == ["search", "production"]
-    assert (
-        grafana.route_target("grafana:query --dashboard demo-dashboard-uid sum(agent_up)")
-        == ["query", "--dashboard", "demo-dashboard-uid", "sum(agent_up)"]
-    )
-    assert grafana.route_target("https://grafana.example.com/d/demo-dashboard-uid/production-overview") == [
+    assert grafana.route_target(
+        "grafana:query --dashboard demo-dashboard-uid sum(agent_up)"
+    ) == ["query", "--dashboard", "demo-dashboard-uid", "sum(agent_up)"]
+    assert grafana.route_target(
+        "https://grafana.example.com/d/demo-dashboard-uid/production-overview"
+    ) == [
         "get",
         "https://grafana.example.com/d/demo-dashboard-uid/production-overview",
     ]
@@ -438,7 +475,10 @@ def test_grafana_route_and_locator_contract() -> None:
         grafana.canonical_locator(["search", "--type", "dash-db", "production"])
         == "grafana:search --type dash-db production"
     )
-    assert grafana.canonical_locator(["get", "demo-dashboard-uid"]) == "grafana:get demo-dashboard-uid"
+    assert (
+        grafana.canonical_locator(["get", "demo-dashboard-uid"])
+        == "grafana:get demo-dashboard-uid"
+    )
     assert (
         grafana.canonical_locator(
             ["query", "--dashboard", "demo-dashboard-uid", "sum(agent_up)"]
@@ -466,7 +506,12 @@ def test_grafana_route_and_locator_contract() -> None:
         == "grafana-search-production.json"
     )
     assert (
-        grafana.preferred_name(["query", "--dashboard", "demo-dashboard-uid", "sum(agent_up)"], None)
+        grafana.preferred_name(
+            ["query", "--dashboard", "demo-dashboard-uid", "sum(agent_up)"], None
+        )
         == "grafana-query-sum-agent_up.summary"
     )
-    assert grafana.preferred_name(["get", "demo-dashboard-uid"], None) == "demo-dashboard-uid.json"
+    assert (
+        grafana.preferred_name(["get", "demo-dashboard-uid"], None)
+        == "demo-dashboard-uid.json"
+    )

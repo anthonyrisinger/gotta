@@ -86,7 +86,9 @@ def _read_text_source(
     if from_file:
         if from_file == "-":
             return sys.stdin.read()
-        return session_relative_path(session_root, from_file).read_text(encoding="utf-8")
+        return session_relative_path(session_root, from_file).read_text(
+            encoding="utf-8"
+        )
     if use_stdin:
         return sys.stdin.read()
     if inline is not None:
@@ -113,7 +115,9 @@ def _read_text_items_source(
         if from_file == "-":
             raw = sys.stdin.read()
         else:
-            raw = session_relative_path(session_root, from_file).read_text(encoding="utf-8")
+            raw = session_relative_path(session_root, from_file).read_text(
+                encoding="utf-8"
+            )
     elif use_stdin:
         raw = sys.stdin.read()
     elif inline_items:
@@ -158,7 +162,7 @@ def _resolve_session_root(*, explicit_session: str | None) -> Path:
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
             "contexts adopt and scaffold their deterministic session on first "
-            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            'session-aware use. Use `gotta session init --session "$WS"` only '
             "when you intentionally want to scaffold one exact root."
         )
     return session_dir
@@ -274,15 +278,21 @@ def _aggregate_oops_records(
         ):
             if (
                 actor_root.resolve().parent.name == "actors"
-                and writer_role(actor_root, current_actor, writer=str(record.get("actor") or ""))
+                and writer_role(
+                    actor_root, current_actor, writer=str(record.get("actor") or "")
+                )
                 == "foreign"
             ):
                 continue
             payload = dict(record)
             payload.setdefault("actor", current_actor)
-            payload.setdefault("label", session_plugin._actor_label(current_actor, work_dir=work_dir))
+            payload.setdefault(
+                "label", session_plugin._actor_label(current_actor, work_dir=work_dir)
+            )
             records.append(payload)
-    records = sorted(records, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+    records = sorted(
+        records, key=lambda item: str(item.get("timestamp") or ""), reverse=True
+    )
     return actor_ids, records
 
 
@@ -307,7 +317,9 @@ def _unknown_action(action_token: str) -> SystemExit:
     )
 
 
-def _limited_records(records: list[dict[str, object]], *, limit: int) -> list[dict[str, object]]:
+def _limited_records(
+    records: list[dict[str, object]], *, limit: int
+) -> list[dict[str, object]]:
     bounded = max(limit, 0)
     if bounded == 0:
         return list(records)
@@ -344,7 +356,9 @@ def _read_payload(
         )
     else:
         payload["state_paths"] = {
-            actor: str(oops_log_path(session_plugin._actor_session_dir(session_dir, actor)))
+            actor: str(
+                oops_log_path(session_plugin._actor_session_dir(session_dir, actor))
+            )
             for actor in actor_ids
         }
         payload["locators"] = {
@@ -352,7 +366,9 @@ def _read_payload(
             for actor in actor_ids
         }
         payload["follow_commands"] = {
-            actor: session_plugin._native_surface_follow_command("oops", actor_name=actor)
+            actor: session_plugin._native_surface_follow_command(
+                "oops", actor_name=actor
+            )
             for actor in actor_ids
         }
     return payload
@@ -383,7 +399,9 @@ def _resolved_action(args: argparse.Namespace) -> tuple[str, list[str]]:
         return action_token, values
     if action_token in OOPS_ACTIONS:
         return action_token, values
-    if action_token and (explicit_write_source or has_append_metadata or has_inline_prose):
+    if action_token and (
+        explicit_write_source or has_append_metadata or has_inline_prose
+    ):
         values = [action_token, *values]
         return "append", values
     if not action_token and (explicit_write_source or piped_text):
@@ -487,7 +505,9 @@ def cmd_oops(args: argparse.Namespace) -> int:
         records = [
             record
             for record in records
-            if writer_role(session_dir, scoped_actor, writer=str(record.get("actor") or ""))
+            if writer_role(
+                session_dir, scoped_actor, writer=str(record.get("actor") or "")
+            )
             != "foreign"
         ]
         actor_ids = [scoped_actor]
@@ -527,7 +547,9 @@ def cmd_oops(args: argparse.Namespace) -> int:
                 print(json.dumps(payload, indent=2, sort_keys=True))
                 return 0
             print(f"oops: {payload['follow_command']}")
-            print(f"entries: {payload['entry_count']} (showing {payload['shown_count']})")
+            print(
+                f"entries: {payload['entry_count']} (showing {payload['shown_count']})"
+            )
             print(f"severity_counts: {payload['severity_counts']}")
             print(f"kind_counts: {payload['kind_counts']}")
             print(f"surface_counts: {payload['surface_counts']}")
@@ -537,7 +559,9 @@ def cmd_oops(args: argparse.Namespace) -> int:
             for record in payload["entries"]:
                 timestamp = str(record.get("timestamp") or "unknown-time")
                 actor = str(record.get("actor") or "session")
-                message = str(record.get("message") or "").strip() or "unspecified oops entry"
+                message = (
+                    str(record.get("message") or "").strip() or "unspecified oops entry"
+                )
                 print(f"- `{timestamp}` [{actor}] {message}")
             return 0
     payload = {

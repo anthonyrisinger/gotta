@@ -78,8 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="maximum directory traversal depth when rendering local directories",
     )
-    parser.add_argument("--head", type=int, default=0, help="show only the first N lines")
-    parser.add_argument("--tail", type=int, default=0, help="show only the last N lines")
+    parser.add_argument(
+        "--head", type=int, default=0, help="show only the first N lines"
+    )
+    parser.add_argument(
+        "--tail", type=int, default=0, help="show only the last N lines"
+    )
     parser.add_argument(
         "--section",
         help="show only the markdown section whose heading contains this text",
@@ -136,7 +140,9 @@ def parse_args(argv: list[str]) -> ReadRequest:
                 index += 1
             field = int_fields.get(name) or str_fields.get(name) or ""
             try:
-                values[field] = int(inline_value) if name in int_fields else inline_value
+                values[field] = (
+                    int(inline_value) if name in int_fields else inline_value
+                )
             except ValueError as exc:
                 raise SystemExit(f"argument {name}: invalid int value") from exc
             index += 1
@@ -153,7 +159,9 @@ def parse_args(argv: list[str]) -> ReadRequest:
         flagged = next((token for token in residual if token.startswith("-")), "")
         if flagged:
             parser.error(f"unrecognized arguments: {flagged}")
-        target = " ".join(part.strip() for part in residual if part.strip()).strip() or None
+        target = (
+            " ".join(part.strip() for part in residual if part.strip()).strip() or None
+        )
     return ReadRequest(
         target=target,
         recursive=bool(values["recursive"]),
@@ -203,7 +211,9 @@ def _partition_routed_target_tokens(
     token_count = len(tokens)
     for start in range(token_count):
         for end in range(token_count, start, -1):
-            candidate = " ".join(part.strip() for part in tokens[start:end] if part.strip()).strip()
+            candidate = " ".join(
+                part.strip() for part in tokens[start:end] if part.strip()
+            ).strip()
             if not candidate:
                 continue
             routed = _discover_plugin_route(candidate)
@@ -251,19 +261,27 @@ def _explicit_session_context(options: CommonOptions | Any | None) -> tuple[str,
         )
         if in_shared_topology:
             shared_id = topology.shared_session_id(session_path)
-            content_root = str((topology.shared_session_root_for(shared_id) / "content").resolve())
+            content_root = str(
+                (topology.shared_session_root_for(shared_id) / "content").resolve()
+            )
         else:
             content_root = str((session_path / "content").resolve())
     return session_root, content_root
 
 
-def _resolve_local_target(target: str, *, session_root: str = "", content_root: str = "") -> Path | None:
+def _resolve_local_target(
+    target: str, *, session_root: str = "", content_root: str = ""
+) -> Path | None:
     candidate = Path(target).expanduser()
     session_root = session_root or _nearby_session_context()[0]
     content_root = content_root or _nearby_session_context()[1]
-    digest_target = target.removeprefix("content:") if target.startswith("content:") else target
+    digest_target = (
+        target.removeprefix("content:") if target.startswith("content:") else target
+    )
     if content_root and is_sha256_digest(digest_target):
-        digest_candidate = (Path(content_root).expanduser() / digest_target / "data").resolve()
+        digest_candidate = (
+            Path(content_root).expanduser() / digest_target / "data"
+        ).resolve()
         if digest_candidate.exists():
             return digest_candidate
     if candidate.is_absolute():
@@ -285,14 +303,18 @@ def _expected_local_target(target: str, *, session_root: str = "") -> Path | Non
     return None
 
 
-def _resolve_session_artifact_name(target: str, *, content_root: str = "") -> Path | None:
+def _resolve_session_artifact_name(
+    target: str, *, content_root: str = ""
+) -> Path | None:
     content_root = content_root or _nearby_session_context()[1]
     if not content_root:
         return None
     root = Path(content_root).expanduser()
     if not root.exists():
         return None
-    matches = [snapshot for snapshot in scan_content_store(root) if target in snapshot.names]
+    matches = [
+        snapshot for snapshot in scan_content_store(root) if target in snapshot.names
+    ]
     if not matches:
         return None
     if len(matches) > 1:
@@ -386,14 +408,15 @@ def resolve_read_target(
         plugin = request.routed_plugin
         plugin_argv = list(request.routed_argv)
         spec = get_plugin(plugin)
-        canonical = spec.canonical_locator(plugin_argv) if spec and spec.canonical_locator else target
-        preferred = (
-            save_as
-            or (
-                spec.preferred_name(plugin_argv, options)
-                if spec and spec.preferred_name
-                else f"{sanitize_name(target) or plugin}.txt"
-            )
+        canonical = (
+            spec.canonical_locator(plugin_argv)
+            if spec and spec.canonical_locator
+            else target
+        )
+        preferred = save_as or (
+            spec.preferred_name(plugin_argv, options)
+            if spec and spec.preferred_name
+            else f"{sanitize_name(target) or plugin}.txt"
         )
         return ReadTarget(
             request=request,
@@ -409,14 +432,15 @@ def resolve_read_target(
     if routed is not None:
         plugin, plugin_argv = routed
         spec = get_plugin(plugin)
-        canonical = spec.canonical_locator(plugin_argv) if spec and spec.canonical_locator else target
-        preferred = (
-            save_as
-            or (
-                spec.preferred_name(plugin_argv, options)
-                if spec and spec.preferred_name
-                else f"{sanitize_name(target) or plugin}.txt"
-            )
+        canonical = (
+            spec.canonical_locator(plugin_argv)
+            if spec and spec.canonical_locator
+            else target
+        )
+        preferred = save_as or (
+            spec.preferred_name(plugin_argv, options)
+            if spec and spec.preferred_name
+            else f"{sanitize_name(target) or plugin}.txt"
         )
         return ReadTarget(
             request=request,
@@ -439,7 +463,9 @@ def resolve_read_target(
             preferred_name=save_as or _url_name(target),
             should_materialize=True,
         )
-    artifact_path = _resolve_artifact_locator(target, content_root=explicit_content_root)
+    artifact_path = _resolve_artifact_locator(
+        target, content_root=explicit_content_root
+    )
     if artifact_path is not None:
         return ReadTarget(
             request=request,
@@ -467,7 +493,9 @@ def resolve_read_target(
             preferred_name=save_as or local_path.name or "read.txt",
             should_materialize=False,
         )
-    artifact_name_path = _resolve_session_artifact_name(target, content_root=explicit_content_root)
+    artifact_name_path = _resolve_session_artifact_name(
+        target, content_root=explicit_content_root
+    )
     if artifact_name_path is not None:
         return ReadTarget(
             request=request,
@@ -480,7 +508,9 @@ def resolve_read_target(
             should_materialize=False,
         )
     if ":" not in target:
-        expected_local = _expected_local_target(target, session_root=explicit_session_root)
+        expected_local = _expected_local_target(
+            target, session_root=explicit_session_root
+        )
         if expected_local is not None:
             return ReadTarget(
                 request=request,

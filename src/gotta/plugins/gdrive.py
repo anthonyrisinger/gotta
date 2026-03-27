@@ -20,7 +20,10 @@ from gotta.drawio import DRAWIO_MIME, render_drawio_summary_markdown
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.routing import query_route, strip_http_url_fragment
-from gotta.source import derive_source_metadata_from_payload, render_source_metadata_lines
+from gotta.source import (
+    derive_source_metadata_from_payload,
+    render_source_metadata_lines,
+)
 from gotta.providers.google import (
     DEFAULT_DRIVE_FIELDS,
     GOOGLE_DOC_MIME,
@@ -50,6 +53,8 @@ TEXTLIKE_MIME_PREFIXES = (
     "application/x-sh",
     "application/x-shellscript",
 )
+
+
 def die(message: str, code: int = 2) -> int:
     print(message, file=sys.stderr)
     return code
@@ -320,7 +325,9 @@ def route_target(target: str) -> list[str] | None:
 def html_to_markdown(data: bytes) -> bytes:
     pandoc = shutil.which("pandoc")
     if not pandoc:
-        raise GoogleError("pandoc is required for markdown conversion but is not installed")
+        raise GoogleError(
+            "pandoc is required for markdown conversion but is not installed"
+        )
     proc = subprocess.run(
         [pandoc, "-f", "html", "-t", "gfm", "--wrap=none"],
         input=data,
@@ -363,7 +370,9 @@ def drive_file_summary(meta: dict[str, object]) -> str:
     if size:
         lines.append(f"- **Size:** {size} bytes")
     if owner_names:
-        lines.append(f"- **Owners:** {', '.join(f'`{owner}`' for owner in owner_names)}")
+        lines.append(
+            f"- **Owners:** {', '.join(f'`{owner}`' for owner in owner_names)}"
+        )
     if mime_type == GOOGLE_DOC_MIME:
         lines.extend(
             [
@@ -409,7 +418,9 @@ def drawio_summary(data: bytes, meta: dict[str, object]) -> str:
     )
 
 
-def normalize_search_result(item: dict[str, object], *, matched_by: set[str]) -> dict[str, object]:
+def normalize_search_result(
+    item: dict[str, object], *, matched_by: set[str]
+) -> dict[str, object]:
     owners = item.get("owners")
     owner_names: list[str] = []
     if isinstance(owners, list):
@@ -489,7 +500,9 @@ def search_files(
     mime_type: str,
 ) -> dict[str, object]:
     escaped = escape_drive_query(query)
-    mime_clause = f" and mimeType='{escape_drive_query(mime_type)}'" if mime_type else ""
+    mime_clause = (
+        f" and mimeType='{escape_drive_query(mime_type)}'" if mime_type else ""
+    )
     fields = "id,name,mimeType,createdTime,modifiedTime,webViewLink,owners(displayName)"
     title_files: list[dict[str, object]] = []
     content_files: list[dict[str, object]] = []
@@ -648,7 +661,9 @@ def render_search_markdown(payload: dict[str, object]) -> str:
         f"- _Mode_: `{payload.get('mode') or 'auto'}`",
         f"- _Matches_: {payload.get('resultCount') or len(results)}",
     ]
-    lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(payload)))
+    lines.extend(
+        render_source_metadata_lines(derive_source_metadata_from_payload(payload))
+    )
     lines.append("")
     for item in results:
         if not isinstance(item, dict):
@@ -721,7 +736,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_auth)
 
-    p = sub.add_parser("status", help="inspect local Google OAuth readiness for Drive access")
+    p = sub.add_parser(
+        "status", help="inspect local Google OAuth readiness for Drive access"
+    )
     p.add_argument("--output", choices=["json", "summary"], default="summary")
     p.set_defaults(func=cmd_status)
 

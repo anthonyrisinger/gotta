@@ -80,7 +80,9 @@ SUPPRESS_RECEIPTS_ENV = "GOTTA_SUPPRESS_RECEIPTS"
 OUTPUT_BUDGET_LINE_LIMIT = 256
 OUTPUT_BUDGET_BYTE_LIMIT = 9728
 OUTPUT_BUDGET_HARD_BYTE_LIMIT = 10 * 1024
-OUTPUT_BUDGET_FLEX_BYTE_LIMIT = min(OUTPUT_BUDGET_HARD_BYTE_LIMIT - OUTPUT_BUDGET_BYTE_LIMIT, 256)
+OUTPUT_BUDGET_FLEX_BYTE_LIMIT = min(
+    OUTPUT_BUDGET_HARD_BYTE_LIMIT - OUTPUT_BUDGET_BYTE_LIMIT, 256
+)
 OUTPUT_EMIT_BYTE_LIMIT = OUTPUT_BUDGET_BYTE_LIMIT + OUTPUT_BUDGET_FLEX_BYTE_LIMIT
 FOLLOW_COMMAND_CHAR_LIMIT = 192
 JSON_PREVIEW_CHAR_LIMIT = 256
@@ -259,7 +261,11 @@ class CapturedStream(io.TextIOBase):
     ) -> None:
         self._stream = stream
         self._encoding = getattr(stream, "encoding", None) or "utf-8"
-        self._isatty = bool(stream.isatty()) if preserve_tty and hasattr(stream, "isatty") else False
+        self._isatty = (
+            bool(stream.isatty())
+            if preserve_tty and hasattr(stream, "isatty")
+            else False
+        )
         self._buffer = io.BytesIO()
         passthrough_buffer = getattr(stream, "buffer", None) if passthrough else None
         self.buffer = _CapturedBuffer(self._buffer, passthrough_buffer)
@@ -382,7 +388,9 @@ def _requested_output_format(plugin: str, argv: list[str], data: bytes) -> str:
             value = str(argv[index + 1] or "").strip().lower()
             if value:
                 return mapping.get(value, "text")
-    if plugin == "read" and any(token in {"-h", "--help", "--help-all"} for token in argv):
+    if plugin == "read" and any(
+        token in {"-h", "--help", "--help-all"} for token in argv
+    ):
         return "text"
     if _json_value(data) is not None:
         return "json"
@@ -395,7 +403,9 @@ def _count_lines(text: str) -> int:
     return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
-def _determine_truncate_reason(lines: list[str], *, max_lines: int, max_bytes: int) -> str:
+def _determine_truncate_reason(
+    lines: list[str], *, max_lines: int, max_bytes: int
+) -> str:
     count = 0
     total_bytes = 0
     for line in lines:
@@ -419,7 +429,9 @@ def _truncation_footer(reason: str, follow_command: str) -> str:
     return f"[output truncated by {reason} budget; {follow}]\n"
 
 
-def _display_follow_command(command: str, *, limit: int = FOLLOW_COMMAND_CHAR_LIMIT) -> str:
+def _display_follow_command(
+    command: str, *, limit: int = FOLLOW_COMMAND_CHAR_LIMIT
+) -> str:
     normalized = str(command or "").strip()
     if not normalized:
         return ""
@@ -475,17 +487,25 @@ def _select_text_cutoff(data: bytes, *, soft_limit: int, hard_limit: int) -> int
     return min(len(data), soft_limit)
 
 
-def _truncate_text_output(text: str, *, follow_command: str) -> tuple[bytes, bool, str, int, int]:
+def _truncate_text_output(
+    text: str, *, follow_command: str
+) -> tuple[bytes, bool, str, int, int]:
     original_lines = _count_lines(text)
     original_bytes = len(text.encode("utf-8"))
-    if original_lines <= OUTPUT_BUDGET_LINE_LIMIT and original_bytes <= OUTPUT_BUDGET_BYTE_LIMIT:
+    if (
+        original_lines <= OUTPUT_BUDGET_LINE_LIMIT
+        and original_bytes <= OUTPUT_BUDGET_BYTE_LIMIT
+    ):
         return text.encode("utf-8"), False, "", original_bytes, original_lines
     lines = text.splitlines(keepends=True)
-    reason = _determine_truncate_reason(
-        lines,
-        max_lines=OUTPUT_BUDGET_LINE_LIMIT,
-        max_bytes=OUTPUT_BUDGET_BYTE_LIMIT,
-    ) or "bytes"
+    reason = (
+        _determine_truncate_reason(
+            lines,
+            max_lines=OUTPUT_BUDGET_LINE_LIMIT,
+            max_bytes=OUTPUT_BUDGET_BYTE_LIMIT,
+        )
+        or "bytes"
+    )
     footer = _truncation_footer(reason, follow_command)
     allowed_lines = max(OUTPUT_BUDGET_LINE_LIMIT - 1, 0)
     footer_bytes = len(footer.encode("utf-8"))
@@ -500,7 +520,13 @@ def _truncate_text_output(text: str, *, follow_command: str) -> tuple[bytes, boo
     )
     body = _decode_utf8_prefix(candidate_bytes[:cutoff])
     payload = (body + footer).encode("utf-8")
-    return payload[:OUTPUT_EMIT_BYTE_LIMIT], True, reason, original_bytes, original_lines
+    return (
+        payload[:OUTPUT_EMIT_BYTE_LIMIT],
+        True,
+        reason,
+        original_bytes,
+        original_lines,
+    )
 
 
 def _json_preview_summary(payload: Any) -> dict[str, Any]:
@@ -561,7 +587,9 @@ def _json_preview_envelope(
         },
     )
     for candidate in variants:
-        data = json.dumps(candidate, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        data = json.dumps(candidate, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         if len(data) <= OUTPUT_BUDGET_BYTE_LIMIT:
             return data
     fallback = {
@@ -584,7 +612,11 @@ def emit_budgeted_output(
     budget_output: bool,
     follow_command: str = "",
 ) -> EmittedOutput:
-    normalized = output_format if output_format in {"json", "raw", "markdown", "mermaid"} else "text"
+    normalized = (
+        output_format
+        if output_format in {"json", "raw", "markdown", "mermaid"}
+        else "text"
+    )
     if normalized == "raw":
         _emit_captured(data)
         return EmittedOutput(
@@ -605,7 +637,11 @@ def emit_budgeted_output(
             if budget_output and payload is not None
             else data
         )
-        if budget_output and len(compact) > OUTPUT_BUDGET_BYTE_LIMIT and payload is not None:
+        if (
+            budget_output
+            and len(compact) > OUTPUT_BUDGET_BYTE_LIMIT
+            and payload is not None
+        ):
             emitted = _json_preview_envelope(payload, follow_command=follow_command)
             _emit_captured(emitted)
             return EmittedOutput(
@@ -648,9 +684,11 @@ def emit_budgeted_output(
     original_lines = _count_lines(text)
     original_bytes = len(text.encode("utf-8"))
     if budget_output:
-        emitted, truncated, reason, _original_bytes, _original_lines = _truncate_text_output(
-            text,
-            follow_command=follow_command,
+        emitted, truncated, reason, _original_bytes, _original_lines = (
+            _truncate_text_output(
+                text,
+                follow_command=follow_command,
+            )
         )
     else:
         emitted = data
@@ -706,7 +744,9 @@ def _receipt_payload(
             payload["emittedLines"] = emitted.emitted_lines
     if result is not None:
         payload["artifactKind"] = str(result.artifact_kind or "").strip() or "content"
-        payload["artifactLocator"] = artifact_locator(result.name_link.name, result.digest)
+        payload["artifactLocator"] = artifact_locator(
+            result.name_link.name, result.digest
+        )
         payload["contentLocator"] = content_locator(result.digest)
         payload["followCommand"] = _result_follow_command(result)
     if extra:
@@ -772,23 +812,33 @@ def _json_value(data: bytes) -> Any | None:
 
 _MARKDOWN_SOURCE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
-        re.compile(r"^\s*-\s*(?:\*\*)?Created:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE),
+        re.compile(
+            r"^\s*-\s*(?:\*\*)?Created:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE
+        ),
         "source_created_at",
     ),
     (
-        re.compile(r"^\s*-\s*(?:\*\*)?Updated:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE),
+        re.compile(
+            r"^\s*-\s*(?:\*\*)?Updated:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE
+        ),
         "source_updated_at",
     ),
     (
-        re.compile(r"^\s*-\s*(?:\*\*)?Modified:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE),
+        re.compile(
+            r"^\s*-\s*(?:\*\*)?Modified:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE
+        ),
         "source_updated_at",
     ),
     (
-        re.compile(r"^\s*-\s*(?:\*\*)?Published:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE),
+        re.compile(
+            r"^\s*-\s*(?:\*\*)?Published:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE
+        ),
         "source_published_at",
     ),
     (
-        re.compile(r"^\s*-\s*(?:\*\*)?Authored:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE),
+        re.compile(
+            r"^\s*-\s*(?:\*\*)?Authored:(?:\*\*)?\s*(?P<value>\S.+?)\s*$", re.MULTILINE
+        ),
         "source_created_at",
     ),
 )
@@ -885,7 +935,9 @@ def _derived_source_metadata(
         metadata.update(
             {
                 key: value
-                for key, value in extract_visibility_metadata_from_markdown(data).items()
+                for key, value in extract_visibility_metadata_from_markdown(
+                    data
+                ).items()
                 if key not in metadata
             }
         )
@@ -996,8 +1048,12 @@ def _materialize_invocation(
         "argv": materialize_argv,
         "locator": invocation_locator(materialize_plugin, materialize_argv),
         "canonical_locator": resolved.canonical_locator,
-        "source_kind": "stdin" if resolved.entry_plugin == "read" and resolved.entry_argv == ["-"] else "render",
-        "content_type": capture.type if capture is not None and capture.type else resolved.content_type,
+        "source_kind": "stdin"
+        if resolved.entry_plugin == "read" and resolved.entry_argv == ["-"]
+        else "render",
+        "content_type": capture.type
+        if capture is not None and capture.type
+        else resolved.content_type,
         "session_dir": str(dirs.session_dir),
         "content_dir": str(dirs.content_dir),
         "actor": actor,
@@ -1005,7 +1061,9 @@ def _materialize_invocation(
     if resolved.entry_plugin != materialize_plugin:
         metadata["entrypoint"] = resolved.entry_plugin
         metadata["entry_argv"] = resolved.entry_argv
-        metadata["entry_locator"] = invocation_locator(resolved.entry_plugin, resolved.entry_argv)
+        metadata["entry_locator"] = invocation_locator(
+            resolved.entry_plugin, resolved.entry_argv
+        )
         metadata["provider"] = resolved.provider
     actor_dir = os.environ.get("GOTTA_ACTOR_DIR", "").strip()
     if actor_dir:
@@ -1138,7 +1196,19 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         try:
             options, cleaned = split_common_options(
                 argv,
-                strip_actor=plugin in {"read", "confluence", "gdocs", "gdrive", "github", "grafana", "granola", "gsheets", "jira", "slack"},
+                strip_actor=plugin
+                in {
+                    "read",
+                    "confluence",
+                    "gdocs",
+                    "gdrive",
+                    "github",
+                    "grafana",
+                    "granola",
+                    "gsheets",
+                    "jira",
+                    "slack",
+                },
             )
         except ContentError as exc:
             return die(str(exc))
@@ -1205,7 +1275,9 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         )
 
     if not resolved.should_materialize and _streams_live(plugin, cleaned):
-        if access != "none" and (options.session_dir or options.content_dir or options.actor):
+        if access != "none" and (
+            options.session_dir or options.content_dir or options.actor
+        ):
             try:
                 runtime_dirs = _runtime_dirs(options, access=access)
                 require_operational_session(runtime_dirs)
@@ -1216,21 +1288,25 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         return _run_callable(runner, cleaned)
 
     if not resolved.should_materialize:
-        if access != "none" and (options.session_dir or options.content_dir or options.actor):
+        if access != "none" and (
+            options.session_dir or options.content_dir or options.actor
+        ):
             try:
                 runtime_dirs = _runtime_dirs(options, access=access)
                 require_operational_session(runtime_dirs)
             except ContentError as exc:
                 return die(str(exc))
             with scoped_runtime_env(runtime_dirs):
-                with capture_stdout(preserve_tty=True) as stdout_capture, capture_stderr(
-                    preserve_tty=True
-                ) as stderr_capture:
+                with (
+                    capture_stdout(preserve_tty=True) as stdout_capture,
+                    capture_stderr(preserve_tty=True) as stderr_capture,
+                ):
                     code = _run_callable(runner, cleaned)
         else:
-            with capture_stdout(preserve_tty=True) as stdout_capture, capture_stderr(
-                preserve_tty=True
-            ) as stderr_capture:
+            with (
+                capture_stdout(preserve_tty=True) as stdout_capture,
+                capture_stderr(preserve_tty=True) as stderr_capture,
+            ):
                 code = _run_callable(runner, cleaned)
         stderr_data = stderr_capture.getvalue()
         stdout_data = stdout_capture.getvalue()
@@ -1256,9 +1332,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
     ):
         try:
             with scoped_runtime_env(runtime_dirs):
-                with capture_stderr(
-                    preserve_tty=True
-                ) as stderr_capture:
+                with capture_stderr(preserve_tty=True) as stderr_capture:
                     capture, display = _captured_execution(plugin, cleaned, options)
         except NotImplementedError:
             capture = None
@@ -1286,18 +1360,23 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             )
 
     with scoped_runtime_env(runtime_dirs):
-        with capture_stdout(preserve_tty=True) as stdout_capture, capture_stderr(
-            preserve_tty=True
-        ) as stderr_capture:
+        with (
+            capture_stdout(preserve_tty=True) as stdout_capture,
+            capture_stderr(preserve_tty=True) as stderr_capture,
+        ):
             code = _run_callable(runner, cleaned)
     data = stdout_capture.getvalue()
     stderr_data = stderr_capture.getvalue()
     if code == 0:
         try:
-            result = _materialize_invocation(resolved, data, options=options, dirs=runtime_dirs)
+            result = _materialize_invocation(
+                resolved, data, options=options, dirs=runtime_dirs
+            )
         except ContentError as exc:
             return die(str(exc), code=1)
-        return emit_success(data, stderr_data=stderr_data, result=result, dirs=runtime_dirs)
+        return emit_success(
+            data, stderr_data=stderr_data, result=result, dirs=runtime_dirs
+        )
     replay_stdout(data)
     _emit_captured_stderr(stderr_data)
     return code

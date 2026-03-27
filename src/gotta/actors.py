@@ -19,7 +19,9 @@ class ActorContext:
 
 
 def resolve_actor_context(*, default_speaker: str = "") -> ActorContext:
-    speaker = str(os.environ.get(ACTOR_SPEAKER_ENV) or "").strip() or default_speaker.strip()
+    speaker = (
+        str(os.environ.get(ACTOR_SPEAKER_ENV) or "").strip() or default_speaker.strip()
+    )
     callee = str(os.environ.get(ACTOR_CALLEE_ENV) or "").strip() or USER_ACTOR
     return ActorContext(speaker=speaker, callee=callee)
 

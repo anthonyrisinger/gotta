@@ -42,9 +42,14 @@ def test_granola_parser_defaults() -> None:
     assert granola.build_parser().parse_args(["list"]).offset == 0
     assert granola.build_parser().parse_args(["list"]).time_range == "last_90_days"
     assert granola.build_parser().parse_args(["search", "needle"]).mode == "auto"
-    assert granola.build_parser().parse_args(["search", "needle"]).time_range == "last_90_days"
+    assert (
+        granola.build_parser().parse_args(["search", "needle"]).time_range
+        == "last_90_days"
+    )
     assert granola.build_parser().parse_args(["get", "doc-1"]).output == "markdown"
-    assert granola.build_parser().parse_args(["transcript", "doc-1"]).output == "markdown"
+    assert (
+        granola.build_parser().parse_args(["transcript", "doc-1"]).output == "markdown"
+    )
     assert (
         granola.build_parser().parse_args(["search-transcript", "needle"]).time_range
         == "last_30_days"
@@ -119,7 +124,10 @@ def test_granola_get_markdown_includes_metadata_header(monkeypatch, capsys) -> N
     assert "- Created: 2026-03-18T10:00:00Z" in out
     assert "- Updated: 2026-03-18T11:00:00Z" in out
     assert "- Body Source: `notes_markdown`" in out
-    assert "- Transcript Locator: `granola:transcript 11111111-1111-1111-1111-111111111111`" in out
+    assert (
+        "- Transcript Locator: `granola:transcript 11111111-1111-1111-1111-111111111111`"
+        in out
+    )
     assert "## Highlights" in out
 
 
@@ -210,7 +218,9 @@ def test_granola_get_meta_includes_transcript_locator(monkeypatch, capsys) -> No
     assert "transcriptEnabled" not in payload
 
 
-def test_granola_transcript_markdown_includes_segment_metadata(monkeypatch, capsys) -> None:
+def test_granola_transcript_markdown_includes_segment_metadata(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(granola, "load_access_token", lambda path: "token")
     monkeypatch.setattr(
         granola,
@@ -251,7 +261,9 @@ def test_granola_transcript_markdown_includes_segment_metadata(monkeypatch, caps
     assert "Reviewed rollout steps." in out
 
 
-def test_granola_transcript_summary_prints_id_count_and_title(monkeypatch, capsys) -> None:
+def test_granola_transcript_summary_prints_id_count_and_title(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(granola, "load_access_token", lambda path: "token")
     monkeypatch.setattr(
         granola,
@@ -284,9 +296,7 @@ def test_granola_transcript_summary_prints_id_count_and_title(monkeypatch, capsy
 
     out = capsys.readouterr().out
     assert result == 0
-    assert out.strip() == (
-        "11111111-1111-1111-1111-111111111111\t2\tWeekly Review"
-    )
+    assert out.strip() == ("11111111-1111-1111-1111-111111111111\t2\tWeekly Review")
 
 
 def test_granola_search_markdown_reports_match_source_and_excerpt(
@@ -379,7 +389,19 @@ def test_granola_list_can_sort_by_created_with_offset(monkeypatch, capsys) -> No
     )
 
     result = granola.main(
-        ["list", "--sort", "created", "--order", "asc", "--offset", "1", "--limit", "1", "--output", "summary"]
+        [
+            "list",
+            "--sort",
+            "created",
+            "--order",
+            "asc",
+            "--offset",
+            "1",
+            "--limit",
+            "1",
+            "--output",
+            "summary",
+        ]
     )
 
     out = capsys.readouterr().out
@@ -389,7 +411,9 @@ def test_granola_list_can_sort_by_created_with_offset(monkeypatch, capsys) -> No
     assert "Newest Created" not in out
 
 
-def test_granola_export_writes_only_notes_with_body(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_granola_export_writes_only_notes_with_body(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
     _freeze_now(monkeypatch)
     monkeypatch.setattr(granola, "load_access_token", lambda path: "token")
     monkeypatch.setattr(
@@ -441,7 +465,15 @@ def test_granola_list_honors_custom_date_window(monkeypatch, capsys) -> None:
     )
 
     result = granola.main(
-        ["list", "--after", "2026-03-01", "--before", "2026-03-31", "--output", "summary"]
+        [
+            "list",
+            "--after",
+            "2026-03-01",
+            "--before",
+            "2026-03-31",
+            "--output",
+            "summary",
+        ]
     )
 
     out = capsys.readouterr().out
@@ -450,7 +482,9 @@ def test_granola_list_honors_custom_date_window(monkeypatch, capsys) -> None:
     assert "February Note" not in out
 
 
-def test_granola_list_window_uses_created_time_not_recent_activity(monkeypatch, capsys) -> None:
+def test_granola_list_window_uses_created_time_not_recent_activity(
+    monkeypatch, capsys
+) -> None:
     _freeze_now(monkeypatch)
     monkeypatch.setattr(granola, "load_access_token", lambda path: "token")
     monkeypatch.setattr(
@@ -529,14 +563,21 @@ def test_granola_transcript_query_preferred_name_is_distinct() -> None:
 
     assert (
         granola.preferred_name(
-            ["transcript", "11111111-1111-1111-1111-111111111111", "--query", "latency"],
+            [
+                "transcript",
+                "11111111-1111-1111-1111-111111111111",
+                "--query",
+                "latency",
+            ],
             options,
         )
         == "11111111-1111-1111-1111-111111111111-transcript-query-latency.json"
     )
 
 
-def test_granola_search_transcript_defaults_to_bounded_window(monkeypatch, capsys) -> None:
+def test_granola_search_transcript_defaults_to_bounded_window(
+    monkeypatch, capsys
+) -> None:
     _freeze_now(monkeypatch)
     monkeypatch.setattr(granola, "load_access_token", lambda path: "token")
     monkeypatch.setattr(
@@ -624,7 +665,9 @@ def test_granola_search_transcript_all_expands_scope(monkeypatch, capsys) -> Non
     assert payload["resultCount"] == 2
 
 
-def test_granola_export_supports_bounded_sort_and_offset(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_granola_export_supports_bounded_sort_and_offset(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
     _freeze_now(monkeypatch)
     monkeypatch.setattr(granola, "load_access_token", lambda path: "token")
     monkeypatch.setattr(

@@ -78,7 +78,11 @@ def actor_session_id(parent_root: Path, actor_name: str) -> str:
 
 
 def actor_link_path(parent_root: Path, actor_name: str) -> Path:
-    return _shared_root(parent_root) / "actors" / resolve_actor_identity(parent_root, actor_name)
+    return (
+        _shared_root(parent_root)
+        / "actors"
+        / resolve_actor_identity(parent_root, actor_name)
+    )
 
 
 def actor_state_link_dir(parent_root: Path, actor_name: str) -> Path:
@@ -134,7 +138,9 @@ def writer_role(parent_root: Path, actor_name: str, *, writer: str) -> str:
     normalized_writer = topology.normalize_identity(raw_writer)
     if not normalized_writer or topology.is_placeholder_identity(normalized_writer):
         return "foreign"
-    normalized_actor = topology.normalize_identity(resolve_actor_identity(parent_root, actor_name))
+    normalized_actor = topology.normalize_identity(
+        resolve_actor_identity(parent_root, actor_name)
+    )
     if normalized_writer == normalized_actor:
         return "self"
     if normalized_writer in bound_actors(parent_root):
@@ -208,7 +214,9 @@ def supervisor_stop_message(
         )
         else "Supervisor requested `failed`"
     )
-    cleaned_summary = summary.strip() or str(payload.get("requested_summary") or "").strip()
+    cleaned_summary = (
+        summary.strip() or str(payload.get("requested_summary") or "").strip()
+    )
     if cleaned_summary:
         message += f" ({cleaned_summary})"
     suffix = (
@@ -220,7 +228,11 @@ def supervisor_stop_message(
         else ". Any further activity may be discarded. Stop new retrieval, append one "
         + "final short note, and sign off ASAP with "
     )
-    return message + suffix + f"`gotta actor signoff {normalize_actor_name(actor_name)} --summary ...`."
+    return (
+        message
+        + suffix
+        + f"`gotta actor signoff {normalize_actor_name(actor_name)} --summary ...`."
+    )
 
 
 def supervisor_note_check_message(

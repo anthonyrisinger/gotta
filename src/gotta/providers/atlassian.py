@@ -261,9 +261,13 @@ def _next_atlassian_step(payload: dict[str, Any], *, auth_command: str) -> str:
     if session_status in {"missing", "invalid"}:
         return f"run `gotta {auth_command} auth`"
     if session_status == "expired":
-        return refresh_first if has_refresh_token else f"run `gotta {auth_command} auth`"
+        return (
+            refresh_first if has_refresh_token else f"run `gotta {auth_command} auth`"
+        )
     if token_preflight == "invalid":
-        return refresh_first if has_refresh_token else f"run `gotta {auth_command} auth`"
+        return (
+            refresh_first if has_refresh_token else f"run `gotta {auth_command} auth`"
+        )
     if not payload.get("baseUrl"):
         return (
             "persist the Atlassian tenant after auth or set "
@@ -327,7 +331,9 @@ def atlassian_status_payload(
         access_token = str(oauth_state.get("access_token") or "").strip()
         expires_at = oauth_state.get("expires_at")
         payload["expiresAt"] = expires_at
-        payload["hasRefreshToken"] = bool(str(oauth_state.get("refresh_token") or "").strip())
+        payload["hasRefreshToken"] = bool(
+            str(oauth_state.get("refresh_token") or "").strip()
+        )
         payload["hasCachedAccessToken"] = bool(access_token)
         if access_token:
             payload["sessionStatus"] = (
@@ -342,7 +348,9 @@ def atlassian_status_payload(
                 else "usable"
             )
     if check_token and payload["sessionStatus"] != "missing":
-        token = str(oauth_state.get("access_token") or "").strip() if oauth_state else ""
+        token = (
+            str(oauth_state.get("access_token") or "").strip() if oauth_state else ""
+        )
         if token:
             payload["tokenPreflight"] = token_preflight_status(token)
     payload["baseUrl"] = _default_base_url(
@@ -441,9 +449,13 @@ def start_oauth_callback_server(
                 callback_state["code"] = params["code"][0]
                 callback_state["state"] = params.get("state", [""])[0]
                 callback_state["event"].set()
-                self._send_response("Authorization successful. You can close this window.")
+                self._send_response(
+                    "Authorization successful. You can close this window."
+                )
                 return
-            self._send_response("Invalid callback: missing authorization code.", status=400)
+            self._send_response(
+                "Invalid callback: missing authorization code.", status=400
+            )
 
         def _send_response(self, message: str, *, status: int = 200) -> None:
             self.send_response(status)
@@ -490,7 +502,9 @@ def api_json(
             try:
                 return json.loads(body)
             except json.JSONDecodeError as exc:
-                raise AtlassianError(f"{method} {url} returned invalid JSON: {exc}") from exc
+                raise AtlassianError(
+                    f"{method} {url} returned invalid JSON: {exc}"
+                ) from exc
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise AtlassianError(f"{method} {url} failed with {exc.code}: {body}") from exc
@@ -575,7 +589,9 @@ def resolve_accessible_resource(
             only_url = site_root(str(resources[0].get("url") or "").strip())
             if only_cloud_id and only_url:
                 return only_cloud_id, only_url
-        urls = ", ".join(sorted(deduped) or [(resource.get("url") or "?") for resource in resources])
+        urls = ", ".join(
+            sorted(deduped) or [(resource.get("url") or "?") for resource in resources]
+        )
         if base_url:
             raise AtlassianError(
                 f"could not determine Atlassian cloud id for {site_root(base_url)}; "
@@ -685,7 +701,9 @@ def refresh_cached_oauth_state() -> dict[str, Any]:
         raise AtlassianError("unexpected Atlassian OAuth refresh response")
     access_token = str(response.get("access_token") or "").strip()
     if not access_token:
-        raise AtlassianError("Atlassian OAuth refresh response did not include access_token")
+        raise AtlassianError(
+            "Atlassian OAuth refresh response did not include access_token"
+        )
     new_refresh_token = str(response.get("refresh_token") or refresh_token).strip()
     expires_in = response.get("expires_in")
     expires_at = None

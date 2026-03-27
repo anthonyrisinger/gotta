@@ -10,14 +10,24 @@ from typing import Any
 from platformdirs import PlatformDirs
 
 from gotta.compat import tomllib
+from gotta.vault import write_secret_text_atomic
 
 
 APP_NAME = "gotta"
 CONFIG_FILE_NAME = "gotta.toml"
+PRIVATE_DIR_MODE = 0o700
 
 
 def _dirs() -> PlatformDirs:
     return PlatformDirs(appname=APP_NAME, appauthor=False, ensure_exists=False)
+
+
+def _ensure_private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(PRIVATE_DIR_MODE)
+    except OSError:
+        pass
 
 
 def user_config_dir() -> Path:
@@ -120,16 +130,14 @@ def _toml_scalar(value: Any) -> str:
     raise TypeError(f"unsupported config value: {value!r}")
 
 
-def _render_table(prefix: list[str], table: Mapping[str, Any], lines: list[str]) -> None:
+def _render_table(
+    prefix: list[str], table: Mapping[str, Any], lines: list[str]
+) -> None:
     scalars = [
-        (key, value)
-        for key, value in table.items()
-        if not isinstance(value, Mapping)
+        (key, value) for key, value in table.items() if not isinstance(value, Mapping)
     ]
     subtables = [
-        (key, value)
-        for key, value in table.items()
-        if isinstance(value, Mapping)
+        (key, value) for key, value in table.items() if isinstance(value, Mapping)
     ]
     if prefix:
         lines.append(f"[{'.'.join(prefix)}]")
@@ -142,11 +150,13 @@ def _render_table(prefix: list[str], table: Mapping[str, Any], lines: list[str])
 
 def write_config(config: Mapping[str, Any]) -> Path:
     path = primary_config_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(path.parent)
     lines: list[str] = []
     _render_table([], config, lines)
     text = "\n".join(lines).rstrip() + "\n" if lines else ""
-    path.write_text(text, encoding="utf-8")
+    write_secret_text_atomic(
+        path, text, ensure_dir=lambda: _ensure_private_dir(path.parent)
+    )
     return path
 
 

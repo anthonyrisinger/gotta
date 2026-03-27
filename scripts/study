@@ -1,0 +1,122 @@
+#!/usr/bin/env sh
+
+set -eu
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/study [--deep] [--types]
+
+Run the local quality gate, structural pressure tools, and optional study
+instrumentation.
+
+  --deep   add import-linter and semgrep study passes
+  --types  add a source-only pyright pressure pass
+EOF
+}
+
+section() {
+  printf '\n== %s ==\n' "$1"
+}
+
+run_cmd() {
+  printf '+'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+  "$@"
+}
+
+advisory_cmd() {
+  printf '+'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+  if "$@"; then
+    return 0
+  else
+    status=$?
+  fi
+  printf 'advisory step failed with exit %s\n' "$status" >&2
+  return 0
+}
+
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+deep=0
+types=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --deep)
+      deep=1
+      ;;
+    --types)
+      types=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+section "Core Gate"
+run_cmd uv run pytest -q
+run_cmd uv run ruff check src tests
+run_cmd uv run python -m vulture src tests --min-confidence 80
+
+section "Formatter Gate"
+run_cmd uv run ruff format --check src tests
+
+section "Pressure Map"
+run_cmd uv run pytest --durations=15 -q
+run_cmd uv run python -m radon cc src tests -s
+run_cmd uv run lizard src tests
+
+section "Study Counters"
+if have_cmd cloc; then
+  run_cmd cloc src tests
+else
+  printf 'skip cloc (not installed)\n'
+fi
+
+if have_cmd ctags; then
+  tags_file="$(mktemp)"
+  trap 'rm -f "$tags_file"' EXIT INT TERM
+  run_cmd ctags -R -f "$tags_file" src tests
+  run_cmd wc -l "$tags_file"
+else
+  printf 'skip ctags (not installed)\n'
+fi
+
+if have_cmd ast-grep; then
+  run_cmd ast-grep -p '@dataclass($$$ARGS)' -l python src/gotta
+  run_cmd ast-grep -p 'parser.add_argument($$$ARGS)' -l python src/gotta
+else
+  printf 'skip ast-grep (not installed)\n'
+fi
+
+if [ "$deep" -eq 1 ]; then
+  section "Architecture"
+  run_cmd env PYTHONPATH=src uvx --from import-linter lint-imports --config .importlinter --show-timings
+
+  section "Semantic Probes"
+  run_cmd uvx semgrep --config .semgrep/study.yml src/gotta
+fi
+
+if [ "$types" -eq 1 ]; then
+  section "Type Pressure"
+  advisory_cmd uvx pyright src
+fi

@@ -26,19 +26,24 @@ def log_records(work_dir: Path) -> list[dict[str, object]]:
 
 
 def visible_log_records(work_dir: Path) -> list[dict[str, object]]:
-    target_actor = session_actor(work_dir) if work_dir.resolve().parent.name == "actors" else ""
+    target_actor = (
+        session_actor(work_dir) if work_dir.resolve().parent.name == "actors" else ""
+    )
     records = log_records(work_dir)
     if not target_actor:
         return records
     return [
         record
         for record in records
-        if writer_role(work_dir, target_actor, writer=str(record.get("actor") or "")) != "foreign"
+        if writer_role(work_dir, target_actor, writer=str(record.get("actor") or ""))
+        != "foreign"
     ]
 
 
 def logs_payload(work_dir: Path, *, limit: int = 0) -> dict[str, object]:
-    records = sorted(visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
+    records = sorted(
+        visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or "")
+    )
     entries = records[-limit:] if limit > 0 else records
     return {
         "state_path": str(logs_state_path(work_dir)),
@@ -102,7 +107,9 @@ def append_log_record(
 
 
 def recent_log_lines(work_dir: Path, *, limit: int) -> list[str]:
-    records = sorted(visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
+    records = sorted(
+        visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or "")
+    )
     entries: list[str] = []
     for record in records[-limit:]:
         timestamp = str(record.get("timestamp") or "unknown-time")

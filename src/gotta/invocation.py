@@ -330,10 +330,19 @@ def _preferred_name(plugin: str, argv: list[str], options: CommonOptions) -> str
     if plugin == "confluence" and subcommand == "search" and len(tokens) >= 2:
         query = _query_tail(
             argv,
-            valued_flags=("--space", "--type", "--limit", "--next", "--output", "--base-url"),
+            valued_flags=(
+                "--space",
+                "--type",
+                "--limit",
+                "--next",
+                "--output",
+                "--base-url",
+            ),
             boolean_flags=("--title-only",),
         )
-        return f"confluence-search-{_slug_name(query, fallback='confluence')}.{extension}"
+        return (
+            f"confluence-search-{_slug_name(query, fallback='confluence')}.{extension}"
+        )
     if plugin == "confluence" and subcommand == "cql":
         query = _query_tail(argv, valued_flags=("--limit", "--next", "--base-url"))
         return f"confluence-cql-{_slug_name(query, fallback='confluence')}.{extension}"
@@ -444,7 +453,9 @@ def _generic_artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
     subcommand = argv[0]
     if subcommand == "status":
         return "none"
-    return "none" if subcommand in CONTROL_SUBCOMMANDS.get(plugin, set()) else "evidence"
+    return (
+        "none" if subcommand in CONTROL_SUBCOMMANDS.get(plugin, set()) else "evidence"
+    )
 
 
 def _artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
@@ -579,8 +590,12 @@ def resolve_invocation(
                 should_materialize=False,
                 provider="search",
             )
-        canonical = _canonical_locator(search_route.provider, search_route.provider_argv)
-        preferred = _preferred_name(search_route.provider, search_route.provider_argv, options)
+        canonical = _canonical_locator(
+            search_route.provider, search_route.provider_argv
+        )
+        preferred = _preferred_name(
+            search_route.provider, search_route.provider_argv, options
+        )
         content_type = _infer_content_type(
             search_route.provider, search_route.provider_argv, preferred
         )

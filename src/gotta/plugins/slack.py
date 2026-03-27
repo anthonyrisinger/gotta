@@ -316,17 +316,15 @@ def preferred_name(argv: list[str], options: object) -> str:
 
 
 def route_target(target: str) -> list[str] | None:
-    if (
-        target.startswith("https://")
-        and (".slack.com/docs/" in target or ".enterprise.slack.com/docs/" in target)
+    if target.startswith("https://") and (
+        ".slack.com/docs/" in target or ".enterprise.slack.com/docs/" in target
     ):
         if any(char.isspace() for char in target):
             return None
         return ["get", strip_http_url_fragment(target)]
-    if (
-        target.startswith("https://")
-        and ".slack.com/archives/" in target
-    ) or ("enterprise.slack.com" in target and "archives" in target):
+    if (target.startswith("https://") and ".slack.com/archives/" in target) or (
+        "enterprise.slack.com" in target and "archives" in target
+    ):
         if any(char.isspace() for char in target):
             return None
         return ["get", strip_http_url_fragment(target)]
@@ -548,7 +546,9 @@ def normalize_lookup_name(value: str) -> str:
     return value.strip().lower().lstrip("#")
 
 
-def normalize_user_record(user_id: str, username: str, data: dict[str, Any]) -> dict[str, Any]:
+def normalize_user_record(
+    user_id: str, username: str, data: dict[str, Any]
+) -> dict[str, Any]:
     profile = data.get("profile")
     if not isinstance(profile, dict):
         profile = {}
@@ -772,7 +772,15 @@ def seed_channel_directory_from_archive(workspace: str) -> None:
     conn = open_directory_db(workspace)
     try:
         with conn:
-            for channel_id, name, kind, is_private, is_archived, raw_json, stamp in rows_to_upsert:
+            for (
+                channel_id,
+                name,
+                kind,
+                is_private,
+                is_archived,
+                raw_json,
+                stamp,
+            ) in rows_to_upsert:
                 conn.execute(
                     """
                     INSERT INTO channel_directory(
@@ -907,7 +915,9 @@ def resolve_channel_name(
     return channel_id
 
 
-def load_directory_users(workspace: str, user_ids: set[str]) -> dict[str, dict[str, Any]]:
+def load_directory_users(
+    workspace: str, user_ids: set[str]
+) -> dict[str, dict[str, Any]]:
     if not user_ids:
         return {}
     placeholders = ",".join("?" for _ in user_ids)
@@ -1034,7 +1044,9 @@ def parse_json_blob(value: Any) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def canonical_thread_url(workspace: str, channel_id: str, thread_ts: str | None = None) -> str:
+def canonical_thread_url(
+    workspace: str, channel_id: str, thread_ts: str | None = None
+) -> str:
     if not thread_ts:
         return f"https://{workspace}.slack.com/archives/{channel_id}"
     pnum = thread_ts.replace(".", "")
@@ -1073,8 +1085,14 @@ def _doc_shell_reason(data: bytes, *, final_url: str) -> str:
     markers = (
         ("unsupported browser", "Slack returned its unsupported-browser shell"),
         ("sign in to slack", "Slack returned its sign-in shell"),
-        ("slack is your productivity platform", "Slack returned a workspace shell instead of document content"),
-        ("download slack for desktop", "Slack returned a browser/app shell instead of document content"),
+        (
+            "slack is your productivity platform",
+            "Slack returned a workspace shell instead of document content",
+        ),
+        (
+            "download slack for desktop",
+            "Slack returned a browser/app shell instead of document content",
+        ),
     )
     for needle, reason in markers:
         if needle in text:
@@ -1100,7 +1118,9 @@ def _fetch_slack_doc(
 ) -> tuple[bytes, dict[str, Any]]:
     if not ref.team_id or not ref.doc_id:
         raise ToolError("invalid Slack doc locator; expected team and doc identifiers")
-    auth_state, _path = ensure_live_search_auth(ref.workspace, interactive_ok=interactive_ok)
+    auth_state, _path = ensure_live_search_auth(
+        ref.workspace, interactive_ok=interactive_ok
+    )
     file_payload = slack_api_post(
         ref.workspace,
         auth_state,
@@ -1151,7 +1171,9 @@ def _doc_meta_from_capture(capture: Capture) -> dict[str, Any]:
         "docId": str(capture.meta.get("doc_id") or ""),
         "url": str(capture.meta.get("url") or ""),
         "contentType": str(capture.meta.get("content_type") or ""),
-        "retrieval": str(capture.meta.get("retrieval") or "live_auth_files_info_download"),
+        "retrieval": str(
+            capture.meta.get("retrieval") or "live_auth_files_info_download"
+        ),
     }
 
 
@@ -1470,7 +1492,9 @@ def slack_ts_key(value: str) -> int:
 def slack_ts_to_datetime(value: str) -> dt.datetime:
     key = slack_ts_key(value)
     seconds, micros = divmod(key, 1_000_000)
-    return dt.datetime.fromtimestamp(seconds, dt.timezone.utc).replace(microsecond=micros)
+    return dt.datetime.fromtimestamp(seconds, dt.timezone.utc).replace(
+        microsecond=micros
+    )
 
 
 def datetime_to_slack_key(value: dt.datetime) -> int:
@@ -1536,7 +1560,9 @@ def _parse_search_date_range(value: str) -> tuple[dt.datetime, dt.datetime] | No
     return None
 
 
-def _archive_search_time_predicates(spec: SearchSpec) -> tuple[list[str], list[Any], list[str]]:
+def _archive_search_time_predicates(
+    spec: SearchSpec,
+) -> tuple[list[str], list[Any], list[str]]:
     predicates: list[str] = []
     params: list[Any] = []
     applied: list[str] = []
@@ -1549,7 +1575,9 @@ def _archive_search_time_predicates(spec: SearchSpec) -> tuple[list[str], list[A
         if name not in {"before", "after", "on", "during"}:
             continue
         if match.group("neg"):
-            raise ToolError(f"archive search does not support negated time qualifier `{token}`")
+            raise ToolError(
+                f"archive search does not support negated time qualifier `{token}`"
+            )
         range_bounds = _parse_search_date_range(value)
         if name in {"on", "during"}:
             if range_bounds is None:
@@ -1581,7 +1609,12 @@ def _archive_search_time_predicates(spec: SearchSpec) -> tuple[list[str], list[A
     return predicates, params, applied
 
 
-def _cap_sync_window(*, since: dt.datetime | None = None, until: dt.datetime | None = None, lookback: dt.timedelta | None = None) -> None:
+def _cap_sync_window(
+    *,
+    since: dt.datetime | None = None,
+    until: dt.datetime | None = None,
+    lookback: dt.timedelta | None = None,
+) -> None:
     if lookback is not None and lookback > MAX_SYNC_WINDOW:
         raise ToolError(
             f"Slack archive pulls are capped at {MAX_SYNC_LOOKBACK} per window; "
@@ -1703,7 +1736,9 @@ def _run_bounded_archive_window(
     result = workspace_archive_result(ref.workspace)
     channel_ref = _channel_ref(ref)
     if result.db_path.exists() and not refresh:
-        if _window_is_covered(result, channel_id=ref.channel_id, since=since, until=until):
+        if _window_is_covered(
+            result, channel_id=ref.channel_id, since=since, until=until
+        ):
             return result
         oldest_ts, newest_ts = archive_coverage_for_channel(result, ref.channel_id)
         if oldest_ts is None and newest_ts is None:
@@ -1791,7 +1826,9 @@ def resolve_channel_window(args: argparse.Namespace) -> ChannelWindow:
     if args.lookback and args.since:
         raise ToolError("`--lookback` cannot be combined with `--since`")
     if args.strict_window and not (args.lookback or args.since or args.until):
-        raise ToolError("`--strict-window` requires `--lookback`, `--since`, or `--until`")
+        raise ToolError(
+            "`--strict-window` requires `--lookback`, `--since`, or `--until`"
+        )
     if args.lookback:
         lookback_token, lookback_delta = parse_lookback(args.lookback)
         until = parse_time_arg(args.until, flag="--until") if args.until else utc_now()
@@ -1855,13 +1892,15 @@ def archive_coverage_for_channel(
             parsed.timestamp()
             for row in session_rows
             if session_matches_channel(str(row["args"] or ""), channel_id)
-            and (parsed := parse_slackdump_timestamp(str(row["from_ts"] or ""))) is not None
+            and (parsed := parse_slackdump_timestamp(str(row["from_ts"] or "")))
+            is not None
         ]
         session_ends = [
             parsed.timestamp()
             for row in session_rows
             if session_matches_channel(str(row["args"] or ""), channel_id)
-            and (parsed := parse_slackdump_timestamp(str(row["to_ts"] or ""))) is not None
+            and (parsed := parse_slackdump_timestamp(str(row["to_ts"] or "")))
+            is not None
         ]
         if session_starts:
             return (
@@ -1967,7 +2006,9 @@ def run_sync_archive(
     requested_from = now - lookback_delta
     if result.db_path.exists() and not refresh:
         oldest_ts, newest_ts = archive_coverage_for_channel(result, ref.channel_id)
-        covers_oldest = oldest_ts is not None and oldest_ts <= requested_from.timestamp()
+        covers_oldest = (
+            oldest_ts is not None and oldest_ts <= requested_from.timestamp()
+        )
         covers_newest = (
             newest_ts is not None
             and newest_ts >= now.timestamp() - DEFAULT_COVERAGE_FRESHNESS_SLOP_SECONDS
@@ -2029,6 +2070,7 @@ def try_opportunistic_sync(ref: SlackRef) -> ArchiveResult:
         timeout_seconds=DEFAULT_OPPORTUNISTIC_TIMEOUT_SECONDS,
     )
 
+
 def open_db(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
@@ -2047,7 +2089,9 @@ def sqlite_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
-def open_workspace_db(workspace: str, *, database: str) -> tuple[sqlite3.Connection, Path]:
+def open_workspace_db(
+    workspace: str, *, database: str
+) -> tuple[sqlite3.Connection, Path]:
     if database == "archive":
         result = ensure_archive_exists(
             workspace_archive_result(workspace),
@@ -2144,7 +2188,9 @@ def normalize_directory_channel_item(
     normalized_id = str(
         normalized.get("id") or channel_id or normalized.get("channel_id") or ""
     ).strip()
-    normalized_name = str(normalized.get("name") or name or normalized_id).strip() or normalized_id
+    normalized_name = (
+        str(normalized.get("name") or name or normalized_id).strip() or normalized_id
+    )
     normalized["id"] = normalized_id
     normalized["name"] = normalized_name
     normalized["name_normalized"] = str(normalized.get("name_normalized") or "").strip()
@@ -2160,7 +2206,9 @@ def normalize_directory_channel_item(
     normalized["isArchived"] = bool(normalized["is_archived"])
     normalized["isShared"] = bool(normalized["is_shared"])
     normalized["isExtShared"] = bool(normalized["is_ext_shared"])
-    normalized["type"] = row_type or str(normalized.get("type") or channel_type(normalized, normalized_id))
+    normalized["type"] = row_type or str(
+        normalized.get("type") or channel_type(normalized, normalized_id)
+    )
     if not isinstance(normalized.get("purpose"), dict):
         normalized["purpose"] = {"value": ""}
     if not isinstance(normalized.get("topic"), dict):
@@ -2168,7 +2216,9 @@ def normalize_directory_channel_item(
     return with_visibility_metadata(normalized, provider="slack")
 
 
-def latest_user_rows(conn: sqlite3.Connection, user_ids: set[str]) -> dict[str, dict[str, Any]]:
+def latest_user_rows(
+    conn: sqlite3.Connection, user_ids: set[str]
+) -> dict[str, dict[str, Any]]:
     if not user_ids:
         return {}
     if not sqlite_table_exists(conn, "s_user"):
@@ -2289,11 +2339,7 @@ def single_line_text(text: str) -> str:
 
 
 def escape_like(query: str) -> str:
-    return (
-        query.replace("\\", "\\\\")
-        .replace("%", r"\%")
-        .replace("_", r"\_")
-    )
+    return query.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
 
 def channel_type(channel_data: dict[str, Any], channel_id: str) -> str:
@@ -2310,17 +2356,17 @@ def normalize_channel(row: sqlite3.Row | None) -> dict[str, Any]:
     if row is None:
         return with_visibility_metadata(
             {
-            "id": "",
-            "name": "",
-            "type": "unknown",
-            "isArchived": False,
-            "isPrivate": False,
-            "isShared": False,
-            "isExtShared": False,
-            "is_archived": False,
-            "is_private": False,
-            "is_shared": False,
-            "is_ext_shared": False,
+                "id": "",
+                "name": "",
+                "type": "unknown",
+                "isArchived": False,
+                "isPrivate": False,
+                "isShared": False,
+                "isExtShared": False,
+                "is_archived": False,
+                "is_private": False,
+                "is_shared": False,
+                "is_ext_shared": False,
             },
             provider="slack",
         )
@@ -2413,7 +2459,7 @@ def load_message_rows(
               ORDER BY chunk_id DESC, idx DESC
             ) AS rn
           FROM message
-          WHERE {' AND '.join(where_parts)}
+          WHERE {" AND ".join(where_parts)}
         )
         WHERE rn = 1
         ORDER BY CAST(REPLACE(ts, '.', '') AS INTEGER)
@@ -2558,7 +2604,11 @@ def build_envelope(
                 requested.append(f"since {coverage['since']}")
             if coverage and coverage.get("until"):
                 requested.append(f"until {coverage['until']}")
-            detail = f" in the requested window ({', '.join(requested)})" if requested else ""
+            detail = (
+                f" in the requested window ({', '.join(requested)})"
+                if requested
+                else ""
+            )
             raise ToolError(f"no messages found for {ref.raw}{detail}.")
         raise ToolError(
             f"no messages found for {ref.raw}. if you expected older history, run "
@@ -2610,7 +2660,8 @@ def build_envelope(
                 "kind": ref.kind,
                 "channelId": ref.channel_id,
                 "threadTs": ref.thread_ts,
-                "url": ref.url or canonical_thread_url(ref.workspace, ref.channel_id, ref.thread_ts),
+                "url": ref.url
+                or canonical_thread_url(ref.workspace, ref.channel_id, ref.thread_ts),
             },
             "channel": channel,
             "title": title,
@@ -2620,7 +2671,8 @@ def build_envelope(
             "messages": messages,
         },
         provider="slack",
-        locator=ref.url or canonical_thread_url(ref.workspace, ref.channel_id, ref.thread_ts or ""),
+        locator=ref.url
+        or canonical_thread_url(ref.workspace, ref.channel_id, ref.thread_ts or ""),
     )
     if coverage is not None:
         envelope["window"] = coverage
@@ -2644,11 +2696,7 @@ def envelope_meta(envelope: dict[str, Any]) -> dict[str, Any]:
         "fidelity": envelope_fidelity(envelope),
     }
     meta.update(
-        {
-            key: value
-            for key, value in envelope.items()
-            if key.startswith("visibility_")
-        }
+        {key: value for key, value in envelope.items() if key.startswith("visibility_")}
     )
     if "window" in envelope:
         meta["window"] = envelope["window"]
@@ -2679,7 +2727,9 @@ def envelope_fidelity(envelope: dict[str, Any]) -> dict[str, str]:
         coverage = (
             "complete"
             if window.get("complete") is True
-            else "partial" if window.get("complete") is False else "unknown"
+            else "partial"
+            if window.get("complete") is False
+            else "unknown"
         )
         return {
             "mode": "bounded",
@@ -2696,7 +2746,9 @@ def display_channel_label(envelope: dict[str, Any]) -> str:
     name = str(channel.get("name") or "").strip()
     if name:
         return f"#{name}"
-    channel_id = str(channel.get("id") or envelope.get("ref", {}).get("channelId") or "").strip()
+    channel_id = str(
+        channel.get("id") or envelope.get("ref", {}).get("channelId") or ""
+    ).strip()
     if channel_id:
         return f"#{channel_id}"
     workspace = str(envelope.get("workspace") or "").strip()
@@ -2736,8 +2788,8 @@ def render_markdown(envelope: dict[str, Any]) -> str:
             lines.append(f"- Updated: {updated}")
         lines.extend(
             [
-            f"- _Threads_: {envelope.get('threadCount', 0)}",
-            f"- _Messages_: {envelope['messageCount']}",
+                f"- _Threads_: {envelope.get('threadCount', 0)}",
+                f"- _Messages_: {envelope['messageCount']}",
             ]
         )
         if window.get("since") or window.get("until"):
@@ -2745,7 +2797,9 @@ def render_markdown(envelope: dict[str, Any]) -> str:
                 f"- _Window_: `{window.get('since') or '-inf'}` -> `{window.get('until') or '+inf'}`"
             )
             if window.get("complete") is not None:
-                lines.append(f"- _Coverage_: `{'complete' if window['complete'] else 'partial'}`")
+                lines.append(
+                    f"- _Coverage_: `{'complete' if window['complete'] else 'partial'}`"
+                )
         lines.append("")
         for thread in envelope.get("threads", []):
             lines.extend(
@@ -2783,9 +2837,7 @@ def render_markdown(envelope: dict[str, Any]) -> str:
     for message in envelope["messages"]:
         stamp = format_local_ts(message["ts"])
         rendered = single_line_text(message["textResolved"])
-        lines.append(
-            f"- _{stamp}_ **{message['user']['displayName']}**: {rendered}"
-        )
+        lines.append(f"- _{stamp}_ **{message['user']['displayName']}**: {rendered}")
     return "\n".join(lines) + "\n"
 
 
@@ -2807,12 +2859,16 @@ def render_text(envelope: dict[str, Any]) -> str:
             )
         lines.append("")
         for thread in envelope.get("threads", []):
-            lines.append(f"[thread {format_local_ts(thread['latestTs'])}] {thread['title']}")
+            lines.append(
+                f"[thread {format_local_ts(thread['latestTs'])}] {thread['title']}"
+            )
             lines.append(thread["permalink"])
             for message in thread["messages"]:
                 stamp = format_local_ts(message["ts"])
                 rendered = single_line_text(message["textResolved"])
-                lines.append(f"  [{stamp}] {message['user']['displayName']}: {rendered}")
+                lines.append(
+                    f"  [{stamp}] {message['user']['displayName']}: {rendered}"
+                )
             lines.append("")
         return "\n".join(lines).rstrip() + "\n"
     lines: list[str] = [
@@ -2933,8 +2989,13 @@ def search_follow_command(permalink: str) -> str:
     if query_thread_ts:
         match = PERMALINK_RE.search(permalink) or ARCHIVE_PATH_RE.search(permalink)
         if match:
-            workspace = match.groupdict().get("workspace") or urllib.parse.urlparse(permalink).netloc.split(".", 1)[0]
-            permalink = canonical_thread_url(workspace, match.group("channel"), query_thread_ts)
+            workspace = (
+                match.groupdict().get("workspace")
+                or urllib.parse.urlparse(permalink).netloc.split(".", 1)[0]
+            )
+            permalink = canonical_thread_url(
+                workspace, match.group("channel"), query_thread_ts
+            )
     return f"gotta read {shlex.quote(permalink)}"
 
 
@@ -3006,7 +3067,9 @@ def query_search(
     if inner_where_parts:
         inner_where = "WHERE " + " AND ".join(inner_where_parts)
     match_sql, match_params, suggestions = build_search_match_sql(spec)
-    time_sql_parts, time_params, applied_modifiers = _archive_search_time_predicates(spec)
+    time_sql_parts, time_params, applied_modifiers = _archive_search_time_predicates(
+        spec
+    )
     where_parts = [f"({match_sql})", *time_sql_parts]
     where_sql = " AND ".join(where_parts)
     rows = conn.execute(
@@ -3038,7 +3101,9 @@ def query_search(
         for row in rows
         if str(parse_json_blob(row["data"]).get("user") or "").strip()
     }
-    result_channel_ids = {str(row["channel_id"]) for row in rows if str(row["channel_id"]).strip()}
+    result_channel_ids = {
+        str(row["channel_id"]) for row in rows if str(row["channel_id"]).strip()
+    }
     channel_mentions = {
         match.group(1)
         for row in rows
@@ -3056,7 +3121,9 @@ def query_search(
         result_channel_ids | channel_mentions,
     )
     archive_channels = {
-        current_channel_id: normalize_channel(latest_channel_row(conn, current_channel_id))
+        current_channel_id: normalize_channel(
+            latest_channel_row(conn, current_channel_id)
+        )
         for current_channel_id in result_channel_ids
     }
     channels = merge_channels(archive_channels, directory_channels)
@@ -3088,13 +3155,17 @@ def query_search(
                     "channelName": result_channel.get("name"),
                     "ts": str(row["ts"]),
                     "threadTs": thread_ts,
-                    "threadPermalink": canonical_thread_url(workspace, result_channel_id, thread_ts),
+                    "threadPermalink": canonical_thread_url(
+                        workspace, result_channel_id, thread_ts
+                    ),
                     "permalink": permalink,
                     "followCommand": search_follow_command(permalink),
                     "text": text,
                     "textResolved": resolve_mentions(text, users, channels),
                     "userId": user_id,
-                    "userDisplayName": message_display_name(data, users.get(user_id), user_id),
+                    "userDisplayName": message_display_name(
+                        data, users.get(user_id), user_id
+                    ),
                     "channel": result_channel,
                 },
                 provider="slack",
@@ -3119,7 +3190,8 @@ def query_search(
                     "followCommand": search_follow_command(thread_permalink),
                     "latestTs": item["ts"],
                     "matchCount": 1,
-                    "title": title_seed or f"Thread in #{item['channelName'] or item['channelId']}",
+                    "title": title_seed
+                    or f"Thread in #{item['channelName'] or item['channelId']}",
                     "results": [item],
                     "channel": item.get("channel") or {},
                 },
@@ -3129,7 +3201,9 @@ def query_search(
             continue
         thread["matchCount"] += 1
         thread["results"].append(item)
-        if int(str(item["ts"]).replace(".", "")) > int(str(thread["latestTs"]).replace(".", "")):
+        if int(str(item["ts"]).replace(".", "")) > int(
+            str(thread["latestTs"]).replace(".", "")
+        ):
             thread["latestTs"] = item["ts"]
     thread_results = sorted(
         threads.values(),
@@ -3391,7 +3465,8 @@ def search_live_payload(
                     "followCommand": search_follow_command(item["threadPermalink"]),
                     "latestTs": item["ts"],
                     "matchCount": 1,
-                    "title": summary or f"Thread in #{item['channelName'] or item['channelId']}",
+                    "title": summary
+                    or f"Thread in #{item['channelName'] or item['channelId']}",
                     "results": [item],
                     "channel": item.get("channel") or {},
                 },
@@ -3460,9 +3535,13 @@ def render_search_markdown(result: dict[str, Any]) -> str:
     if result.get("modifiers"):
         lines.insert(5, f"- _Modifiers_: `{', '.join(result['modifiers'])}`")
     if result.get("appliedModifiers"):
-        lines.insert(6, f"- _Applied Filters_: `{', '.join(result['appliedModifiers'])}`")
+        lines.insert(
+            6, f"- _Applied Filters_: `{', '.join(result['appliedModifiers'])}`"
+        )
     lines.extend(render_visibility_metadata_lines(result))
-    lines.extend(render_source_metadata_lines(derive_source_metadata_from_payload(result)))
+    lines.extend(
+        render_source_metadata_lines(derive_source_metadata_from_payload(result))
+    )
     lines.append("")
     channel = result.get("channel")
     if isinstance(channel, dict) and channel:
@@ -3540,7 +3619,15 @@ def explicit_provider_list(
     channel_types: str | None = None,
     timeout_seconds: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    cmd = ["slackdump", "list", entity, "-enterprise", "-workspace", workspace, "-no-json"]
+    cmd = [
+        "slackdump",
+        "list",
+        entity,
+        "-enterprise",
+        "-workspace",
+        workspace,
+        "-no-json",
+    ]
     if fmt == "json":
         cmd.extend(["-format", "JSON"])
     else:
@@ -3670,14 +3757,20 @@ def cmd_get(args: argparse.Namespace) -> int:
         )
     if args.refresh and not args.pull_recent and ref.kind != "thread":
         raise ToolError("`gotta slack get --refresh` requires `--pull-recent LOOKBACK`")
-    if ref.kind == "thread" and (args.lookback or args.since or args.until or args.strict_window):
-        raise ToolError("`--lookback`, `--since`, `--until`, and `--strict-window` apply only to channel reads")
+    if ref.kind == "thread" and (
+        args.lookback or args.since or args.until or args.strict_window
+    ):
+        raise ToolError(
+            "`--lookback`, `--since`, `--until`, and `--strict-window` apply only to channel reads"
+        )
 
     envelope: dict[str, Any] | None = None
     result: ArchiveResult | None = None
     if ref.kind == "thread":
         since, until = thread_hydration_window(ref)
-        emit_progress(f"retrieval state: queued slack thread {ref.channel_id}:{ref.thread_ts}")
+        emit_progress(
+            f"retrieval state: queued slack thread {ref.channel_id}:{ref.thread_ts}"
+        )
         emit_progress(
             "retrieval state: hydrating Slack thread through the native bounded archive window: "
             f"{ref.channel_id}:{ref.thread_ts} "
@@ -3773,7 +3866,9 @@ def cmd_get(args: argparse.Namespace) -> int:
                 f"requested window is not fully cached for {ref.channel_id}. run "
                 f"'gotta slack sync {ref.channel_id} --lookback {window.lookback or args.pull_recent}'."
             )
-        envelope = load_envelope_from_archive(result, ref, window=window, coverage=coverage)
+        envelope = load_envelope_from_archive(
+            result, ref, window=window, coverage=coverage
+        )
     else:
         envelope = maybe_load_from_cache(ref, window=window)
 
@@ -3812,7 +3907,9 @@ def cmd_get(args: argparse.Namespace) -> int:
                     f"requested window is not fully cached for {ref.channel_id}. run "
                     f"'gotta slack sync {ref.channel_id} --lookback {window.lookback or DEFAULT_RECENT_LOOKBACK}'."
                 )
-            envelope = load_envelope_from_archive(result, ref, window=window, coverage=coverage)
+            envelope = load_envelope_from_archive(
+                result, ref, window=window, coverage=coverage
+            )
 
     envelope["retrieval"] = envelope_retrieval(envelope)
     envelope["fidelity"] = envelope_fidelity(envelope)
@@ -3863,7 +3960,9 @@ def capture(argv: list[str], _options: object) -> Capture:
                 "doc_id": ref.doc_id or "",
                 "url": str(meta.get("url") or ref.url or ""),
                 "content_type": str(meta.get("contentType") or ""),
-                "retrieval": str(meta.get("retrieval") or "live_auth_files_info_download"),
+                "retrieval": str(
+                    meta.get("retrieval") or "live_auth_files_info_download"
+                ),
             },
         )
     captured_args = argparse.Namespace(**vars(args))
@@ -3885,8 +3984,12 @@ def capture(argv: list[str], _options: object) -> Capture:
         type="application/json",
         meta={
             "projector": "slack",
-            "source_created_at": str(envelope.get("firstTsIso") or envelope.get("firstTs") or ""),
-            "source_updated_at": str(envelope.get("lastTsIso") or envelope.get("lastTs") or ""),
+            "source_created_at": str(
+                envelope.get("firstTsIso") or envelope.get("firstTs") or ""
+            ),
+            "source_updated_at": str(
+                envelope.get("lastTsIso") or envelope.get("lastTs") or ""
+            ),
         },
     )
 
@@ -3956,7 +4059,9 @@ def cmd_search(args: argparse.Namespace) -> int:
                     "use `--source archive` for explicit bounded archive search"
                 )
         elif args.refresh and not args.pull_recent:
-            raise ToolError("`gotta slack search --refresh` requires `--pull-recent LOOKBACK`")
+            raise ToolError(
+                "`gotta slack search --refresh` requires `--pull-recent LOOKBACK`"
+            )
         elif args.pull_recent:
             channel_result = run_sync_archive(
                 channel_ref, lookback=args.pull_recent, refresh=args.refresh
@@ -4046,7 +4151,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     slackdump_path = shutil.which("slackdump") or ""
     known = known_workspaces() if slackdump_path else []
     selected_workspace = args.workspace.strip() or default_workspace()
-    workspace = resolve_workspace(args.workspace) if slackdump_path else selected_workspace
+    workspace = (
+        resolve_workspace(args.workspace) if slackdump_path else selected_workspace
+    )
     archive = workspace_archive_result(workspace) if workspace else None
     directory_path = directory_db_path(workspace) if workspace else None
     slackdump_auth_configured = workspace in known if workspace else False
@@ -4106,8 +4213,12 @@ def cmd_status(args: argparse.Namespace) -> int:
         conn = open_readonly_db(archive.db_path)
         try:
             payload["archiveCounts"] = {
-                "messages": int(conn.execute("SELECT COUNT(*) FROM message").fetchone()[0]),
-                "channels": int(conn.execute("SELECT COUNT(*) FROM channel").fetchone()[0]),
+                "messages": int(
+                    conn.execute("SELECT COUNT(*) FROM message").fetchone()[0]
+                ),
+                "channels": int(
+                    conn.execute("SELECT COUNT(*) FROM channel").fetchone()[0]
+                ),
             }
         except sqlite3.Error as exc:
             payload["archiveError"] = str(exc)
@@ -4175,7 +4286,10 @@ def cmd_sql(args: argparse.Namespace) -> int:
         sys.stdout.write("\t".join(columns) + "\n")
         for row in rows:
             sys.stdout.write(
-                "\t".join("" if row[column] is None else str(row[column]) for column in columns)
+                "\t".join(
+                    "" if row[column] is None else str(row[column])
+                    for column in columns
+                )
                 + "\n"
             )
     return 0
@@ -4334,13 +4448,18 @@ def cmd_list_channels(args: argparse.Namespace) -> int:
         channel_id = str(item.get("id") or "")
         name = str(item.get("name") or channel_id)
         kind = str(row["type"] or channel_type(item, channel_id))
-        summary = str(
-            (
-                (item.get("purpose") or {}).get("value")
-                or (item.get("topic") or {}).get("value")
-                or ""
+        summary = (
+            str(
+                (
+                    (item.get("purpose") or {}).get("value")
+                    or (item.get("topic") or {}).get("value")
+                    or ""
+                )
             )
-        ).replace("\t", " ").replace("\n", " ").strip()
+            .replace("\t", " ")
+            .replace("\n", " ")
+            .strip()
+        )
         sys.stdout.write(
             "\t".join(
                 [
@@ -4483,7 +4602,9 @@ def build_parser() -> argparse.ArgumentParser:
         "sync",
         help="reuse or enrich the durable workspace SQLite archive for one channel",
     )
-    p.add_argument("target", help="Slack channel URL, channel ID, or thread URL/notation")
+    p.add_argument(
+        "target", help="Slack channel URL, channel ID, or thread URL/notation"
+    )
     p.add_argument("--workspace", default=default_workspace())
     p.add_argument(
         "--lookback",
@@ -4599,7 +4720,9 @@ def build_parser() -> argparse.ArgumentParser:
         "sql",
         help="run one raw read-only SQL statement against the shared workspace archive",
     )
-    p.add_argument("query", help="single SQLite statement to execute against slackdump.sqlite")
+    p.add_argument(
+        "query", help="single SQLite statement to execute against slackdump.sqlite"
+    )
     p.add_argument("--workspace", default=default_workspace())
     p.add_argument("--database", choices=["archive", "directory"], default="archive")
     p.add_argument("--output", choices=["json", "tsv"], default="json")
@@ -4621,7 +4744,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--workspace", default=default_workspace())
     p.add_argument("--query", help="match channel name, ID, topic, or purpose text")
-    p.add_argument("--channel-types", help="filter cached channel rows by comma-separated types")
+    p.add_argument(
+        "--channel-types", help="filter cached channel rows by comma-separated types"
+    )
     p.add_argument("--private", choices=["any", "only", "exclude"], default="any")
     p.add_argument("--shared", choices=["any", "only", "exclude"], default="any")
     p.add_argument("--ext-shared", choices=["any", "only", "exclude"], default="any")

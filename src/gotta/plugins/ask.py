@@ -49,7 +49,9 @@ def print_usage() -> int:
 
 
 def should_materialize(argv: list[str]) -> bool:
-    if not argv or any(arg in {"-h", "--help", "--help-all", "help-all"} for arg in argv):
+    if not argv or any(
+        arg in {"-h", "--help", "--help-all", "help-all"} for arg in argv
+    ):
         return False
     spec = ask_spec(argv[0])
     if spec and spec.should_materialize is not None:

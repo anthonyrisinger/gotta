@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
+import stat
 
 from gotta import content
 from gotta import topology
@@ -13,8 +15,8 @@ def make_dirs(root: Path) -> content.ResolvedDirs:
         session_dir=root,
         content_dir=root / "content",
     )
-    dirs.session_dir.mkdir(parents=True, exist_ok=True)
-    dirs.content_dir.mkdir(parents=True, exist_ok=True)
+    content.ensure_private_dir(dirs.session_dir)
+    content.ensure_private_dir(dirs.content_dir)
     return dirs
 
 
@@ -24,7 +26,9 @@ def initialize_session(root: Path) -> content.ResolvedDirs:
     return dirs
 
 
-def test_materialize_bytes_creates_content_directory_and_manifest(tmp_path: Path) -> None:
+def test_materialize_bytes_creates_content_directory_and_manifest(
+    tmp_path: Path,
+) -> None:
     dirs = make_dirs(tmp_path / "ws")
 
     result = content.materialize_bytes(
@@ -53,9 +57,9 @@ def test_materialize_bytes_creates_content_directory_and_manifest(tmp_path: Path
     assert meta["original_name"] == "demo.md"
     assert meta["fetched_at"] == "2026-03-11T00:00:00.000001Z"
 
-    manifest_lines = (dirs.content_dir / "manifest.jsonl").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    manifest_lines = (
+        (dirs.content_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+    )
     assert len(manifest_lines) == 1
     manifest = json.loads(manifest_lines[0])
     assert manifest["plugin"] == "read"
@@ -64,6 +68,89 @@ def test_materialize_bytes_creates_content_directory_and_manifest(tmp_path: Path
     assert manifest["preferred_name"] == "demo.md"
     assert Path(manifest["fetch_link"]).name == result.fetch_link.name
     assert Path(manifest["canonical_path"]).name == "data"
+
+
+def test_materialize_bytes_records_projection_degradation_in_lead_cache(
+    tmp_path: Path,
+) -> None:
+    dirs = make_dirs(tmp_path / "ws")
+
+    result = content.materialize_bytes(
+        b"<p>Depends on ABC-2.</p>",
+        dirs=dirs,
+        preferred_name="demo.html",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "content_type": "text/html",
+            "projector": "missing.projector",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    payload = json.loads(
+        (result.content_dir / "leads.json").read_text(encoding="utf-8")
+    )
+
+    assert payload["degradations"] == [
+        "stored projector `missing.projector` is unavailable; using canonical projection"
+    ]
+    assert {entry["canonical_locator"] for entry in payload["entries"]} == {
+        "jira:ABC-2"
+    }
+
+
+def test_private_state_and_content_paths_use_private_modes(tmp_path: Path) -> None:
+    if os.name == "nt":
+        return
+
+    dirs = initialize_session(tmp_path / "ws")
+    content.append_activity_event(
+        dirs.session_dir,
+        {
+            "plugin": "logs",
+            "surface": "logs",
+            "action": "append",
+            "locator": "logs:session",
+            "preferred_name": "logs:session",
+            "follow_command": "gotta logs",
+            "detail": "appended",
+            "time_field": "session_recorded_at",
+        },
+    )
+    result = content.materialize_bytes(
+        b"hello world",
+        dirs=dirs,
+        preferred_name="demo.md",
+        metadata={"tool": "gotta", "plugin": "read", "locator": "demo"},
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    file_paths = (
+        content.state_env_path(dirs.session_dir),
+        content.activity_log_path(dirs.session_dir),
+        dirs.content_dir / "manifest.jsonl",
+        result.data_path,
+        result.meta_path,
+        result.content_dir / "leads.json",
+    )
+    dir_paths = (
+        content.state_dir_path(dirs.session_dir),
+        result.content_dir,
+        result.names_dir,
+        result.logs_dir,
+    )
+
+    assert all(
+        stat.S_IMODE(path.stat().st_mode) == content.PRIVATE_FILE_MODE
+        for path in file_paths
+    )
+    assert all(
+        stat.S_IMODE(path.stat().st_mode) == content.PRIVATE_DIR_MODE
+        for path in dir_paths
+    )
 
 
 def test_scan_content_store_reads_directory_layout(tmp_path: Path) -> None:
@@ -83,7 +170,9 @@ def test_scan_content_store_reads_directory_layout(tmp_path: Path) -> None:
     assert snapshot.digest == result.digest
     assert snapshot.content_dir == result.content_dir
     assert snapshot.names == ["demo.md"]
-    assert [event.timestamp for event in snapshot.events] == ["2026-03-11T00:00:00.000001Z"]
+    assert [event.timestamp for event in snapshot.events] == [
+        "2026-03-11T00:00:00.000001Z"
+    ]
 
 
 def test_scan_content_store_handles_missing_names_directory(tmp_path: Path) -> None:

@@ -95,6 +95,7 @@ wheel="dist/gotta-${version}-py3-none-any.whl"
 uv lock --check
 uv run pytest -q
 uv run ruff check src tests
+uv run ruff format --check src tests
 uv run python -m vulture src tests --min-confidence 80
 uv build --python 3.10 --clear
 uvx twine check "$sdist" "$wheel"

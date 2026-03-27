@@ -70,7 +70,9 @@ def load_slack_config_env() -> dict[str, str]:
 
 def default_workspace() -> str:
     config_env = load_slack_config_env()
-    return env_or_config(config_env, SLACK_WORKSPACE_ENV, default=DEFAULT_WORKSPACE).strip()
+    return env_or_config(
+        config_env, SLACK_WORKSPACE_ENV, default=DEFAULT_WORKSPACE
+    ).strip()
 
 
 def known_workspaces() -> list[str]:
@@ -78,7 +80,9 @@ def known_workspaces() -> list[str]:
         return []
     proc = _run_command(["slackdump", "workspace", "list"], check=False)
     output = (proc.stdout or "") + (proc.stderr or "")
-    workspaces = [match.group("workspace") for match in WORKSPACE_LIST_RE.finditer(output)]
+    workspaces = [
+        match.group("workspace") for match in WORKSPACE_LIST_RE.finditer(output)
+    ]
     return sorted(dict.fromkeys(workspaces))
 
 
@@ -310,7 +314,9 @@ def slack_api_post(
                 + ". Retry later or use `gotta slack search --source archive ...`."
             ) from exc
         body = exc.read().decode("utf-8", errors="replace")
-        raise SlackError(f"Slack live search failed with HTTP {exc.code}: {body}") from exc
+        raise SlackError(
+            f"Slack live search failed with HTTP {exc.code}: {body}"
+        ) from exc
     except urllib.error.URLError as exc:
         raise SlackError(f"Slack live search failed: {exc.reason}") from exc
     if not isinstance(payload, dict):
@@ -376,13 +382,17 @@ def slack_web_get(
                 + ". Retry later."
             ) from exc
         body = exc.read().decode("utf-8", errors="replace")
-        raise SlackError(f"Slack doc fetch failed with HTTP {exc.code}: {body}") from exc
+        raise SlackError(
+            f"Slack doc fetch failed with HTTP {exc.code}: {body}"
+        ) from exc
     except urllib.error.URLError as exc:
         raise SlackError(f"Slack doc fetch failed: {exc.reason}") from exc
 
 
 def slack_auth_test(workspace: str, auth_state: dict[str, Any]) -> dict[str, Any]:
-    return slack_api_post(workspace, auth_state, "auth.test", data={}, timeout_seconds=10)
+    return slack_api_post(
+        workspace, auth_state, "auth.test", data={}, timeout_seconds=10
+    )
 
 
 def _workspace_exists(workspace: str) -> bool:

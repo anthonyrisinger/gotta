@@ -11,13 +11,15 @@ def test_ask_dispatches_to_registered_surface(monkeypatch) -> None:
     monkeypatch.setattr(
         ask,
         "ask_spec",
-        lambda name: PluginSpec(
-            name="docs",
-            description="demo",
-            runner=lambda argv: seen.append(argv) or 0,
-        )
-        if name == "docs"
-        else None,
+        lambda name: (
+            PluginSpec(
+                name="docs",
+                description="demo",
+                runner=lambda argv: seen.append(argv) or 0,
+            )
+            if name == "docs"
+            else None
+        ),
     )
 
     assert ask.main(["docs", "status", "query"]) == 0

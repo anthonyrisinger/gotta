@@ -7,7 +7,9 @@ from gotta.plugins import github
 
 
 def test_parse_args_supports_status_subcommand() -> None:
-    assert github.parse_args(["status"]) == github.ParsedArgs(command="status", output="summary")
+    assert github.parse_args(["status"]) == github.ParsedArgs(
+        command="status", output="summary"
+    )
     assert github.parse_args(["status", "--output", "summary"]) == github.ParsedArgs(
         command="status",
         output="summary",
@@ -55,12 +57,21 @@ def test_github_capture_canonicalizes_volatile_download_tokens() -> None:
 
     canonical = github._canonicalize_capture_value(payload)
 
-    assert canonical["download_url"] == "https://raw.githubusercontent.com/acme/widgets/main/README.md"
-    assert canonical["html_url"] == "https://github.com/acme/widgets/blob/main/README.md"
-    assert canonical["nested"] == ["https://raw.githubusercontent.com/acme/widgets/main/app.py"]
+    assert (
+        canonical["download_url"]
+        == "https://raw.githubusercontent.com/acme/widgets/main/README.md"
+    )
+    assert (
+        canonical["html_url"] == "https://github.com/acme/widgets/blob/main/README.md"
+    )
+    assert canonical["nested"] == [
+        "https://raw.githubusercontent.com/acme/widgets/main/app.py"
+    ]
 
 
-def test_github_repo_capture_canonicalizes_directory_entries_before_storage(monkeypatch) -> None:
+def test_github_repo_capture_canonicalizes_directory_entries_before_storage(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: object())
     monkeypatch.setattr(github, "ensure_gh_auth", lambda _gh: None)
     monkeypatch.setattr(
@@ -121,7 +132,17 @@ def test_parse_args_supports_search_surface() -> None:
         global_search=True,
     )
     assert github.parse_args(
-        ["search", "--type", "pr", "--repo", "acme/widgets", "--limit", "5", "ABC", "proxy"]
+        [
+            "search",
+            "--type",
+            "pr",
+            "--repo",
+            "acme/widgets",
+            "--limit",
+            "5",
+            "ABC",
+            "proxy",
+        ]
     ) == github.ParsedArgs(
         command="search",
         output="markdown",
@@ -177,9 +198,18 @@ def test_github_search_canonical_locator_and_preferred_name() -> None:
 
     argv = ["search", "--type", "pr", "--repo", "acme/widgets", "ABC", "proxy"]
 
-    assert github.canonical_locator(argv) == "github:search --type pr --repo acme/widgets ABC proxy"
-    assert github.preferred_name(argv, options) == "github-search-prs-acme-widgets-abc-proxy.json"
-    assert github.canonical_locator(["search", "--global", "ABC"]) == "github:search --global ABC"
+    assert (
+        github.canonical_locator(argv)
+        == "github:search --type pr --repo acme/widgets ABC proxy"
+    )
+    assert (
+        github.preferred_name(argv, options)
+        == "github-search-prs-acme-widgets-abc-proxy.json"
+    )
+    assert (
+        github.canonical_locator(["search", "--global", "ABC"])
+        == "github:search --global ABC"
+    )
     assert (
         github.preferred_name(["search", "--global", "ABC"], options)
         == "github-search-repos-global-abc.json"
@@ -256,7 +286,9 @@ def test_route_target_accepts_clean_supported_github_urls() -> None:
     job_url = "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
     assert github.route_target(run_url) == [run_url]
     assert github.route_target(job_url) == [job_url]
-    assert github.route_target("github:github.com/acme/widgets/actions/runs/123456789") == [run_url]
+    assert github.route_target(
+        "github:github.com/acme/widgets/actions/runs/123456789"
+    ) == [run_url]
 
 
 def test_route_target_strips_fragments_from_supported_tree_urls() -> None:
@@ -269,7 +301,10 @@ def test_route_target_rejects_whitespace_contaminated_github_urls() -> None:
     url = "https://github.com/acme/widgets/commits/main"
 
     assert github.route_target(f"{url} --limit 20") is None
-    assert github.route_target("github:github.com/acme/widgets/commits/main --limit 20") is None
+    assert (
+        github.route_target("github:github.com/acme/widgets/commits/main --limit 20")
+        is None
+    )
 
 
 def test_main_supports_commit_urls(monkeypatch, capsys) -> None:
@@ -377,7 +412,12 @@ def test_main_supports_workflow_job_urls(monkeypatch, capsys) -> None:
         },
     )
 
-    assert github.main(["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"]) == 0
+    assert (
+        github.main(
+            ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"]
+        )
+        == 0
+    )
     output = capsys.readouterr().out
     assert "# acme/widgets workflow job 987654321: Generic Job" in output
     assert "## Steps" in output
@@ -456,7 +496,9 @@ def test_main_supports_commit_history_urls(monkeypatch, capsys) -> None:
     assert "Add continuity model" in output
 
 
-def test_main_supports_commit_history_limit_for_url_renders(monkeypatch, capsys) -> None:
+def test_main_supports_commit_history_limit_for_url_renders(
+    monkeypatch, capsys
+) -> None:
     seen: list[list[str]] = []
 
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
@@ -477,7 +519,10 @@ def test_main_supports_commit_history_limit_for_url_renders(monkeypatch, capsys)
 
     monkeypatch.setattr(github, "gh_json_value", fake_gh_json_value)
 
-    assert github.main(["https://github.com/acme/widgets/commits/HEAD", "--limit", "50"]) == 0
+    assert (
+        github.main(["https://github.com/acme/widgets/commits/HEAD", "--limit", "50"])
+        == 0
+    )
     assert "&per_page=50" in seen[0][1]
     output = capsys.readouterr().out
     assert "# acme/widgets commit history for `HEAD`" in output
@@ -487,7 +532,9 @@ def test_main_rejects_limit_for_non_list_url_shapes(monkeypatch, capsys) -> None
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
 
-    assert github.main(["https://github.com/acme/widgets/issues/19", "--limit", "10"]) == 2
+    assert (
+        github.main(["https://github.com/acme/widgets/issues/19", "--limit", "10"]) == 2
+    )
     err = capsys.readouterr().err
     assert "`--limit` is only supported for GitHub commit-history URLs" in err
     assert "/commits/HEAD" in err
@@ -553,20 +600,27 @@ def test_main_supports_path_scoped_commit_history_urls(monkeypatch, capsys) -> N
     assert "- **URL:** https://github.com/acme/widgets/commits/main/docs/adr" in output
 
 
-def test_main_commit_history_invalid_ref_suggests_default_branch(monkeypatch, capsys) -> None:
+def test_main_commit_history_invalid_ref_suggests_default_branch(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
     monkeypatch.setattr(
         github,
         "gh_json_value",
-        lambda gh, args: (_ for _ in ()).throw(RuntimeError("gh: Not Found (HTTP 404)")),
+        lambda gh, args: (_ for _ in ()).throw(
+            RuntimeError("gh: Not Found (HTTP 404)")
+        ),
     )
     monkeypatch.setattr(github, "default_branch_name", lambda gh, owner, repo: "trunk")
 
     assert github.main(["https://github.com/acme/widgets/commits/main"]) == 1
     err = capsys.readouterr().err
     assert "commit-history ref `main` was not found" in err
-    assert "Specific `/commits/<ref>` URLs require a real branch, tag, or commit-ish." in err
+    assert (
+        "Specific `/commits/<ref>` URLs require a real branch, tag, or commit-ish."
+        in err
+    )
     assert "https://github.com/acme/widgets/commits" in err
     assert "https://github.com/acme/widgets/commits/HEAD" in err
     assert "https://github.com/acme/widgets/commits/trunk" in err
@@ -575,7 +629,9 @@ def test_main_commit_history_invalid_ref_suggests_default_branch(monkeypatch, ca
 def test_main_supports_repo_search(monkeypatch, capsys) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
-    monkeypatch.setattr(github, "_accessible_owner_targets", lambda gh: [("org", "acme")])
+    monkeypatch.setattr(
+        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+    )
 
     def fake_gh_json_object(gh, args):
         assert "search/repositories" in args[1]
@@ -598,24 +654,32 @@ def test_main_supports_repo_search(monkeypatch, capsys) -> None:
                     }
                 ],
             }
-        raise AssertionError("default owned-scope search should not hit the global corpus")
+        raise AssertionError(
+            "default owned-scope search should not hit the global corpus"
+        )
 
     monkeypatch.setattr(github, "gh_json_object", fake_gh_json_object)
 
     assert github.main(["search", "relay"]) == 0
     output = capsys.readouterr().out
     assert "### GitHub Search: relay" in output
-    assert "- _Search scope_: owned repositories and visible organizations only" in output
+    assert (
+        "- _Search scope_: owned repositories and visible organizations only" in output
+    )
     assert "- Created:" in output
     assert "- Updated: 2026-03-11T09:30:00Z" in output
     assert "[acme/relay-core](https://github.com/acme/relay-core)" in output
     assert "[public/noise]" not in output
 
 
-def test_main_supports_global_repo_search_excluding_owned_results(monkeypatch, capsys) -> None:
+def test_main_supports_global_repo_search_excluding_owned_results(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
-    monkeypatch.setattr(github, "_accessible_owner_targets", lambda gh: [("org", "acme")])
+    monkeypatch.setattr(
+        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+    )
 
     def fake_gh_json_object(gh, args):
         assert "search/repositories" in args[1]
@@ -674,7 +738,9 @@ def test_main_supports_pull_request_search(monkeypatch, capsys) -> None:
                     "created_at": "2026-03-01T10:00:00Z",
                     "updated_at": "2026-03-12T09:15:00Z",
                     "body": "This replaces ABC.",
-                    "pull_request": {"url": "https://api.github.com/repos/acme/widgets/pulls/27"},
+                    "pull_request": {
+                        "url": "https://api.github.com/repos/acme/widgets/pulls/27"
+                    },
                     "labels": [{"name": "continuity"}],
                 }
             ],
@@ -686,7 +752,10 @@ def test_main_supports_pull_request_search(monkeypatch, capsys) -> None:
     assert "### GitHub Search: ABC" in output
     assert "- _Repo Scope_: `acme/widgets`" in output
     assert "- Created: 2026-03-01T10:00:00Z" in output
-    assert "[acme/widgets pr #27: Replace ABC gateway](https://github.com/acme/widgets/pull/27)" in output
+    assert (
+        "[acme/widgets pr #27: Replace ABC gateway](https://github.com/acme/widgets/pull/27)"
+        in output
+    )
 
 
 def test_main_supports_code_search(monkeypatch, capsys) -> None:
@@ -740,12 +809,17 @@ def test_main_supports_code_search(monkeypatch, capsys) -> None:
     output = capsys.readouterr().out
     assert "- _Type_: `code`" in output
     assert "- _Filename_: `package.json`" in output
-    assert "[acme/widgets:package.json](https://github.com/acme/widgets/blob/abcdef123456/package.json)" in output
+    assert (
+        "[acme/widgets:package.json](https://github.com/acme/widgets/blob/abcdef123456/package.json)"
+        in output
+    )
     assert '"lint": "npm run lint"' in output
 
 
 def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
-    monkeypatch.setattr(github, "_accessible_owner_targets", lambda gh: [("org", "acme")])
+    monkeypatch.setattr(
+        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+    )
 
     def fake_gh_json_object(gh, args):
         if "org:acme" in args[1]:
@@ -761,7 +835,9 @@ def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
                     }
                 ],
             }
-        raise AssertionError("default owned-scope search should not hit the global corpus")
+        raise AssertionError(
+            "default owned-scope search should not hit the global corpus"
+        )
 
     monkeypatch.setattr(github, "gh_json_object", fake_gh_json_object)
 
@@ -782,7 +858,9 @@ def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
 
 
 def test_search_payload_global_excludes_owned_hits(monkeypatch) -> None:
-    monkeypatch.setattr(github, "_accessible_owner_targets", lambda gh: [("org", "acme")])
+    monkeypatch.setattr(
+        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+    )
     monkeypatch.setattr(
         github,
         "gh_json_object",
@@ -839,7 +917,10 @@ def test_main_falls_back_to_directory_readme_for_readme_blob(monkeypatch) -> Non
     monkeypatch.setattr(
         github,
         "load_directory_readme",
-        lambda gh, *, owner, repo, ref, path="", entries=None: ("docs/README.md", b"# Docs\n"),
+        lambda gh, *, owner, repo, ref, path="", entries=None: (
+            "docs/README.md",
+            b"# Docs\n",
+        ),
     )
     monkeypatch.setattr(
         github,
@@ -849,7 +930,11 @@ def test_main_falls_back_to_directory_readme_for_readme_blob(monkeypatch) -> Non
 
     assert (
         github.main(
-            ["--output", "markdown", "https://github.com/acme/widgets/blob/main/README.md"]
+            [
+                "--output",
+                "markdown",
+                "https://github.com/acme/widgets/blob/main/README.md",
+            ]
         )
         == 0
     )
@@ -857,7 +942,9 @@ def test_main_falls_back_to_directory_readme_for_readme_blob(monkeypatch) -> Non
     assert seen["data"] == b"# Docs\n"
 
 
-def test_main_repo_markdown_falls_back_to_directory_listing(monkeypatch, capsys) -> None:
+def test_main_repo_markdown_falls_back_to_directory_listing(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
     monkeypatch.setattr(
@@ -888,7 +975,10 @@ def test_main_repo_markdown_falls_back_to_directory_listing(monkeypatch, capsys)
     assert "# widgets" in output
     assert "- Visibility: restricted (same_company, high)" in output
     assert "https://github.com/acme/widgets/tree/main" in output
-    assert "- **README:** [README.md](https://github.com/acme/widgets/blob/main/README.md)" in output
+    assert (
+        "- **README:** [README.md](https://github.com/acme/widgets/blob/main/README.md)"
+        in output
+    )
 
 
 def test_main_repo_markdown_uses_fragment_to_render_root_readme(monkeypatch) -> None:
@@ -937,7 +1027,9 @@ def test_main_repo_markdown_uses_fragment_to_render_root_readme(monkeypatch) -> 
     assert seen["data"] == b"# Root Docs\n"
 
 
-def test_main_tree_markdown_defaults_to_directory_listing_even_with_readme(monkeypatch, capsys) -> None:
+def test_main_tree_markdown_defaults_to_directory_listing_even_with_readme(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
     monkeypatch.setattr(
@@ -952,11 +1044,16 @@ def test_main_tree_markdown_defaults_to_directory_listing_even_with_readme(monke
     assert github.main(["https://github.com/acme/widgets/tree/main/docs"]) == 0
     output = capsys.readouterr().out
     assert "# acme/widgets:docs" in output
-    assert "- **README:** [README.md](https://github.com/acme/widgets/blob/main/docs/README.md)" in output
+    assert (
+        "- **README:** [README.md](https://github.com/acme/widgets/blob/main/docs/README.md)"
+        in output
+    )
     assert "QUICKSTART.md" in output
 
 
-def test_main_tree_markdown_uses_fragment_to_render_matching_document(monkeypatch) -> None:
+def test_main_tree_markdown_uses_fragment_to_render_matching_document(
+    monkeypatch,
+) -> None:
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
@@ -984,7 +1081,9 @@ def test_main_tree_markdown_uses_fragment_to_render_matching_document(monkeypatc
         lambda data, path: seen.update({"data": data, "path": path}),
     )
 
-    assert github.main(["https://github.com/acme/widgets/tree/main/docs#quickstart"]) == 0
+    assert (
+        github.main(["https://github.com/acme/widgets/tree/main/docs#quickstart"]) == 0
+    )
     assert seen["path"] == "docs/QUICKSTART.md"
     assert seen["data"] == b"# Quickstart\n\nUse it first.\n"
 

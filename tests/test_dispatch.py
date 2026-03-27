@@ -21,9 +21,15 @@ from gotta.plugins import session as session_plugin
 
 def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert not dispatch.should_materialize("read", ["--help"])
-    assert not dispatch.should_materialize("read", ["artifact:demo.md@abc123", "--head", "20"])
-    assert dispatch.should_materialize("read", ["https://github.com/acme/widgets", "--head", "3"])
-    assert dispatch.should_materialize("read", ["https://example.com/manual.txt", "--tail", "5"])
+    assert not dispatch.should_materialize(
+        "read", ["artifact:demo.md@abc123", "--head", "20"]
+    )
+    assert dispatch.should_materialize(
+        "read", ["https://github.com/acme/widgets", "--head", "3"]
+    )
+    assert dispatch.should_materialize(
+        "read", ["https://example.com/manual.txt", "--tail", "5"]
+    )
     assert not dispatch.should_materialize("session", [])
     assert not dispatch.should_materialize("session", ["show"])
     assert not dispatch.should_materialize("session", ["analyze"])
@@ -39,7 +45,9 @@ def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert dispatch.should_materialize("grafana", ["search", "--type", "dash-db"])
     assert dispatch.should_materialize("grafana", ["search", "abc"])
     assert dispatch.should_materialize("grafana", ["get", "dash-123"])
-    assert not dispatch.should_materialize("grafana", ["query", "--datasource", "prom-main", "sum(up)"])
+    assert not dispatch.should_materialize(
+        "grafana", ["query", "--datasource", "prom-main", "sum(up)"]
+    )
     assert dispatch.should_materialize("granola", ["search", "abc"])
     assert dispatch.should_materialize("granola", ["get", "note-123"])
     assert dispatch.should_materialize("gsheets", ["search", "abc"])
@@ -51,12 +59,23 @@ def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert dispatch.should_materialize("slack", ["search", "abc"])
     assert dispatch.should_materialize("slack", ["get", "C12345678:1773085070.240949"])
     monkeypatch.setenv(dispatch.SUPPRESS_MATERIALIZATION_ENV, "1")
-    assert not dispatch.should_materialize("github", ["https://github.com/acme/widgets"])
+    assert not dispatch.should_materialize(
+        "github", ["https://github.com/acme/widgets"]
+    )
 
 
 def test_split_common_options_strips_shared_actor_target() -> None:
     options, cleaned = dispatch.split_common_options(
-        ["search", "platform", "--session", "demo", "--actor", "claude", "--save-as", "x.md"],
+        [
+            "search",
+            "platform",
+            "--session",
+            "demo",
+            "--actor",
+            "claude",
+            "--save-as",
+            "x.md",
+        ],
         strip_actor=True,
     )
 
@@ -66,9 +85,13 @@ def test_split_common_options_strips_shared_actor_target() -> None:
     assert cleaned == ["search", "platform"]
 
 
-def test_emit_budgeted_output_truncates_interactive_text_with_footer(monkeypatch, capsys) -> None:
+def test_emit_budgeted_output_truncates_interactive_text_with_footer(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
-    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode("utf-8")
+    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode(
+        "utf-8"
+    )
 
     emitted = dispatch.emit_budgeted_output(
         payload,
@@ -85,9 +108,13 @@ def test_emit_budgeted_output_truncates_interactive_text_with_footer(monkeypatch
     assert len(captured.out.encode("utf-8")) <= dispatch.OUTPUT_EMIT_BYTE_LIMIT
 
 
-def test_emit_budgeted_output_omits_overlong_follow_command_in_text_footer(monkeypatch, capsys) -> None:
+def test_emit_budgeted_output_omits_overlong_follow_command_in_text_footer(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
-    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode("utf-8")
+    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode(
+        "utf-8"
+    )
 
     dispatch.emit_budgeted_output(
         payload,
@@ -102,7 +129,9 @@ def test_emit_budgeted_output_omits_overlong_follow_command_in_text_footer(monke
     assert "rerun the same command with --full-output" in captured.out
 
 
-def test_emit_budgeted_output_emits_json_preview_envelope_for_interactive_json(capsys) -> None:
+def test_emit_budgeted_output_emits_json_preview_envelope_for_interactive_json(
+    capsys,
+) -> None:
     payload = {"items": [{"id": index, "text": "x" * 64} for index in range(500)]}
 
     emitted = dispatch.emit_budgeted_output(
@@ -119,7 +148,9 @@ def test_emit_budgeted_output_emits_json_preview_envelope_for_interactive_json(c
     assert rendered["followCommand"] == "gotta read artifact:demo@abc123"
 
 
-def test_emit_budgeted_output_keeps_json_preview_valid_with_long_follow_command(capsys) -> None:
+def test_emit_budgeted_output_keeps_json_preview_valid_with_long_follow_command(
+    capsys,
+) -> None:
     payload = {"items": [{"id": index, "text": "x" * 64} for index in range(500)]}
 
     emitted = dispatch.emit_budgeted_output(
@@ -157,7 +188,9 @@ def test_run_plugin_actor_launch_streams_live_without_buffered_capture(
         print("launch stderr", file=sys.stderr, flush=True)
         return 0
 
-    def fake_resolve_invocation(_plugin: str, _argv: list[str], _options: content.CommonOptions):
+    def fake_resolve_invocation(
+        _plugin: str, _argv: list[str], _options: content.CommonOptions
+    ):
         return SimpleNamespace(should_materialize=False, artifact_intent="none")
 
     def forbidden_capture(*_args, **_kwargs):
@@ -169,7 +202,12 @@ def test_run_plugin_actor_launch_streams_live_without_buffered_capture(
     monkeypatch.setattr(dispatch, "capture_stdout", forbidden_capture)
     monkeypatch.setattr(dispatch, "capture_stderr", forbidden_capture)
 
-    assert dispatch.run_plugin("actor", ["launch", "helper", "--session", str(tmp_path / "session")]) == 0
+    assert (
+        dispatch.run_plugin(
+            "actor", ["launch", "helper", "--session", str(tmp_path / "session")]
+        )
+        == 0
+    )
     captured = capsys.readouterr()
 
     assert "launch stdout" in captured.out
@@ -180,13 +218,20 @@ def test_session_access_mode_tracks_artifact_bearing_surfaces() -> None:
     assert dispatch.session_access_mode("jira", ["search", "platform"]) == "ambient"
     assert dispatch.session_access_mode("jira", ["status"]) == "none"
     assert dispatch.session_access_mode("confluence", ["get", "10101"]) == "ambient"
-    assert dispatch.session_access_mode("confluence", ["replace", "10101", "a", "b"]) == "none"
+    assert (
+        dispatch.session_access_mode("confluence", ["replace", "10101", "a", "b"])
+        == "none"
+    )
     assert dispatch.session_access_mode("read", ["README.md"]) == "ambient"
     assert dispatch.session_access_mode("search", ["jira:platform"]) == "ambient"
 
 
-def test_search_resolve_invocation_routes_provider_search_with_implicit_search() -> None:
-    resolved = invocation.resolve_invocation("search", ["jira:Architecture"], content.CommonOptions())
+def test_search_resolve_invocation_routes_provider_search_with_implicit_search() -> (
+    None
+):
+    resolved = invocation.resolve_invocation(
+        "search", ["jira:Architecture"], content.CommonOptions()
+    )
 
     assert resolved.entry_plugin == "search"
     assert resolved.resolved_plugin == "jira"
@@ -212,14 +257,23 @@ def test_search_resolve_invocation_accepts_explicit_search_alias() -> None:
 
 
 def test_search_resolve_invocation_disables_materialization_on_invalid_target() -> None:
-    resolved = invocation.resolve_invocation("search", ["jira:jql", "project = OPS"], content.CommonOptions())
+    resolved = invocation.resolve_invocation(
+        "search", ["jira:jql", "project = OPS"], content.CommonOptions()
+    )
 
     assert resolved.should_materialize is False
     assert resolved.artifact_intent == "none"
 
 
 @pytest.mark.parametrize(
-    ("argv", "expected_plugin", "expected_args", "expected_intent", "expected_kind", "expected_materialize"),
+    (
+        "argv",
+        "expected_plugin",
+        "expected_args",
+        "expected_intent",
+        "expected_kind",
+        "expected_materialize",
+    ),
     [
         (
             ["github:search platform"],
@@ -337,7 +391,14 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
     assert (
         dispatch.derive_preferred_name(
             "slack",
-            ["search", "--workspace", "example-workspace", "--source", "archive", "ABC"],
+            [
+                "search",
+                "--workspace",
+                "example-workspace",
+                "--source",
+                "archive",
+                "ABC",
+            ],
             options,
         )
         == "slack-search-example-workspace-abc.json"
@@ -398,7 +459,12 @@ def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
     assert (
         dispatch.derive_preferred_name(
             "gdocs",
-            ["get", "--output", "markdown", "https://docs.google.com/document/d/doc-123/edit"],
+            [
+                "get",
+                "--output",
+                "markdown",
+                "https://docs.google.com/document/d/doc-123/edit",
+            ],
             options,
         )
         == "doc-123.html"
@@ -443,7 +509,9 @@ def test_root_help_exposes_session_aware_read_storage_contract(
     )
 
 
-def test_require_operational_session_accepts_initialized_session(tmp_path: Path) -> None:
+def test_require_operational_session_accepts_initialized_session(
+    tmp_path: Path,
+) -> None:
     dirs = content.ResolvedDirs(
         session_dir=tmp_path,
         content_dir=tmp_path / "content",
@@ -454,7 +522,7 @@ def test_require_operational_session_accepts_initialized_session(tmp_path: Path)
 
 
 def test_require_operational_session_requires_initialized_session(
-    tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     dirs = content.ResolvedDirs(
         session_dir=tmp_path,
@@ -512,7 +580,12 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
     assert (
         dispatch.canonical_locator(
             "jira",
-            ["get", "--output", "markdown", "https://example.atlassian.net/browse/PROJ-3960"],
+            [
+                "get",
+                "--output",
+                "markdown",
+                "https://example.atlassian.net/browse/PROJ-3960",
+            ],
         )
         == "jira:PROJ-3960"
     )
@@ -631,7 +704,12 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
     assert (
         dispatch.canonical_locator(
             "gdocs",
-            ["get", "--output", "markdown", "https://docs.google.com/document/d/doc-123/edit"],
+            [
+                "get",
+                "--output",
+                "markdown",
+                "https://docs.google.com/document/d/doc-123/edit",
+            ],
         )
         == "gdocs:doc-123"
     )
@@ -659,11 +737,16 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
     assert (
         dispatch.canonical_locator(
             "read",
-            ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321#summary"],
+            [
+                "https://github.com/acme/widgets/actions/runs/123456789/job/987654321#summary"
+            ],
         )
         == "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
     )
-    assert dispatch.canonical_locator("jira", ["search", "Architecture"]) == "jira:search Architecture"
+    assert (
+        dispatch.canonical_locator("jira", ["search", "Architecture"])
+        == "jira:search Architecture"
+    )
     assert (
         dispatch.canonical_locator("jira", ["issue-types", "--project", "OPS"])
         == "jira:issue-types --project OPS"
@@ -725,7 +808,9 @@ def test_canonical_locator_normalizes_reordered_read_search_locators() -> None:
     assert "ABC reboot" in first
 
 
-def test_materialize_invocation_attributes_delegated_read_to_provider(tmp_path: Path) -> None:
+def test_materialize_invocation_attributes_delegated_read_to_provider(
+    tmp_path: Path,
+) -> None:
     dirs = content.ResolvedDirs(session_dir=tmp_path, content_dir=tmp_path / "content")
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
@@ -808,21 +893,27 @@ def test_plugin_discovery_is_group_scoped(monkeypatch) -> None:
     monkeypatch.setattr(
         plugin_api,
         "entry_points",
-        lambda group: [
-            EntryPoint(
-                "ask",
-                "gotta",
-                plugin_api.PluginSpec(name="ask", description="", runner=lambda argv: 0),
-            )
-        ]
-        if group == plugin_api.DEFAULT_PLUGIN_GROUP
-        else [
-            EntryPoint(
-                "docs",
-                "gotta-plugin-ask-docs",
-                plugin_api.PluginSpec(name="docs", description="", runner=lambda argv: 0),
-            )
-        ],
+        lambda group: (
+            [
+                EntryPoint(
+                    "ask",
+                    "gotta",
+                    plugin_api.PluginSpec(
+                        name="ask", description="", runner=lambda argv: 0
+                    ),
+                )
+            ]
+            if group == plugin_api.DEFAULT_PLUGIN_GROUP
+            else [
+                EntryPoint(
+                    "docs",
+                    "gotta-plugin-ask-docs",
+                    plugin_api.PluginSpec(
+                        name="docs", description="", runner=lambda argv: 0
+                    ),
+                )
+            ]
+        ),
     )
 
     plugin_api.clear_plugin_cache()
@@ -831,7 +922,9 @@ def test_plugin_discovery_is_group_scoped(monkeypatch) -> None:
         assert "ask" in plugins
         assert "logs" in plugins
         assert "todo" in plugins
-        assert plugin_api.available_plugins(group=plugin_api.ASK_PLUGIN_GROUP) == ["docs"]
+        assert plugin_api.available_plugins(group=plugin_api.ASK_PLUGIN_GROUP) == [
+            "docs"
+        ]
     finally:
         plugin_api.clear_plugin_cache()
 
@@ -876,7 +969,11 @@ def test_source_seeded_core_plugins_ignore_stale_core_metadata(monkeypatch) -> N
     monkeypatch.setattr(
         plugin_api,
         "entry_points",
-        lambda group: [EntryPoint("todo", "gotta", stale)] if group == plugin_api.DEFAULT_PLUGIN_GROUP else [],
+        lambda group: (
+            [EntryPoint("todo", "gotta", stale)]
+            if group == plugin_api.DEFAULT_PLUGIN_GROUP
+            else []
+        ),
     )
 
     plugin_api.clear_plugin_cache()
@@ -885,12 +982,17 @@ def test_source_seeded_core_plugins_ignore_stale_core_metadata(monkeypatch) -> N
             plugin_api.get_plugin("logs").description
             == "inspect and mutate the canonical session procedural trace"
         )
-        assert plugin_api.get_plugin("todo").description == "inspect and mutate the canonical session checklist"
+        assert (
+            plugin_api.get_plugin("todo").description
+            == "inspect and mutate the canonical session checklist"
+        )
     finally:
         plugin_api.clear_plugin_cache()
 
 
-def test_broken_external_ask_entry_points_do_not_break_help_all(monkeypatch, capsys) -> None:
+def test_broken_external_ask_entry_points_do_not_break_help_all(
+    monkeypatch, capsys
+) -> None:
     class Dist:
         def __init__(self, name: str) -> None:
             self.name = name
@@ -949,7 +1051,10 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
     assert "Session synthesis surfaces live under `gotta session`" in output
     assert "`manifest`, `timeline`, `graph`, `leads`, `analyze`, `scan`" in output
     assert "This top-level long help shows only plugin root surfaces." in output
-    assert "Use `gotta <plugin> --help-all` for recursive help within one plugin." in output
+    assert (
+        "Use `gotta <plugin> --help-all` for recursive help within one plugin."
+        in output
+    )
     assert "## gotta ask" in output
     assert "## gotta logs" in output
     assert "## gotta notes" in output
@@ -971,9 +1076,7 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
 
 
 @pytest.mark.parametrize("plugin", ["slack", "jira", "confluence", "gdocs"])
-def test_cli_plugin_help_all_works_from_top_level_dispatch(
-    plugin: str, capsys
-) -> None:
+def test_cli_plugin_help_all_works_from_top_level_dispatch(plugin: str, capsys) -> None:
     assert cli.main([plugin, "--help-all"]) == 0
 
     captured = capsys.readouterr()
@@ -994,7 +1097,9 @@ def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> No
 
     large_file = tmp_path / "large.txt"
     large_file.write_text(
-        "".join(f"line {index:06d} abcdefghijklmnopqrstuvwxyz\n" for index in range(200000)),
+        "".join(
+            f"line {index:06d} abcdefghijklmnopqrstuvwxyz\n" for index in range(200000)
+        ),
         encoding="utf-8",
     )
 
@@ -1049,8 +1154,12 @@ def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
     assert captured.err == ""
 
 
-def test_emit_budgeted_output_skips_default_budget_with_full_output_escape(capsys) -> None:
-    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode("utf-8")
+def test_emit_budgeted_output_skips_default_budget_with_full_output_escape(
+    capsys,
+) -> None:
+    payload = ("\n".join(f"line {index}" for index in range(400)) + "\n").encode(
+        "utf-8"
+    )
 
     emitted = dispatch.emit_budgeted_output(
         payload,
@@ -1134,8 +1243,12 @@ def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty
     assert "Traceback" not in captured.err
 
 
-def test_run_plugin_read_invalid_confluence_shortlink_returns_clean_error(capsys) -> None:
-    assert dispatch.run_plugin("read", ["https://example.atlassian.net/wiki/x/!!!!!"]) == 1
+def test_run_plugin_read_invalid_confluence_shortlink_returns_clean_error(
+    capsys,
+) -> None:
+    assert (
+        dispatch.run_plugin("read", ["https://example.atlassian.net/wiki/x/!!!!!"]) == 1
+    )
     captured = capsys.readouterr()
 
     assert captured.out == ""
@@ -1162,7 +1275,9 @@ def test_materialize_invocation_carries_slack_thread_source_timestamps(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["source_created_at"] == "2026-03-09T19:37:50.240949Z"
     assert metadata["source_updated_at"] == "2026-03-09T19:37:50.240949Z"
 
@@ -1191,7 +1306,9 @@ def test_materialize_invocation_carries_slack_channel_source_window(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["source_created_at"] == "2026-02-12T22:30:17.208289Z"
     assert metadata["source_updated_at"] == "2026-03-12T20:35:11.122509Z"
 
@@ -1208,7 +1325,12 @@ def test_materialize_invocation_extracts_slack_markdown_source_times(
 
     result = dispatch._materialize_invocation(
         "slack",
-        ["get", "https://example.slack.com/archives/C12345678/p1773085070240949", "--output", "markdown"],
+        [
+            "get",
+            "https://example.slack.com/archives/C12345678/p1773085070240949",
+            "--output",
+            "markdown",
+        ],
         content.CommonOptions(),
         (
             b"### Example thread\n\n"
@@ -1222,7 +1344,9 @@ def test_materialize_invocation_extracts_slack_markdown_source_times(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["source_created_at"] == "2026-03-09T19:37:50.240949Z"
     assert metadata["source_updated_at"] == "2026-03-09T20:01:11.000000Z"
 
@@ -1250,7 +1374,9 @@ def test_materialize_invocation_extracts_markdown_source_times(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["source_created_at"] == "2026-03-10T12:00:00Z"
     assert metadata["source_updated_at"] == "2026-03-11T09:30:00Z"
 
@@ -1279,7 +1405,9 @@ def test_materialize_invocation_extracts_json_source_times(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["source_created_at"] == "2026-02-01T10:00:00Z"
     assert metadata["source_updated_at"] == "2026-02-03T11:30:00Z"
 
@@ -1310,8 +1438,12 @@ def test_materialize_invocation_persists_visibility_metadata(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
-    manifest = json.loads((dirs.content_dir / "manifest.jsonl").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (dirs.content_dir / "manifest.jsonl").read_text(encoding="utf-8")
+    )
 
     assert metadata["visibility_level"] == "restricted"
     assert metadata["visibility_boundary"] == "same_company"
@@ -1341,7 +1473,12 @@ def test_materialize_invocation_extracts_visibility_from_markdown(
 
     result = dispatch._materialize_invocation(
         "slack",
-        ["get", "https://example.slack.com/archives/C12345678/p1773085070240949", "--output", "markdown"],
+        [
+            "get",
+            "https://example.slack.com/archives/C12345678/p1773085070240949",
+            "--output",
+            "markdown",
+        ],
         content.CommonOptions(),
         (
             b"### Slack Thread: Example\n\n"
@@ -1354,7 +1491,9 @@ def test_materialize_invocation_extracts_visibility_from_markdown(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["visibility_level"] == "internal"
     assert metadata["visibility_boundary"] == "same_company"
     assert metadata["visibility_confidence"] == "high"
@@ -1395,7 +1534,9 @@ def test_materialize_invocation_derives_nested_search_source_times_from_json(
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["source_created_at"] == "2026-01-01T10:00:00Z"
     assert metadata["source_updated_at"] == "2026-03-07T08:30:00Z"
 
@@ -1425,7 +1566,9 @@ def test_materialize_invocation_extracts_github_commit_history_markdown_source_r
     )
 
     assert result is not None
-    metadata = json.loads((dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (dirs.content_dir / result.digest / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["source_created_at"] == "2026-03-09T17:32:25Z"
     assert metadata["source_updated_at"] == "2026-03-11T02:14:24Z"
 
@@ -1452,7 +1595,9 @@ def test_materialize_invocation_captures_actor_actor_metadata(
     )
 
     assert result is not None
-    manifest = json.loads((dirs.content_dir / "manifest.jsonl").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (dirs.content_dir / "manifest.jsonl").read_text(encoding="utf-8")
+    )
     assert manifest["actor"] == "claude"
     assert manifest["actor_dir"].endswith("/actors/claude")
 
@@ -1513,12 +1658,26 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
     monkeypatch.setattr(
         read_plugin,
         "get_plugin",
-        lambda name: SimpleNamespace(capture=fake_capture, project=fake_project)
-        if name == "github"
-        else plugin_api.get_plugin(name),
+        lambda name: (
+            SimpleNamespace(capture=fake_capture, project=fake_project)
+            if name == "github"
+            else plugin_api.get_plugin(name)
+        ),
     )
 
-    assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--head", "3", "--session", str(local_root)]) == 0
+    assert (
+        dispatch.run_plugin(
+            "read",
+            [
+                "https://github.com/acme/widgets",
+                "--head",
+                "3",
+                "--session",
+                str(local_root),
+            ],
+        )
+        == 0
+    )
     captured = capsys.readouterr()
     assert captured.out == "# Title\n\nline 1\n"
 
@@ -1553,25 +1712,53 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
     monkeypatch.setattr(
         read_plugin,
         "get_plugin",
-        lambda name: SimpleNamespace(capture=fake_capture, project=fake_project)
-        if name == "github"
-        else plugin_api.get_plugin(name),
+        lambda name: (
+            SimpleNamespace(capture=fake_capture, project=fake_project)
+            if name == "github"
+            else plugin_api.get_plugin(name)
+        ),
     )
 
-    assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--head", "3", "--session", str(local_root)]) == 0
+    assert (
+        dispatch.run_plugin(
+            "read",
+            [
+                "https://github.com/acme/widgets",
+                "--head",
+                "3",
+                "--session",
+                str(local_root),
+            ],
+        )
+        == 0
+    )
     capsys.readouterr()
-    assert dispatch.run_plugin("read", ["https://github.com/acme/widgets", "--session", str(local_root)]) == 0
+    assert (
+        dispatch.run_plugin(
+            "read", ["https://github.com/acme/widgets", "--session", str(local_root)]
+        )
+        == 0
+    )
     capsys.readouterr()
 
     snapshots = content.scan_content_store(local_root / "content")
     assert len(snapshots) == 1
-    assert snapshots[0].metadata["canonical_locator"] == "https://github.com/acme/widgets"
+    assert (
+        snapshots[0].metadata["canonical_locator"] == "https://github.com/acme/widgets"
+    )
 
-    assert session_plugin.main(["manifest", "--session", str(local_root), "--output", "json"]) == 0
+    assert (
+        session_plugin.main(
+            ["manifest", "--session", str(local_root), "--output", "json"]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["entryCount"] == 1
     assert payload["fetchRecordCount"] == 2
-    assert payload["entries"][0]["canonical_locator"] == "https://github.com/acme/widgets"
+    assert (
+        payload["entries"][0]["canonical_locator"] == "https://github.com/acme/widgets"
+    )
     assert payload["entries"][0]["fetchCount"] == 2
 
 
@@ -1579,7 +1766,9 @@ def test_github_route_prefers_markdown_for_common_github_targets() -> None:
     route_target = plugin_api.get_plugin("github").route_target
     assert route_target is not None
 
-    assert route_target("https://github.com/acme/widgets") == ["https://github.com/acme/widgets"]
+    assert route_target("https://github.com/acme/widgets") == [
+        "https://github.com/acme/widgets"
+    ]
     assert route_target("https://github.com/acme/widgets#readme") == [
         "https://github.com/acme/widgets#readme"
     ]
@@ -1598,15 +1787,15 @@ def test_github_route_prefers_markdown_for_common_github_targets() -> None:
     assert route_target("https://github.com/acme/widgets/actions/runs/123456789") == [
         "https://github.com/acme/widgets/actions/runs/123456789"
     ]
-    assert route_target("https://github.com/acme/widgets/actions/runs/123456789/job/987654321") == [
+    assert route_target(
         "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
-    ]
+    ) == ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"]
     assert route_target("github:github.com/acme/widgets/blob/main/README.md") == [
         "https://github.com/acme/widgets/blob/main/README.md"
     ]
-    assert route_target("github:github.com/acme/widgets/actions/runs/123456789/job/987654321") == [
-        "https://github.com/acme/widgets/actions/runs/123456789/job/987654321"
-    ]
+    assert route_target(
+        "github:github.com/acme/widgets/actions/runs/123456789/job/987654321"
+    ) == ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"]
     assert route_target("github:search --type pr --repo acme/widgets ABC") == [
         "search",
         "--type",
@@ -1618,7 +1807,10 @@ def test_github_route_prefers_markdown_for_common_github_targets() -> None:
 
 
 def test_canonical_locator_routes_are_followable_through_read_contract() -> None:
-    assert plugin_api.get_plugin("jira").route_target("jira:PROJ-3960") == ["get", "PROJ-3960"]
+    assert plugin_api.get_plugin("jira").route_target("jira:PROJ-3960") == [
+        "get",
+        "PROJ-3960",
+    ]
     assert plugin_api.get_plugin("jira").route_target("jira:status") == ["status"]
     assert plugin_api.get_plugin("jira").route_target("jira:projects") == ["projects"]
     assert plugin_api.get_plugin("granola").route_target("granola:status") == ["status"]
@@ -1640,7 +1832,9 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "--limit",
         "5",
     ]
-    assert plugin_api.get_plugin("granola").route_target("granola:search Architecture") == [
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:search Architecture"
+    ) == [
         "search",
         "Architecture",
     ]
@@ -1661,7 +1855,9 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
     assert plugin_api.get_plugin("granola").route_target(
         "granola:11111111-1111-1111-1111-111111111111"
     ) == ["get", "11111111-1111-1111-1111-111111111111"]
-    assert plugin_api.get_plugin("granola").route_target("granola:get 'Weekly Review'") == [
+    assert plugin_api.get_plugin("granola").route_target(
+        "granola:get 'Weekly Review'"
+    ) == [
         "get",
         "Weekly Review",
     ]
@@ -1675,11 +1871,15 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "--offset",
         "25",
     ]
-    assert plugin_api.get_plugin("grafana").route_target("grafana:search Architecture") == [
+    assert plugin_api.get_plugin("grafana").route_target(
+        "grafana:search Architecture"
+    ) == [
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("grafana").route_target("grafana:get demo-dashboard-uid") == [
+    assert plugin_api.get_plugin("grafana").route_target(
+        "grafana:get demo-dashboard-uid"
+    ) == [
         "get",
         "demo-dashboard-uid",
     ]
@@ -1701,14 +1901,16 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "--project",
         "OPS",
     ]
-    assert plugin_api.get_plugin("jira").route_target("jira:issue-types --project OPS") == [
+    assert plugin_api.get_plugin("jira").route_target(
+        "jira:issue-types --project OPS"
+    ) == [
         "issue-types",
         "--project",
         "OPS",
     ]
-    assert plugin_api.get_plugin(
-        "jira"
-    ).route_target("jira:fields --project OPS --type 'Service Request'") == [
+    assert plugin_api.get_plugin("jira").route_target(
+        "jira:fields --project OPS --type 'Service Request'"
+    ) == [
         "fields",
         "--project",
         "OPS",
@@ -1718,17 +1920,20 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
 
 
 def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
-    assert plugin_api.get_plugin("granola").route_target(
-        "granola:search --after not-a-date latency"
-    ) is None
+    assert (
+        plugin_api.get_plugin("granola").route_target(
+            "granola:search --after not-a-date latency"
+        )
+        is None
+    )
     assert capsys.readouterr().err == ""
     assert plugin_api.get_plugin("jira").route_target("jira:transitions OPS-42") == [
         "transitions",
         "OPS-42",
     ]
-    assert plugin_api.get_plugin(
-        "jira"
-    ).route_target("jira:add-to-sprint OPS-42 --current --project OPS") == [
+    assert plugin_api.get_plugin("jira").route_target(
+        "jira:add-to-sprint OPS-42 --current --project OPS"
+    ) == [
         "add-to-sprint",
         "OPS-42",
         "--current",
@@ -1742,7 +1947,10 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
     assert plugin_api.get_plugin("confluence").route_target(
         "confluence:search Architecture"
     ) == ["search", "Architecture"]
-    assert plugin_api.get_plugin("gdocs").route_target("gdocs:doc-123") == ["get", "doc-123"]
+    assert plugin_api.get_plugin("gdocs").route_target("gdocs:doc-123") == [
+        "get",
+        "doc-123",
+    ]
     assert plugin_api.get_plugin("gdocs").route_target(
         "https://docs.google.com/document/d/doc-123/edit#heading=h.demo"
     ) == ["get", "https://docs.google.com/document/d/doc-123/edit"]
@@ -1750,9 +1958,9 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin(
-        "gsheets"
-    ).route_target("https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0") == [
+    assert plugin_api.get_plugin("gsheets").route_target(
+        "https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0"
+    ) == [
         "get",
         "https://docs.google.com/spreadsheets/d/sheet-123/edit",
     ]
@@ -1760,7 +1968,9 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
         "get",
         "sheet-123",
     ]
-    assert plugin_api.get_plugin("gsheets").route_target("gsheets:search Architecture") == [
+    assert plugin_api.get_plugin("gsheets").route_target(
+        "gsheets:search Architecture"
+    ) == [
         "search",
         "Architecture",
     ]
@@ -1778,8 +1988,13 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
         "https://example.slack.com/archives/C12345678/p1773085070240949"
         "?thread_ts=1773085070.240949",
     ]
-    assert plugin_api.get_plugin("gdrive").route_target("gdrive:file-123") == ["get", "file-123"]
-    assert plugin_api.get_plugin("gdrive").route_target("gdrive:search Architecture") == [
+    assert plugin_api.get_plugin("gdrive").route_target("gdrive:file-123") == [
+        "get",
+        "file-123",
+    ]
+    assert plugin_api.get_plugin("gdrive").route_target(
+        "gdrive:search Architecture"
+    ) == [
         "search",
         "Architecture",
     ]
@@ -1789,7 +2004,9 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
     assert plugin_api.get_plugin("slack").route_target(
         "https://example.slack.com/docs/T12345678/F12345678#fragment"
     ) == ["get", "https://example.slack.com/docs/T12345678/F12345678"]
-    assert plugin_api.get_plugin("slack").route_target("slack:doc:T12345678:F12345678") == [
+    assert plugin_api.get_plugin("slack").route_target(
+        "slack:doc:T12345678:F12345678"
+    ) == [
         "get",
         "slack:doc:T12345678:F12345678",
     ]

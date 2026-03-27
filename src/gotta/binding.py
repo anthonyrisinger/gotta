@@ -13,6 +13,7 @@ from gotta.content import (
     SESSION_ID_ENV,
     CommonOptions,
     current_context_binding,
+    ensure_private_dir,
     iso_utc,
     load_state_env_at_root,
     resolve_dirs,
@@ -21,6 +22,7 @@ from gotta.content import (
     session_id,
     session_token,
     session_surface_initialized,
+    write_text_atomic,
     write_session_state,
 )
 from gotta import session as session_plugin
@@ -39,7 +41,7 @@ def _ensure_link(path: Path, target: Path) -> None:
             path.unlink()
         else:
             raise SystemExit(f"refusing to replace existing directory: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     path.symlink_to(desired)
 
 
@@ -58,9 +60,7 @@ def _update_session_metadata(session_dir: Path, *, session_id: str, actor: str) 
     if not isinstance(members, list):
         members = []
     normalized_members = [
-        topology.normalize_identity(str(item))
-        for item in members
-        if str(item).strip()
+        topology.normalize_identity(str(item)) for item in members if str(item).strip()
     ]
     if actor not in normalized_members:
         normalized_members.append(actor)
@@ -81,9 +81,9 @@ def _update_session_metadata(session_dir: Path, *, session_id: str, actor: str) 
         },
     )
     payload["actors"] = actors
-    metadata_path.write_text(
+    write_text_atomic(
+        metadata_path,
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -102,8 +102,8 @@ def ensure_actor_session(
     )
     session_group_dir = session_plugin._group_session_root(resolved)
     content_dir = session_group_dir / "content"
-    session_group_dir.mkdir(parents=True, exist_ok=True)
-    content_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(session_group_dir)
+    ensure_private_dir(content_dir)
     dirs = resolve_dirs(
         CommonOptions(
             session_dir=str(resolved),

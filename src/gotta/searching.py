@@ -65,7 +65,9 @@ def _raw_tail(argv: list[str]) -> tuple[str, str, str]:
         raise SearchRouteError(
             "search target must start with <provider>:<query>; use `gotta search jira:Architecture`"
         )
-    raw_tail = " ".join(part.strip() for part in [tail, *argv[1:]] if str(part).strip()).strip()
+    raw_tail = " ".join(
+        part.strip() for part in [tail, *argv[1:]] if str(part).strip()
+    ).strip()
     if not raw_tail:
         raise SearchRouteError(
             "search target must include a query seed after the provider; use `gotta search jira:Architecture`"
@@ -154,7 +156,11 @@ def _canonical_read_redirect(provider: str, raw_tail: str) -> str:
 def resolve_search_route(argv: list[str]) -> SearchRoute:
     provider, raw_tail, target = _raw_tail(argv)
     spec = get_plugin(provider)
-    if spec is None or spec.route_target is None or provider in {"read", "session", "search"}:
+    if (
+        spec is None
+        or spec.route_target is None
+        or provider in {"read", "session", "search"}
+    ):
         raise SearchRouteError(
             f"unknown search provider `{provider}`; use one of the routed provider plugins"
         )
@@ -174,7 +180,9 @@ def resolve_search_route(argv: list[str]) -> SearchRoute:
         raise SearchRouteError(
             f"read-like provider targets belong on `gotta read`; use `{suggestion}`"
         )
-    candidate = f"{provider}:{raw_tail}" if explicit_alias else f"{provider}:search {raw_tail}"
+    candidate = (
+        f"{provider}:{raw_tail}" if explicit_alias else f"{provider}:search {raw_tail}"
+    )
     routed = discover_plugin_route(candidate)
     if routed is None:
         raise SearchRouteError(

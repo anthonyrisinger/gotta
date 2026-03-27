@@ -18,12 +18,26 @@ Run the full local gate:
 ```bash
 uv run pytest -q
 uv run ruff check src tests
+uv run ruff format --check src tests
 uv run python -m vulture src tests --min-confidence 80
 uv run python -m radon cc src tests -s
 uv run lizard src tests
 uv build --python 3.10 --clear
 uvx twine check dist/*
 ```
+
+For regular study and maintenance work, use the repo wrapper:
+
+```bash
+./scripts/study
+./scripts/study --deep
+./scripts/study --types
+```
+
+`./scripts/study` runs the blocking gate, pressure tools, and local study
+binaries such as `cloc`, `ctags`, and `ast-grep` when they are installed.
+`--deep` adds `import-linter` and `semgrep`. `--types` adds a
+source-only `pyright` pass as a pressure map.
 
 If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts through the canonical release wrapper:
@@ -45,6 +59,9 @@ waits for public propagation. It reads the PyPI token from `~/.pypirc` under
   extending behavior.
 - Preserve the canonical split between rewrite-on-purpose files and append-only
   canonical state.
+- Avoid adding new core-to-plugin import edges. Keep stored rendering and lead
+  extraction in core or neutral projection layers rather than routing through
+  presentation plugins.
 - Record operator-visible seams in `oops`; do not hide workflow friction in
   tribal knowledge.
 - Remove residue instead of layering new logic on top of dead or transitional
@@ -88,7 +105,7 @@ Core infrastructure:
   entry points, core plugin factory registrations. Plugins declare a runner,
   session access mode, and optional routing/materialization/naming callbacks.
 - **`dispatch.py`** — Plugin runtime. Splits common options, captures stdout
-  through `CapturedStdout`, materializes output to the content store, derives
+  through `CapturedStream`, materializes output to the content store, derives
   source metadata from JSON/Markdown timestamps, emits receipts.
 - **`content.py`** — Evidence store. SHA-256-keyed content directory with atomic
   writes, append-only manifest (`manifest.jsonl`), activity logging, session
@@ -99,6 +116,35 @@ Core infrastructure:
 - **`session.py`** — Session-level synthesis surfaces: manifest, timeline, graph,
   leads, analyze. Actor lifecycle management (bind, launch, stall detection,
   signoff). Charter surface operations (want, goal, todo).
+
+### Current Pressure Points
+
+The hottest responsibility concentrations are currently:
+
+- `src/gotta/plugins/session.py`
+- `src/gotta/plugins/slack.py`
+- `src/gotta/plugins/jira.py`
+- `src/gotta/plugins/github.py`
+- `src/gotta/session.py`
+- `src/gotta/dispatch.py`
+- `src/gotta/leads.py`
+- `src/gotta/main.py`
+
+Treat those as supernodes. Read them by function and contract, not as flat
+files. `radon`, `lizard`, `pyan3`, and `pyright` all converge on the same
+pressure map.
+
+### Study Tooling
+
+The repo now carries two explicit study configs:
+
+- `.importlinter` for executable architecture contracts
+- `.semgrep/study.yml` for lightweight invariant probes
+
+Recommended optional binaries for deeper study are `cloc`, `universal-ctags`,
+`ast-grep`, `tree-sitter`, `pyan3`, `scip-python`, `repomix`, and `CodeQL`.
+They are not all release gates, but they are valuable for understanding and
+refactoring the codebase safely.
 
 Session topology and identity:
 

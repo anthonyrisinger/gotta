@@ -40,7 +40,9 @@ def test_parse_drive_ref_accepts_drive_and_docs_urls() -> None:
         "drive-123",
         "https://drive.google.com/open?id=drive-123",
     )
-    assert google.parse_drive_ref("https://docs.google.com/spreadsheets/d/sheet-123/edit") == (
+    assert google.parse_drive_ref(
+        "https://docs.google.com/spreadsheets/d/sheet-123/edit"
+    ) == (
         "sheet-123",
         "https://docs.google.com/spreadsheets/d/sheet-123/edit",
     )
@@ -51,7 +53,9 @@ def test_parse_sheet_ref_accepts_sheet_url_and_raw_id() -> None:
         "sheet-123",
         "https://docs.google.com/spreadsheets/d/sheet-123/edit",
     )
-    assert google.parse_sheet_ref("https://docs.google.com/spreadsheets/d/sheet-123/edit") == (
+    assert google.parse_sheet_ref(
+        "https://docs.google.com/spreadsheets/d/sheet-123/edit"
+    ) == (
         "sheet-123",
         "https://docs.google.com/spreadsheets/d/sheet-123/edit",
     )
@@ -128,7 +132,9 @@ def test_drive_search_files_includes_shared_drive_flags(monkeypatch) -> None:
 
     monkeypatch.setattr(google, "google_json", fake_google_json)
 
-    payload = google.drive_search_files("token", "name contains 'generic'", limit=7, fields="id,name")
+    payload = google.drive_search_files(
+        "token", "name contains 'generic'", limit=7, fields="id,name"
+    )
 
     parsed = urllib.parse.urlparse(captured["url"])
     query = urllib.parse.parse_qs(parsed.query)
@@ -195,7 +201,9 @@ def test_google_missing_credentials_message_points_to_gotta_config(monkeypatch) 
     monkeypatch.delenv("GOTTA_GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
     monkeypatch.setattr(google, "load_google_config_env", lambda: {})
 
-    with pytest.raises(google.GoogleError, match=r"\[providers\.google\.env\].*gotta\.toml"):
+    with pytest.raises(
+        google.GoogleError, match=r"\[providers\.google\.env\].*gotta\.toml"
+    ):
         google.load_oauth_runtime_config()
 
 
@@ -223,7 +231,9 @@ def test_load_cached_oauth_state_rejects_ambiguous_malformed_json(
 ) -> None:
     token_file = tmp_path / "oauth.json"
     monkeypatch.setattr(google, "TOKEN_FILE", token_file)
-    token_file.write_text('{"access_token":"one"}{"access_token":"two"}', encoding="utf-8")
+    token_file.write_text(
+        '{"access_token":"one"}{"access_token":"two"}', encoding="utf-8"
+    )
 
     with pytest.raises(google.GoogleError, match="invalid Google OAuth state file"):
         google.load_cached_oauth_state()
@@ -238,7 +248,10 @@ def test_google_doc_and_drive_get_default_to_markdown() -> None:
 def test_gdrive_preferred_name_for_get_is_canonical_not_projection_shaped() -> None:
     options = type("Options", (), {"save_as": ""})()
 
-    assert gdrive.preferred_name(["get", "--output", "markdown", "file-123"], options) == "file-123.bin"
+    assert (
+        gdrive.preferred_name(["get", "--output", "markdown", "file-123"], options)
+        == "file-123.bin"
+    )
 
 
 def test_gdrive_capture_name_uses_truthful_suffixes_for_binary_content() -> None:
@@ -247,13 +260,17 @@ def test_gdrive_capture_name_uses_truthful_suffixes_for_binary_content() -> None
         == "Quarterly Deck.pdf"
     )
     assert (
-        gdrive._capture_name("file-123", {"name": "Quarterly Deck.pdf"}, "application/pdf")
+        gdrive._capture_name(
+            "file-123", {"name": "Quarterly Deck.pdf"}, "application/pdf"
+        )
         == "Quarterly Deck.pdf"
     )
 
 
 def test_gdocs_capture_normalizes_google_redirect_wrappers(monkeypatch) -> None:
-    monkeypatch.setattr(gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"})
+    monkeypatch.setattr(
+        gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"}
+    )
     monkeypatch.setattr(
         gdocs,
         "document_meta",
@@ -262,7 +279,9 @@ def test_gdocs_capture_normalizes_google_redirect_wrappers(monkeypatch) -> None:
             "url": "https://docs.google.com/document/d/doc-123/edit",
         },
     )
-    monkeypatch.setattr(gdocs, "document_json", lambda _token, _doc_id: {"documentId": "doc-123"})
+    monkeypatch.setattr(
+        gdocs, "document_json", lambda _token, _doc_id: {"documentId": "doc-123"}
+    )
     monkeypatch.setattr(
         gdocs,
         "drive_export",
@@ -281,8 +300,12 @@ def test_gdocs_capture_normalizes_google_redirect_wrappers(monkeypatch) -> None:
     assert "usg=" not in text
 
 
-def test_gdocs_capture_normalizes_google_redirect_wrappers_without_www(monkeypatch) -> None:
-    monkeypatch.setattr(gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"})
+def test_gdocs_capture_normalizes_google_redirect_wrappers_without_www(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"}
+    )
     monkeypatch.setattr(
         gdocs,
         "document_meta",
@@ -291,7 +314,9 @@ def test_gdocs_capture_normalizes_google_redirect_wrappers_without_www(monkeypat
             "url": "https://docs.google.com/document/d/doc-123/edit",
         },
     )
-    monkeypatch.setattr(gdocs, "document_json", lambda _token, _doc_id: {"documentId": "doc-123"})
+    monkeypatch.setattr(
+        gdocs, "document_json", lambda _token, _doc_id: {"documentId": "doc-123"}
+    )
     monkeypatch.setattr(
         gdocs,
         "drive_export",
@@ -312,15 +337,26 @@ def test_gdocs_capture_normalizes_google_redirect_wrappers_without_www(monkeypat
 
 def test_google_status_defaults_to_summary() -> None:
     assert gdocs.build_parser().parse_args(["status"]).output == "summary"
-    assert gdocs.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+    assert (
+        gdocs.build_parser().parse_args(["status", "--output", "summary"]).output
+        == "summary"
+    )
     assert gdrive.build_parser().parse_args(["status"]).output == "summary"
-    assert gdrive.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+    assert (
+        gdrive.build_parser().parse_args(["status", "--output", "summary"]).output
+        == "summary"
+    )
     assert gsheets.build_parser().parse_args(["status"]).output == "summary"
-    assert gsheets.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+    assert (
+        gsheets.build_parser().parse_args(["status", "--output", "summary"]).output
+        == "summary"
+    )
 
 
 def test_gdocs_search_reports_gdocs_as_source(monkeypatch) -> None:
-    monkeypatch.setattr(gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"})
+    monkeypatch.setattr(
+        gdocs, "ensure_google_session", lambda **kwargs: {"access_token": "token"}
+    )
     monkeypatch.setattr(
         gdocs,
         "drive_search_files",
@@ -339,7 +375,9 @@ def test_gdocs_search_reports_gdocs_as_source(monkeypatch) -> None:
 
 
 def test_gdrive_search_reports_google_drive_as_source(monkeypatch) -> None:
-    monkeypatch.setattr(gdrive, "ensure_google_session", lambda **kwargs: {"access_token": "token"})
+    monkeypatch.setattr(
+        gdrive, "ensure_google_session", lambda **kwargs: {"access_token": "token"}
+    )
     monkeypatch.setattr(
         gdrive,
         "drive_search_files",
@@ -352,7 +390,9 @@ def test_gdrive_search_reports_google_drive_as_source(monkeypatch) -> None:
         ],
     )
 
-    payload = gdrive.search_files("token", "generic", mode="title", limit=5, mime_type="")
+    payload = gdrive.search_files(
+        "token", "generic", mode="title", limit=5, mime_type=""
+    )
 
     assert payload["source"] == "google-drive"
 
@@ -446,7 +486,9 @@ def test_gdocs_get_markdown_includes_metadata_header(monkeypatch, capsys) -> Non
             "owners": [{"displayName": "Alex Example"}],
         },
     )
-    monkeypatch.setattr(gdocs, "drive_export", lambda access_token, doc_id, _mime: b"# Body\n")
+    monkeypatch.setattr(
+        gdocs, "drive_export", lambda access_token, doc_id, _mime: b"# Body\n"
+    )
 
     result = gdocs.main(["get", "doc-123", "--output", "markdown"])
 
@@ -477,7 +519,9 @@ def test_gdrive_get_reads_textlike_content_from_accessible_shared_drive_file(
             "webViewLink": "https://drive.google.com/file/d/file-123/view",
         },
     )
-    monkeypatch.setattr(gdrive, "drive_download_bytes", lambda access_token, file_id: b"generic body\n")
+    monkeypatch.setattr(
+        gdrive, "drive_download_bytes", lambda access_token, file_id: b"generic body\n"
+    )
 
     result = gdrive.main(["get", "file-123", "--output", "markdown"])
 
@@ -633,7 +677,7 @@ def test_gdrive_summary_includes_created_and_modified() -> None:
 
 def test_gdrive_project_summarizes_drawio_mxfile() -> None:
     model = (
-        '<mxGraphModel><root>'
+        "<mxGraphModel><root>"
         '<mxCell id="0"/><mxCell id="1" parent="0"/>'
         '<mxCell id="a" value="Generic Start" vertex="1" parent="1"/>'
         '<mxCell id="b" value="Generic Finish" vertex="1" parent="1"/>'
@@ -659,10 +703,18 @@ def test_gdrive_project_summarizes_drawio_mxfile() -> None:
             "source_url": "https://drive.google.com/file/d/file-123/view",
             "source_mime": "application/vnd.jgraph.mxfile",
         },
-        view={"meta": {"id": "file-123", "name": "Generic Diagram", "mimeType": "application/vnd.jgraph.mxfile"}},
+        view={
+            "meta": {
+                "id": "file-123",
+                "name": "Generic Diagram",
+                "mimeType": "application/vnd.jgraph.mxfile",
+            }
+        },
     )
 
-    rendered = gdrive.project(["get", "--output", "markdown", "file-123"], capture).decode("utf-8")
+    rendered = gdrive.project(
+        ["get", "--output", "markdown", "file-123"], capture
+    ).decode("utf-8")
 
     assert "# Generic Diagram" in rendered
     assert "- **Pages:** 1" in rendered
@@ -720,7 +772,9 @@ def test_gdocs_auth_full_forces_browser_bootstrap(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         gdocs,
         "ensure_google_session",
-        lambda **kwargs: pytest.fail("default refresh path should be bypassed with --full"),
+        lambda **kwargs: pytest.fail(
+            "default refresh path should be bypassed with --full"
+        ),
     )
     monkeypatch.setattr(
         gdocs,
@@ -764,7 +818,9 @@ def test_gdrive_auth_full_forces_browser_bootstrap(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         gdrive,
         "ensure_google_session",
-        lambda **kwargs: pytest.fail("default refresh path should be bypassed with --full"),
+        lambda **kwargs: pytest.fail(
+            "default refresh path should be bypassed with --full"
+        ),
     )
     monkeypatch.setattr(
         gdrive,

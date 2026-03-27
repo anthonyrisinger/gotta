@@ -171,7 +171,9 @@ def render_drawio_summary_markdown(
             labels = page.get("labels")
             preview = ""
             if isinstance(labels, list):
-                preview = ", ".join(str(label) for label in labels[:4] if str(label).strip())
+                preview = ", ".join(
+                    str(label) for label in labels[:4] if str(label).strip()
+                )
             line = f"- {page_name}: {vertex_count} nodes, {edge_count} edges"
             if preview:
                 line += f"; labels: {preview}"

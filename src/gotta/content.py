@@ -47,6 +47,8 @@ _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 DEFAULT_SESSION_ROOT = topology.DEFAULT_SESSIONS_ROOT
 DEFAULT_BINDINGS_ROOT = topology.DEFAULT_BINDINGS_ROOT
 ACTIVITY_LOG_NAME = "activity.jsonl"
+PRIVATE_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 
 
 class ContentError(RuntimeError):
@@ -110,12 +112,13 @@ class ContentSnapshot:
 
 
 def _append_jsonl_line(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+    ensure_private_dir(path.parent)
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, PRIVATE_FILE_MODE)
     try:
         os.write(fd, (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8"))
     finally:
         os.close(fd)
+    _chmod_best_effort(path, PRIVATE_FILE_MODE)
 
 
 def _append_manifest(dirs: ResolvedDirs, entry: dict[str, Any]) -> None:
@@ -146,12 +149,30 @@ def artifact_locator(preferred_name: str, digest: str) -> str:
     return f"artifact:{sanitize_name(preferred_name)}@{digest.strip()[:12]}"
 
 
+def _chmod_best_effort(path: Path, mode: int) -> None:
+    try:
+        if path.exists() and not path.is_symlink():
+            path.chmod(mode)
+    except OSError:
+        pass
+
+
+def ensure_private_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    _chmod_best_effort(path, PRIVATE_DIR_MODE)
+    return path
+
+
 def _write_atomic(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
         handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
         temp_path = Path(handle.name)
+    _chmod_best_effort(temp_path, PRIVATE_FILE_MODE)
     temp_path.replace(path)
+    _chmod_best_effort(path, PRIVATE_FILE_MODE)
 
 
 def write_text_atomic(path: Path, text: str) -> Path:
@@ -160,20 +181,19 @@ def write_text_atomic(path: Path, text: str) -> Path:
 
 
 def _write_text_if_changed(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     if path.exists():
         try:
             if path.read_text(encoding="utf-8") == text:
                 return path
         except OSError:
             pass
-    path.write_text(text, encoding="utf-8")
+    write_text_atomic(path, text)
     return path
 
 
 def _ensure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return ensure_private_dir(path)
 
 
 def state_dir_path(root: Path) -> Path:
@@ -264,7 +284,9 @@ def current_actor(*, default_actor: str = "") -> str:
     if normalized and not topology.is_placeholder_identity(normalized):
         return normalized
     fallback_normalized = topology.normalize_identity(fallback)
-    if fallback_normalized and not topology.is_placeholder_identity(fallback_normalized):
+    if fallback_normalized and not topology.is_placeholder_identity(
+        fallback_normalized
+    ):
         return fallback_normalized
     return current_context_binding().binding_id
 
@@ -373,7 +395,9 @@ def write_session_state(
         SESSION_ACTOR_ENV: actor_scope,
     }
     if updates:
-        merged.update({key: value for key, value in updates.items() if value is not None})
+        merged.update(
+            {key: value for key, value in updates.items() if value is not None}
+        )
     ordered = [
         SESSION_ENV,
         SESSION_ID_ENV,
@@ -399,6 +423,8 @@ def session_is_initialized(root: Path) -> bool:
     if topology.parse_shared_session_root(root) is not None:
         return False
     return state_env_path(root).exists()
+
+
 def session_id(root: Path) -> str:
     state = load_state_env_at_root(root)
     explicit = str(state.get(SESSION_ID_ENV) or "").strip()
@@ -464,7 +490,9 @@ def bound_session_root(*, include_context_session: bool = True) -> Path | None:
     )
     explicit = os.environ.get(SESSION_ENV, "").strip()
     if explicit:
-        candidate = resolve_session_reference(explicit, identity=identity, allow_missing=False)
+        candidate = resolve_session_reference(
+            explicit, identity=identity, allow_missing=False
+        )
         if candidate is not None and session_is_initialized(candidate):
             return candidate
     discovered_root = str(discovered.get(SESSION_ENV) or "").strip()
@@ -535,14 +563,14 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
         identity = topology.normalize_identity(identity_raw)
         session = topology.session_root_for(session_id, identity)
         if create:
-            shared_session_root(session_id).mkdir(parents=True, exist_ok=True)
+            ensure_private_dir(shared_session_root(session_id))
         content_raw = str(shared_session_root(session_id) / "content")
     if session is None and session_id_raw:
         session_id = topology.normalize_session_id(session_id_raw)
         identity = topology.normalize_identity(identity_raw)
         session = topology.session_root_for(session_id, identity)
         if create:
-            shared_session_root(session_id).mkdir(parents=True, exist_ok=True)
+            ensure_private_dir(shared_session_root(session_id))
         content_raw = str(shared_session_root(session_id) / "content")
     if not content_raw and session is not None:
         parsed = topology.parse_grouped_session_root(session)
@@ -560,7 +588,7 @@ def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
             "missing shared content context; gotta needs a session root and content root. "
             "Set GOTTA_SESSION_DIR / GOTTA_SESSION_CONTENT_DIR, pass --session/--content-dir, "
             "or use `gotta ...` so gotta can bind or scaffold the correct session "
-            "for you. Use `gotta session init \"$WS\"` only when you intentionally "
+            'for you. Use `gotta session init "$WS"` only when you intentionally '
             "want to scaffold one exact root."
         )
 
@@ -618,7 +646,9 @@ def session_actor_scope(root: Path) -> str:
 
 def session_identity(root: Path) -> str:
     state = load_state_env_at_root(root)
-    explicit = str(state.get(SESSION_ACTOR_ENV) or state.get("GOTTA_SESSION_ACTOR") or "").strip()
+    explicit = str(
+        state.get(SESSION_ACTOR_ENV) or state.get("GOTTA_SESSION_ACTOR") or ""
+    ).strip()
     if explicit and not topology.is_placeholder_identity(explicit):
         return topology.normalize_identity(explicit)
     derived = topology.session_identity(root)
@@ -694,7 +724,9 @@ def stdin_has_readable_text() -> bool:
 def session_member_path(root: Path, raw: str) -> Path:
     candidate = Path(raw).expanduser()
     if candidate.is_absolute():
-        raise ContentError("session member paths must be relative to the active session root")
+        raise ContentError(
+            "session member paths must be relative to the active session root"
+        )
     root_resolved = root.expanduser().resolve()
     lexical = Path(os.path.normpath(str(root_resolved / candidate)))
     try:
@@ -726,7 +758,7 @@ def timestamp_log_path(logs_dir: Path, timestamp: str) -> Path:
 
 
 def _ensure_name_link(names_dir: Path, data_path: Path, preferred_name: str) -> Path:
-    names_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(names_dir)
     name_link = names_dir / sanitize_name(preferred_name)
     if name_link.exists() or name_link.is_symlink():
         if not name_link.is_symlink():
@@ -744,7 +776,9 @@ def _ensure_name_link(names_dir: Path, data_path: Path, preferred_name: str) -> 
     return name_link
 
 
-def _merge_meta(existing: dict[str, Any] | None, update: dict[str, Any]) -> dict[str, Any]:
+def _merge_meta(
+    existing: dict[str, Any] | None, update: dict[str, Any]
+) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if existing:
         payload.update(existing)
@@ -777,8 +811,8 @@ def materialize_bytes(
     meta_path = content_dir / "meta.json"
     names_dir = content_dir / "names"
     logs_dir = content_dir / "logs"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(names_dir)
+    ensure_private_dir(logs_dir)
 
     if not data_path.exists():
         _write_atomic(data_path, data)
@@ -818,7 +852,9 @@ def materialize_bytes(
             "plugin": metadata.get("plugin", ""),
             "provider": metadata.get("provider", ""),
             "artifact_kind": metadata.get("artifact_kind", ""),
-            "actor": metadata.get("actor") or session_identity(dirs.session_dir) or _current_actor(),
+            "actor": metadata.get("actor")
+            or session_identity(dirs.session_dir)
+            or _current_actor(),
             "actor_dir": metadata.get("actor_dir", ""),
             "session_root": metadata.get("session_root", ""),
             "visibility_level": metadata.get("visibility_level", ""),
@@ -830,12 +866,9 @@ def materialize_bytes(
             "fetch_link": str(fetch_link),
         },
     )
-    try:
-        from gotta import leads as lead_index
+    from gotta import leads as lead_index
 
-        lead_index.maybe_write_lead_cache(content_dir, data=data)
-    except Exception:
-        pass
+    lead_index.maybe_write_lead_cache(content_dir)
 
     return Materialization(
         content_dir=content_dir,

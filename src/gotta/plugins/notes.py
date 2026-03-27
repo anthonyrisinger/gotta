@@ -129,7 +129,9 @@ def _append_actor_name(work_dir, *, explicit_actor: str = "") -> str:
     return actor_ids[0]
 
 
-def _append_author_name(actor_name: str, *, explicit_actor: str = "", writer: str = "") -> str:
+def _append_author_name(
+    actor_name: str, *, explicit_actor: str = "", writer: str = ""
+) -> str:
     if explicit_actor:
         return writer or actor_name
     return actor_name

@@ -168,7 +168,9 @@ def request_bytes(
         raise GoogleError(f"{method} {url} failed: {exc.reason}") from exc
 
 
-def post_form_json(url: str, payload: dict[str, str], *, context: str) -> dict[str, Any]:
+def post_form_json(
+    url: str, payload: dict[str, str], *, context: str
+) -> dict[str, Any]:
     encoded = urllib.parse.urlencode(payload).encode("utf-8")
     body = request_bytes(
         "POST",
@@ -230,9 +232,13 @@ def start_oauth_callback_server(
                 callback_state["code"] = params["code"][0]
                 callback_state["state"] = params.get("state", [""])[0]
                 callback_state["event"].set()
-                self._send_response("Authorization successful. You can close this window.")
+                self._send_response(
+                    "Authorization successful. You can close this window."
+                )
                 return
-            self._send_response("Invalid callback: missing authorization code.", status=400)
+            self._send_response(
+                "Invalid callback: missing authorization code.", status=400
+            )
 
         def _send_response(self, message: str, *, status: int = 200) -> None:
             self.send_response(status)
@@ -294,7 +300,9 @@ def run_oauth_bootstrap(*, interactive_ok: bool) -> dict[str, Any]:
         if not callback_state["event"].wait(300):
             raise GoogleError("timed out waiting for Google OAuth callback")
         if callback_state["error"]:
-            raise GoogleError(f"Google OAuth returned an error: {callback_state['error']}")
+            raise GoogleError(
+                f"Google OAuth returned an error: {callback_state['error']}"
+            )
         if callback_state["state"] != state:
             raise GoogleError("OAuth state mismatch in callback")
         token_response = exchange_authorization_code(
@@ -334,7 +342,9 @@ def load_cached_oauth_state() -> dict[str, Any] | None:
             allow_trailing_unmatched_closing_braces=True,
         )
     except ValueError as exc:
-        raise GoogleError(f"invalid Google OAuth state file {TOKEN_FILE}: {exc}") from exc
+        raise GoogleError(
+            f"invalid Google OAuth state file {TOKEN_FILE}: {exc}"
+        ) from exc
     if recovered:
         persist_oauth_state(data)
     return data
@@ -350,9 +360,7 @@ def google_status_payload() -> dict[str, Any]:
         "configFileExists": CONFIG_FILE.exists(),
         "credentialsConfigured": google_credentials_present(),
         "credentialSources": {
-            "envClientId": bool(
-                env_or_config({}, "GOTTA_GOOGLE_OAUTH_CLIENT_ID")
-            ),
+            "envClientId": bool(env_or_config({}, "GOTTA_GOOGLE_OAUTH_CLIENT_ID")),
             "envClientSecret": bool(
                 env_or_config({}, "GOTTA_GOOGLE_OAUTH_CLIENT_SECRET")
             ),
@@ -385,7 +393,9 @@ def google_status_payload() -> dict[str, Any]:
         "expired" if token_is_expired(oauth_state, skew_seconds=0) else "usable"
     )
     payload["expiresAt"] = expires_at
-    payload["hasRefreshToken"] = bool(str(oauth_state.get("refresh_token") or "").strip())
+    payload["hasRefreshToken"] = bool(
+        str(oauth_state.get("refresh_token") or "").strip()
+    )
     payload["scope"] = str(oauth_state.get("scope") or "")
     payload["tokenType"] = str(oauth_state.get("token_type") or "")
     if not payload["credentialsConfigured"]:
@@ -438,7 +448,9 @@ def refresh_oauth_state(oauth_state: dict[str, Any]) -> dict[str, Any]:
     if isinstance(expires_in, (int, float)):
         expires_at = time.time() + float(expires_in)
     oauth_state["access_token"] = access_token
-    oauth_state["token_type"] = response.get("token_type") or oauth_state.get("token_type") or "Bearer"
+    oauth_state["token_type"] = (
+        response.get("token_type") or oauth_state.get("token_type") or "Bearer"
+    )
     oauth_state["scope"] = response.get("scope") or oauth_state.get("scope") or ""
     oauth_state["expires_at"] = expires_at
     return persist_oauth_state(oauth_state)
@@ -541,7 +553,10 @@ def parse_sheet_ref(raw: str) -> tuple[str, str]:
             d_index = parts.index("d")
             if d_index + 1 < len(parts):
                 sheet_id = parts[d_index + 1]
-                return sheet_id, f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+                return (
+                    sheet_id,
+                    f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit",
+                )
     if raw and "/" not in raw and " " not in raw:
         return raw, f"https://docs.google.com/spreadsheets/d/{raw}/edit"
     raise GoogleError(f"could not parse Google Sheets spreadsheet ID from input: {raw}")
@@ -555,7 +570,9 @@ def _drive_api_url(
 ) -> str:
     base = GOOGLE_DRIVE_API_URL.rstrip("/")
     if segments:
-        encoded_segments = [urllib.parse.quote(segment, safe="") for segment in segments]
+        encoded_segments = [
+            urllib.parse.quote(segment, safe="") for segment in segments
+        ]
         base = "/".join([base, *encoded_segments])
     query_params: dict[str, str] = {}
     if params:
@@ -605,7 +622,9 @@ def escape_drive_query(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def drive_search_files(access_token: str, q: str, *, limit: int, fields: str) -> list[dict[str, Any]]:
+def drive_search_files(
+    access_token: str, q: str, *, limit: int, fields: str
+) -> list[dict[str, Any]]:
     url = _drive_api_url(
         params={
             "q": q,

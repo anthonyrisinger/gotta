@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import os
 from pathlib import Path
 import re
@@ -29,6 +28,11 @@ from gotta.dispatch import (
 )
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, looks_text, pretty_json
+from gotta.stored import (
+    guess_lang_from_content_type,
+    guess_lang_from_path,
+    stored_display as render_stored_display,
+)
 from gotta.target import build_parser, parse_args, resolve_read_target
 
 
@@ -97,47 +101,6 @@ def print_usage() -> int:
     return die(USAGE)
 
 
-def guess_lang_from_path(path: str) -> str:
-    suffix = Path(path).suffix.lower()
-    return {
-        ".html": "html",
-        ".htm": "html",
-        ".md": "markdown",
-        ".markdown": "markdown",
-        ".json": "json",
-        ".yaml": "yaml",
-        ".yml": "yaml",
-        ".xml": "xml",
-        ".css": "css",
-        ".js": "javascript",
-        ".toml": "toml",
-        ".sh": "bash",
-        ".py": "python",
-        ".go": "go",
-        ".tf": "hcl",
-        ".tfvars": "hcl",
-    }.get(suffix, "txt")
-
-
-def guess_lang_from_content_type(content_type: str) -> str:
-    kind = content_type.split(";", 1)[0].strip().lower()
-    return {
-        "text/html": "html",
-        "text/markdown": "markdown",
-        "application/json": "json",
-        "text/json": "json",
-        "application/yaml": "yaml",
-        "application/x-yaml": "yaml",
-        "text/yaml": "yaml",
-        "text/x-yaml": "yaml",
-        "application/xml": "xml",
-        "text/xml": "xml",
-        "text/css": "css",
-        "application/javascript": "javascript",
-        "text/javascript": "javascript",
-    }.get(kind, "txt" if kind.startswith("text/") else "")
-
-
 def render_file(path: Path, language: str = "txt") -> None:
     bat = shutil.which("bat")
     if bat and sys.stdout.isatty():
@@ -171,7 +134,9 @@ def render_bytes(data: bytes, language: str = "txt") -> None:
         tmp_path.unlink(missing_ok=True)
 
 
-def _read_response_body(response, *, max_bytes: int = REMOTE_FETCH_MAX_BYTES) -> tuple[bytes, bool]:
+def _read_response_body(
+    response, *, max_bytes: int = REMOTE_FETCH_MAX_BYTES
+) -> tuple[bytes, bool]:
     chunks: list[bytes] = []
     total = 0
     truncated = False
@@ -201,13 +166,17 @@ def _remote_timeout_message() -> str:
 def fetch_url(target: str) -> tuple[bytes, str, bool]:
     request = urllib.request.Request(target, headers={"User-Actor": "gotta-read"})
     try:
-        with urllib.request.urlopen(request, timeout=REMOTE_FETCH_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(
+            request, timeout=REMOTE_FETCH_TIMEOUT_SECONDS
+        ) as response:
             data, truncated = _read_response_body(response)
             return data, response.headers.get("Content-Type", ""), truncated
     except urllib.error.HTTPError as exc:
         data, _truncated = _read_response_body(exc)
         body = data.decode("utf-8", errors="replace")
-        detail = _summarize_http_error(exc.code, body, exc.headers.get("Content-Type", ""))
+        detail = _summarize_http_error(
+            exc.code, body, exc.headers.get("Content-Type", "")
+        )
         raise RuntimeError(detail) from exc
     except (socket.timeout, TimeoutError) as exc:
         raise RuntimeError(_remote_timeout_message()) from exc
@@ -228,13 +197,19 @@ def _summarize_http_error(status: int, body: str, content_type: str) -> str:
     normalized_body = body.strip()
     lowered = normalized_body.lower()
     if "text/html" in content_type.lower() or "<html" in lowered:
-        title_match = re.search(r"<title[^>]*>(?P<title>.*?)</title>", body, flags=re.IGNORECASE | re.DOTALL)
+        title_match = re.search(
+            r"<title[^>]*>(?P<title>.*?)</title>", body, flags=re.IGNORECASE | re.DOTALL
+        )
         if title_match:
             title = re.sub(r"\s+", " ", unescape(title_match.group("title"))).strip()
             if title:
                 return f"download failed with {status}: {title}"
-        return f"download failed with {status}: remote server returned an HTML error page"
-    first_lines = [line.strip() for line in normalized_body.splitlines() if line.strip()]
+        return (
+            f"download failed with {status}: remote server returned an HTML error page"
+        )
+    first_lines = [
+        line.strip() for line in normalized_body.splitlines() if line.strip()
+    ]
     preview = " ".join(first_lines[:3]).strip()
     if preview:
         preview = re.sub(r"\s+", " ", preview)
@@ -378,7 +353,9 @@ def _apply_text_view(
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def _render_viewed_bytes(data: bytes, *, language: str, head: int, tail: int, section: str) -> None:
+def _render_viewed_bytes(
+    data: bytes, *, language: str, head: int, tail: int, section: str
+) -> None:
     text = data.decode("utf-8", errors="replace")
     sys.stdout.write(_apply_text_view(text, head=head, tail=tail, section=section))
 
@@ -458,40 +435,9 @@ def _display_projection(capture: Capture) -> bytes:
     return _project_canonical(capture)
 
 
-def _stored_capture(path: Path) -> Capture:
-    meta_path = path.parent / "meta.json"
-    meta: dict[str, object] = {}
-    if meta_path.exists():
-        try:
-            payload = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            payload = {}
-        if isinstance(payload, dict):
-            meta = payload
-    return Capture(
-        data=path.read_bytes(),
-        name=str(meta.get("original_name") or meta.get("preferred_name") or path.name or ""),
-        type=str(meta.get("content_type") or ""),
-        meta=dict(meta),
-    )
-
-
 def stored_display(path: Path) -> tuple[bytes, str]:
-    if not _has_stored_metadata(path):
-        data = path.read_bytes()
-        return data, guess_lang_from_path(path.name)
-    stored = _stored_capture(path)
-    display = _display_projection(stored)
-    language = (
-        "markdown"
-        if stored.type.split(";", 1)[0].strip().lower() == "text/html" and display != stored.data
-        else guess_lang_from_content_type(stored.type) or guess_lang_from_path(path.name)
-    )
-    return display, language
-
-
-def _has_stored_metadata(path: Path) -> bool:
-    return (path.parent / "meta.json").exists()
+    rendered = render_stored_display(path)
+    return rendered.data, rendered.language
 
 
 def capture(argv: list[str], options: object) -> Capture:
@@ -522,7 +468,9 @@ def capture(argv: list[str], options: object) -> Capture:
             name=_canonical_remote_name(target, content_type),
             type=content_type or "application/octet-stream",
         )
-    raise RuntimeError(f"read target kind `{resolved.kind}` does not support canonical acquisition")
+    raise RuntimeError(
+        f"read target kind `{resolved.kind}` does not support canonical acquisition"
+    )
 
 
 def project(argv: list[str], capture: Capture) -> bytes:
@@ -587,20 +535,27 @@ def _delegate_with_view(
         sys.stdout.buffer.write(data)
         return code
     if head > 0 or tail > 0 or section:
-        _render_viewed_bytes(data, language="markdown", head=head, tail=tail, section=section)
+        _render_viewed_bytes(
+            data, language="markdown", head=head, tail=tail, section=section
+        )
         return code
     sys.stdout.buffer.write(data)
     return code
 
 
-def _directory_entries(path: Path, *, recursive: bool, max_depth: int) -> list[tuple[int, Path]]:
+def _directory_entries(
+    path: Path, *, recursive: bool, max_depth: int
+) -> list[tuple[int, Path]]:
     entries: list[tuple[int, Path]] = []
     root = path.resolve()
 
     def walk(current: Path, depth: int) -> None:
         if depth > max_depth:
             return
-        for child in sorted(current.iterdir(), key=lambda item: (not item.is_dir(), item.name.casefold())):
+        for child in sorted(
+            current.iterdir(),
+            key=lambda item: (not item.is_dir(), item.name.casefold()),
+        ):
             rel = child.relative_to(root)
             entries.append((depth, rel))
             if recursive and child.is_dir():
@@ -611,7 +566,9 @@ def _directory_entries(path: Path, *, recursive: bool, max_depth: int) -> list[t
 
 
 def render_directory(path: Path, *, recursive: bool, max_depth: int) -> None:
-    sys.stdout.write(_directory_listing_text(path, recursive=recursive, max_depth=max_depth))
+    sys.stdout.write(
+        _directory_listing_text(path, recursive=recursive, max_depth=max_depth)
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -717,7 +674,9 @@ def main(argv: list[str]) -> int:
                 )
             )
             return 0
-        render_directory(path, recursive=request.recursive, max_depth=max(0, request.max_depth))
+        render_directory(
+            path, recursive=request.recursive, max_depth=max(0, request.max_depth)
+        )
         return 0
     if resolved.kind == "missing_local" and path is not None:
         detail = (

@@ -37,6 +37,7 @@ def is_todo_id(value: str) -> bool:
         and all(ch in "0123456789ABCDEF" for ch in value[1:])
     )
 
+
 def _repo_display_name(work_dir: Path) -> str:
     state = load_state_env_at_root(work_dir)
     repo_path = str(state.get(SESSION_REPO_ENV) or "").strip()
@@ -78,7 +79,8 @@ def todo_items(work_dir: Path) -> list[dict[str, object]]:
                 continue
             items[item_id] = {
                 "id": item_id,
-                "section": str(event.get("section") or "Captured Work").strip() or "Captured Work",
+                "section": str(event.get("section") or "Captured Work").strip()
+                or "Captured Work",
                 "text": str(event.get("text") or "").strip(),
                 "checked": bool(event.get("checked")),
                 "managed_key": str(event.get("managed_key") or "").strip(),
@@ -309,7 +311,9 @@ def ensure_managed_todo_item(
     )
 
 
-def set_todo_checked(work_dir: Path, item_id: str, *, checked: bool) -> dict[str, object] | None:
+def set_todo_checked(
+    work_dir: Path, item_id: str, *, checked: bool
+) -> dict[str, object] | None:
     normalized = item_id.strip().upper()
     if not is_todo_id(normalized):
         raise SystemExit(f"invalid TODO item id: {item_id}")

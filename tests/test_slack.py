@@ -14,7 +14,10 @@ from gotta.providers import slack as slack_provider
 
 def test_slack_status_defaults_to_summary() -> None:
     assert slack.build_parser().parse_args(["status"]).output == "summary"
-    assert slack.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+    assert (
+        slack.build_parser().parse_args(["status", "--output", "summary"]).output
+        == "summary"
+    )
 
 
 def test_sqlite_identifier_quotes_embedded_quotes() -> None:
@@ -31,7 +34,9 @@ def test_cmd_schema_supports_directory_db(monkeypatch, tmp_path: Path, capsys) -
     finally:
         conn.close()
 
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(slack, "directory_db_path", lambda workspace: directory_db)
 
     code = slack.main(
@@ -65,13 +70,17 @@ def test_cmd_schema_degrades_per_view_instead_of_crashing(
     finally:
         conn.close()
 
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
 
     class Result:
         db_path = archive_db
 
     monkeypatch.setattr(slack, "workspace_archive_result", lambda workspace: Result())
-    monkeypatch.setattr(slack, "ensure_archive_exists", lambda result, description: result)
+    monkeypatch.setattr(
+        slack, "ensure_archive_exists", lambda result, description: result
+    )
 
     code = slack.main(
         [
@@ -92,7 +101,9 @@ def test_cmd_schema_degrades_per_view_instead_of_crashing(
     assert "no such column: M.SESSION_ID" in by_name["V_BROKEN"]["error"]
 
 
-def test_list_channels_defaults_to_bounded_json_page(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_list_channels_defaults_to_bounded_json_page(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     workspace = "demo"
     directory_db = tmp_path / "_directory.sqlite"
     conn = sqlite3.connect(directory_db)
@@ -159,11 +170,28 @@ def test_list_channels_defaults_to_bounded_json_page(monkeypatch, tmp_path: Path
         conn.row_factory = sqlite3.Row
         return conn
 
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
-    monkeypatch.setattr(slack, "seed_channel_directory_from_archive", lambda workspace: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
+    monkeypatch.setattr(
+        slack, "seed_channel_directory_from_archive", lambda workspace: None
+    )
     monkeypatch.setattr(slack, "open_directory_db", open_db)
 
-    assert slack.main(["list-channels", "--workspace", workspace, "--limit", "1", "--output", "json"]) == 0
+    assert (
+        slack.main(
+            [
+                "list-channels",
+                "--workspace",
+                workspace,
+                "--limit",
+                "1",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["totalCount"] == 2
@@ -246,8 +274,12 @@ def test_list_users_supports_offset_paging(monkeypatch, tmp_path: Path, capsys) 
         conn.row_factory = sqlite3.Row
         return conn
 
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
-    monkeypatch.setattr(slack, "seed_user_directory_from_archive", lambda workspace: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
+    monkeypatch.setattr(
+        slack, "seed_user_directory_from_archive", lambda workspace: None
+    )
     monkeypatch.setattr(slack, "open_directory_db", open_db)
 
     assert (
@@ -306,7 +338,9 @@ def test_slack_mcp_help_passthrough_does_not_require_workspace(
 
     calls: list[list[str]] = []
 
-    def fake_run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        cmd: list[str], check: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0)
 
@@ -377,7 +411,10 @@ def test_cmd_get_doc_uses_live_auth_and_renders_markdown(monkeypatch, capsys) ->
     monkeypatch.setattr(
         slack,
         "ensure_live_search_auth",
-        lambda workspace, interactive_ok: ({"token": "x", "cookies": [{"name": "d", "value": "cookie"}]}, Path("/tmp/slack-auth.json")),
+        lambda workspace, interactive_ok: (
+            {"token": "x", "cookies": [{"name": "d", "value": "cookie"}]},
+            Path("/tmp/slack-auth.json"),
+        ),
     )
     api_calls: list[tuple[str, dict[str, str]]] = []
     calls: list[str] = []
@@ -403,7 +440,9 @@ def test_cmd_get_doc_uses_live_auth_and_renders_markdown(monkeypatch, capsys) ->
             },
         }
 
-    def fake_web_get(workspace: str, auth_state: dict[str, object], url: str, *, timeout_seconds: int):
+    def fake_web_get(
+        workspace: str, auth_state: dict[str, object], url: str, *, timeout_seconds: int
+    ):
         calls.append(url)
         return {
             "body": b"<html><body><h1>Generic Doc</h1><p>Generic body.</p></body></html>",
@@ -413,7 +452,9 @@ def test_cmd_get_doc_uses_live_auth_and_renders_markdown(monkeypatch, capsys) ->
 
     monkeypatch.setattr(slack, "slack_api_post", fake_api_post)
     monkeypatch.setattr(slack, "slack_web_get", fake_web_get)
-    monkeypatch.setattr(slack, "html_markdown", lambda data: b"# Generic Doc\n\nGeneric body.\n")
+    monkeypatch.setattr(
+        slack, "html_markdown", lambda data: b"# Generic Doc\n\nGeneric body.\n"
+    )
 
     assert (
         slack.main(
@@ -429,17 +470,24 @@ def test_cmd_get_doc_uses_live_auth_and_renders_markdown(monkeypatch, capsys) ->
 
     rendered = capsys.readouterr().out
     assert api_calls == [("files.info", {"file": "F12345678"})]
-    assert calls == ["https://files.slack.com/files-pri/T12345678-F12345678/download/canvas"]
+    assert calls == [
+        "https://files.slack.com/files-pri/T12345678-F12345678/download/canvas"
+    ]
     assert "# Generic Doc" in rendered
     assert "Generic body." in rendered
 
 
 def test_slack_doc_capture_fails_closed_on_shell_html(monkeypatch) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(
         slack,
         "ensure_live_search_auth",
-        lambda workspace, interactive_ok: ({"token": "x", "cookies": [{"name": "d", "value": "cookie"}]}, Path("/tmp/slack-auth.json")),
+        lambda workspace, interactive_ok: (
+            {"token": "x", "cookies": [{"name": "d", "value": "cookie"}]},
+            Path("/tmp/slack-auth.json"),
+        ),
     )
     monkeypatch.setattr(
         slack,
@@ -467,7 +515,9 @@ def test_slack_doc_capture_fails_closed_on_shell_html(monkeypatch) -> None:
     )
 
     with pytest.raises(slack.ToolError, match="could not be rendered natively"):
-        slack.capture(["get", "https://example.slack.com/docs/T12345678/F12345678"], object())
+        slack.capture(
+            ["get", "https://example.slack.com/docs/T12345678/F12345678"], object()
+        )
 
 
 def test_render_markdown_never_degrades_channel_label_to_bare_hash() -> None:
@@ -545,7 +595,9 @@ def test_sync_archive_rejects_windows_over_six_weeks() -> None:
         slack.run_sync_archive(ref, lookback="7w", refresh=False)
 
 
-def test_thread_window_archive_centers_sync_on_permalink(monkeypatch, tmp_path: Path) -> None:
+def test_thread_window_archive_centers_sync_on_permalink(
+    monkeypatch, tmp_path: Path
+) -> None:
     thread_ref = slack.SlackRef(
         raw="https://example.slack.com/archives/C12345678/p1773085070240949",
         workspace="demo",
@@ -564,13 +616,19 @@ def test_thread_window_archive_centers_sync_on_permalink(monkeypatch, tmp_path: 
     thread_center = slack.slack_ts_to_datetime(thread_ref.thread_ts)
     monkeypatch.setattr(slack, "utc_now", lambda: thread_center + dt.timedelta(weeks=4))
     monkeypatch.setattr(slack, "workspace_archive_result", lambda workspace: result)
-    monkeypatch.setattr(slack, "thread_window_is_covered", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        slack, "thread_window_is_covered", lambda *args, **kwargs: False
+    )
 
-    def fake_run_archive_into_workspace(ref, *, result, time_from, time_to, timeout_seconds=None):
+    def fake_run_archive_into_workspace(
+        ref, *, result, time_from, time_to, timeout_seconds=None
+    ):
         calls.append((ref.kind, time_from, time_to))
         return result
 
-    monkeypatch.setattr(slack, "run_archive_into_workspace", fake_run_archive_into_workspace)
+    monkeypatch.setattr(
+        slack, "run_archive_into_workspace", fake_run_archive_into_workspace
+    )
 
     out = slack.ensure_thread_window_archive(thread_ref, refresh=False)
 
@@ -616,7 +674,9 @@ def test_thread_window_archive_reuses_thread_targeted_coverage(
     assert slack.ensure_thread_window_archive(thread_ref, refresh=False) == result
 
 
-def test_sync_supports_explicit_bounded_window(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_sync_supports_explicit_bounded_window(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
     ref = slack.SlackRef(
         raw="C12345678",
         workspace="demo",
@@ -632,21 +692,27 @@ def test_sync_supports_explicit_bounded_window(monkeypatch, capsys, tmp_path: Pa
     calls: list[tuple[str, str]] = []
     seen_lookbacks: list[str | None] = []
 
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(slack, "resolve_slack_ref", lambda raw, workspace: ref)
     monkeypatch.setattr(
         slack,
         "_run_bounded_archive_window",
-        lambda ref, since, until, refresh: calls.append(
-            (slack.format_utc_iso(since) or "", slack.format_utc_iso(until) or "")
-        )
-        or result,
+        lambda ref, since, until, refresh: (
+            calls.append(
+                (slack.format_utc_iso(since) or "", slack.format_utc_iso(until) or "")
+            )
+            or result
+        ),
     )
     monkeypatch.setattr(
         slack,
         "sync_result",
-        lambda result, ref, lookback: seen_lookbacks.append(lookback)
-        or {"workspace": ref.workspace, "channel": ref.channel_id},
+        lambda result, ref, lookback: (
+            seen_lookbacks.append(lookback)
+            or {"workspace": ref.workspace, "channel": ref.channel_id}
+        ),
     )
 
     code = slack.main(
@@ -767,7 +833,9 @@ def test_query_search_all_and_any_modes() -> None:
                 "1773085070.240949",
                 "1773085070.240949",
                 "ABC and example connector together",
-                json.dumps({"user": "U12345678", "text": "ABC and example connector together"}),
+                json.dumps(
+                    {"user": "U12345678", "text": "ABC and example connector together"}
+                ),
                 1,
                 1,
             ),
@@ -817,7 +885,10 @@ def test_search_follow_command_prefers_root_thread_permalink() -> None:
         "https://demo.slack.com/archives/C12345678/p1773081279142849?thread_ts=1773075428.384009"
     )
 
-    assert command == "gotta read https://demo.slack.com/archives/C12345678/p1773075428384009"
+    assert (
+        command
+        == "gotta read https://demo.slack.com/archives/C12345678/p1773075428384009"
+    )
 
 
 def test_normalize_live_search_match_prefers_root_thread_permalink() -> None:
@@ -849,7 +920,9 @@ def test_normalize_live_search_match_prefers_root_thread_permalink() -> None:
     )
 
 
-def test_normalize_live_search_match_synthesizes_reply_permalink_with_thread_context() -> None:
+def test_normalize_live_search_match_synthesizes_reply_permalink_with_thread_context() -> (
+    None
+):
     item = slack._normalize_live_search_match(
         "demo",
         {
@@ -973,7 +1046,9 @@ def test_live_search_literal_quotes_exact_phrase() -> None:
         match_mode="literal",
     )
 
-    assert slack._live_search_queries(spec) == ['"ghost of relay past, present, and future"']
+    assert slack._live_search_queries(spec) == [
+        '"ghost of relay past, present, and future"'
+    ]
 
 
 def test_search_live_payload_preserves_native_result_order(monkeypatch) -> None:
@@ -1027,8 +1102,14 @@ def test_search_live_payload_preserves_native_result_order(monkeypatch) -> None:
     )
 
     assert calls == [{"query": "ABC", "count": "20"}]
-    assert [item["text"] for item in result["results"]] == ["first result", "second result"]
-    assert [thread["title"] for thread in result["threads"]] == ["first result", "second result"]
+    assert [item["text"] for item in result["results"]] == [
+        "first result",
+        "second result",
+    ]
+    assert [thread["title"] for thread in result["threads"]] == [
+        "first result",
+        "second result",
+    ]
 
 
 def test_parse_slackdump_auth_export() -> None:
@@ -1043,11 +1124,15 @@ def test_parse_slackdump_auth_export() -> None:
 
 
 def test_live_channel_search_does_not_require_recent_sync(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(
         slack,
         "try_opportunistic_sync",
-        lambda ref: (_ for _ in ()).throw(AssertionError("should not opportunistically sync")),
+        lambda ref: (_ for _ in ()).throw(
+            AssertionError("should not opportunistically sync")
+        ),
     )
     monkeypatch.setattr(
         slack,
@@ -1101,7 +1186,9 @@ def test_live_channel_search_does_not_require_recent_sync(monkeypatch, capsys) -
 
 
 def test_live_search_missing_auth_returns_typed_error(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(
         slack,
         "ensure_live_search_auth",
@@ -1117,27 +1204,31 @@ def test_live_search_missing_auth_returns_typed_error(monkeypatch, capsys) -> No
 
 
 def test_live_search_preserves_date_qualifier_intent(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     seen: list[dict[str, object]] = []
     monkeypatch.setattr(
         slack,
         "search_live_payload",
-        lambda **kwargs: seen.append(kwargs)
-        or {
-            "workspace": "demo",
-            "query": kwargs["query"],
-            "terms": ["ABC"],
-            "modifiers": ["before:2025-01-01"],
-            "matchMode": kwargs["match_mode"],
-            "scope": "workspace",
-            "source": "live-search",
-            "channelCount": 0,
-            "channels": [],
-            "resultCount": 0,
-            "threadCount": 0,
-            "threads": [],
-            "results": [],
-        },
+        lambda **kwargs: (
+            seen.append(kwargs)
+            or {
+                "workspace": "demo",
+                "query": kwargs["query"],
+                "terms": ["ABC"],
+                "modifiers": ["before:2025-01-01"],
+                "matchMode": kwargs["match_mode"],
+                "scope": "workspace",
+                "source": "live-search",
+                "channelCount": 0,
+                "channels": [],
+                "resultCount": 0,
+                "threadCount": 0,
+                "threads": [],
+                "results": [],
+            }
+        ),
     )
 
     code = slack.main(
@@ -1162,7 +1253,9 @@ def test_live_search_preserves_date_qualifier_intent(monkeypatch, capsys) -> Non
 def test_cmd_get_channel_url_uses_cached_envelope_without_crashing(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(
         slack,
         "resolve_slack_ref",
@@ -1234,7 +1327,10 @@ def test_build_threads_falls_back_to_message_channel_id_for_permalink() -> None:
         ],
     )
 
-    assert threads[0]["permalink"] == "https://demo.slack.com/archives/C12345678/p1773085070240949"
+    assert (
+        threads[0]["permalink"]
+        == "https://demo.slack.com/archives/C12345678/p1773085070240949"
+    )
 
 
 def test_normalize_messages_preserves_thread_context_in_reply_permalink() -> None:
@@ -1269,7 +1365,9 @@ def test_normalize_messages_preserves_thread_context_in_reply_permalink() -> Non
                 1,
             ),
         )
-        rows = conn.execute("SELECT channel_id, ts, thread_ts, txt, data FROM message").fetchall()
+        rows = conn.execute(
+            "SELECT channel_id, ts, thread_ts, txt, data FROM message"
+        ).fetchall()
     finally:
         conn.close()
 
@@ -1321,7 +1419,9 @@ def test_build_envelope_thread_uses_directory_channel_for_root_channel(
             ),
         )
         monkeypatch.setattr(slack, "latest_user_rows", lambda conn, user_ids: {})
-        monkeypatch.setattr(slack, "ensure_user_directory_entries", lambda workspace, user_ids: {})
+        monkeypatch.setattr(
+            slack, "ensure_user_directory_entries", lambda workspace, user_ids: {}
+        )
         monkeypatch.setattr(slack, "latest_channel_row", lambda conn, channel_id: None)
         monkeypatch.setattr(
             slack,
@@ -1446,7 +1546,10 @@ def test_render_markdown_marks_thread_reads_full_fidelity() -> None:
     )
 
     assert "- _Retrieval_: `materialized`" in rendered
-    assert "- _Fidelity_: `full` (full thread render from the hydrated bounded archive window)" in rendered
+    assert (
+        "- _Fidelity_: `full` (full thread render from the hydrated bounded archive window)"
+        in rendered
+    )
     assert "- Visibility: internal (same_company, high)" in rendered
 
 
@@ -1476,7 +1579,9 @@ def test_normalize_live_search_match_carries_channel_visibility() -> None:
 def test_cmd_get_thread_hydration_retries_refresh_automatically(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     ref = slack.SlackRef(
         raw="https://demo.slack.com/archives/C12345678/p1773085070240949",
         workspace="demo",
@@ -1499,8 +1604,14 @@ def test_cmd_get_thread_hydration_retries_refresh_automatically(
     monkeypatch.setattr(
         slack,
         "ensure_thread_window_archive",
-        lambda ref, refresh, timeout_seconds=None: calls.append((refresh, timeout_seconds))
-        or ((_ for _ in ()).throw(slack.ToolError("archive sync failed")) if not refresh else result),
+        lambda ref, refresh, timeout_seconds=None: (
+            calls.append((refresh, timeout_seconds))
+            or (
+                (_ for _ in ()).throw(slack.ToolError("archive sync failed"))
+                if not refresh
+                else result
+            )
+        ),
     )
     monkeypatch.setattr(
         slack,
@@ -1528,16 +1639,30 @@ def test_cmd_get_thread_hydration_retries_refresh_automatically(
         (True, slack.DEFAULT_THREAD_HYDRATION_TIMEOUT_SECONDS),
     ]
     assert "ok" in captured.out
-    assert "retrieval state: queued slack thread C12345678:1773085070.240949" in captured.err
-    assert "retrieval state: hydrating Slack thread through the native bounded archive window" in captured.err
-    assert "retrieval state: hydrating slack thread retry with an explicit archive refresh" in captured.err
-    assert "retrieval state: materialized bounded thread refresh; reading hydrated archive" in captured.err
+    assert (
+        "retrieval state: queued slack thread C12345678:1773085070.240949"
+        in captured.err
+    )
+    assert (
+        "retrieval state: hydrating Slack thread through the native bounded archive window"
+        in captured.err
+    )
+    assert (
+        "retrieval state: hydrating slack thread retry with an explicit archive refresh"
+        in captured.err
+    )
+    assert (
+        "retrieval state: materialized bounded thread refresh; reading hydrated archive"
+        in captured.err
+    )
 
 
 def test_cmd_get_thread_hydration_failure_reports_automatic_refresh_attempt(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(
         slack,
         "resolve_slack_ref",
@@ -1554,8 +1679,10 @@ def test_cmd_get_thread_hydration_failure_reports_automatic_refresh_attempt(
     monkeypatch.setattr(
         slack,
         "ensure_thread_window_archive",
-        lambda ref, refresh, timeout_seconds=None: attempts.append((refresh, timeout_seconds))
-        or (_ for _ in ()).throw(slack.ToolError("archive sync failed")),
+        lambda ref, refresh, timeout_seconds=None: (
+            attempts.append((refresh, timeout_seconds))
+            or (_ for _ in ()).throw(slack.ToolError("archive sync failed"))
+        ),
     )
     monkeypatch.setattr(
         slack,
@@ -1588,7 +1715,9 @@ def test_cmd_get_thread_hydration_failure_reports_automatic_refresh_attempt(
 def test_cmd_get_thread_cached_archive_read_failure_retries_refresh(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     ref = slack.SlackRef(
         raw="https://demo.slack.com/archives/C12345678/p1773085070240949",
         workspace="demo",
@@ -1611,8 +1740,9 @@ def test_cmd_get_thread_cached_archive_read_failure_retries_refresh(
     monkeypatch.setattr(
         slack,
         "ensure_thread_window_archive",
-        lambda ref, refresh, timeout_seconds=None: attempts.append((refresh, timeout_seconds))
-        or result,
+        lambda ref, refresh, timeout_seconds=None: (
+            attempts.append((refresh, timeout_seconds)) or result
+        ),
     )
     loads = {"count": 0}
 
@@ -1647,14 +1777,22 @@ def test_cmd_get_thread_cached_archive_read_failure_retries_refresh(
     ]
     assert loads["count"] == 2
     assert "ok" in captured.out
-    assert "retrieval state: hydrating slack thread retry with an explicit archive refresh" in captured.err
-    assert "retrieval state: materialized bounded thread refresh; reading hydrated archive" in captured.err
+    assert (
+        "retrieval state: hydrating slack thread retry with an explicit archive refresh"
+        in captured.err
+    )
+    assert (
+        "retrieval state: materialized bounded thread refresh; reading hydrated archive"
+        in captured.err
+    )
 
 
 def test_cmd_get_reply_permalink_with_thread_ts_query_uses_root_thread_ts(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     captured: dict[str, str] = {}
 
     def fake_ensure(ref, refresh, timeout_seconds=None):
@@ -1671,7 +1809,11 @@ def test_cmd_get_reply_permalink_with_thread_ts_query_uses_root_thread_ts(
         "load_envelope_from_archive",
         lambda *args, **kwargs: {
             "workspace": "demo",
-            "ref": {"kind": "thread", "channelId": "C12345678", "threadTs": captured["thread_ts"]},
+            "ref": {
+                "kind": "thread",
+                "channelId": "C12345678",
+                "threadTs": captured["thread_ts"],
+            },
             "channel": {"id": "C12345678", "name": "demo"},
             "title": "Slack Thread: Example",
             "messageCount": 0,
@@ -1701,7 +1843,9 @@ def test_cmd_get_reply_permalink_with_thread_ts_query_uses_root_thread_ts(
 def test_cmd_get_permalink_reports_inaccessible_channel_separately(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(slack, "resolve_slack_ref", slack.parse_slack_ref)
     monkeypatch.setattr(
         slack,
@@ -1730,13 +1874,21 @@ def test_cmd_get_permalink_reports_inaccessible_channel_separately(
 
     assert code == 1
     err = capsys.readouterr().err
-    assert "thread permalink retrieval could not read the underlying channel archive" in err
-    assert "source-access limitation rather than a simple bounded-archive coverage gap" in err
+    assert (
+        "thread permalink retrieval could not read the underlying channel archive"
+        in err
+    )
+    assert (
+        "source-access limitation rather than a simple bounded-archive coverage gap"
+        in err
+    )
     assert "detail: channel C12345678 not accessible via slackdump archive" in err
     assert "thread permalink retrieval has a bounded-archive coverage gap" not in err
 
 
-def test_build_envelope_thread_missing_rows_never_suggests_pull_recent(monkeypatch) -> None:
+def test_build_envelope_thread_missing_rows_never_suggests_pull_recent(
+    monkeypatch,
+) -> None:
     conn = sqlite3.connect(":memory:")
     try:
         monkeypatch.setattr(slack, "load_message_rows", lambda *args, **kwargs: [])
@@ -1756,5 +1908,8 @@ def test_build_envelope_thread_missing_rows_never_suggests_pull_recent(monkeypat
     message = str(excinfo.value)
     assert "--pull-recent" not in message
     assert "--refresh" in message
-    assert "exact Slack thread target is absent from the hydrated bounded archive window" in message
+    assert (
+        "exact Slack thread target is absent from the hydrated bounded archive window"
+        in message
+    )
     assert "coverage hole" in message

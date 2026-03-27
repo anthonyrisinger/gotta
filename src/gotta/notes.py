@@ -31,7 +31,9 @@ def actor_notes_records(work_dir: Path, actor_name: str) -> list[dict[str, objec
     return read_jsonl_records(actor_notes_log_path(work_dir, actor_name))
 
 
-def visible_actor_notes_records(work_dir: Path, actor_name: str) -> list[dict[str, object]]:
+def visible_actor_notes_records(
+    work_dir: Path, actor_name: str
+) -> list[dict[str, object]]:
     visible: list[dict[str, object]] = []
     for record in actor_notes_records(work_dir, actor_name):
         author = str(record.get("author") or "").strip()
@@ -82,10 +84,9 @@ def actor_voice(work_dir: Path, actor_name: str) -> str:
     visible_oops = visible_channel_records(actor_root, OOPS_CHANNEL)
     if _has_nonempty_note_from(visible_notes, normalized_actor):
         return "present"
-    if (
-        _has_nonempty_actor_record(visible_oops, normalized_actor)
-        or _has_actor_evidence(work_dir, normalized_actor)
-    ):
+    if _has_nonempty_actor_record(
+        visible_oops, normalized_actor
+    ) or _has_actor_evidence(work_dir, normalized_actor):
         return "pulse"
     if any(str(record.get("message") or "").strip() for record in visible_notes) or any(
         str(record.get("message") or "").strip() for record in visible_oops

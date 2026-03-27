@@ -17,7 +17,9 @@ def test_read_local_directory_renders_native_listing(tmp_path: Path, capsys) -> 
     root = tmp_path / "repo"
     root.mkdir()
     (root / ".git").mkdir()
-    (root / ".git" / "config").write_text("[core]\n\trepositoryformatversion = 0\n", encoding="utf-8")
+    (root / ".git" / "config").write_text(
+        "[core]\n\trepositoryformatversion = 0\n", encoding="utf-8"
+    )
     (root / "docs").mkdir()
     (root / "docs" / "README.md").write_text("# Docs\n", encoding="utf-8")
 
@@ -38,7 +40,9 @@ def test_read_requires_session_context_for_relative_hidden_file(
     repo.mkdir()
     (repo / ".git").mkdir()
     config = repo / ".git" / "config"
-    config.write_text("[remote \"origin\"]\n\turl = git@github.com:acme/widgets.git\n", encoding="utf-8")
+    config.write_text(
+        '[remote "origin"]\n\turl = git@github.com:acme/widgets.git\n', encoding="utf-8"
+    )
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GOTTA_SESSION_REPO", str(repo))
@@ -67,9 +71,13 @@ def test_read_prefers_session_relative_target_over_shell_cwd(
     assert "cwd copy" not in output
 
 
-def test_read_can_follow_stored_content_digest(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_read_can_follow_stored_content_digest(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     result = content.materialize_bytes(
@@ -87,9 +95,13 @@ def test_read_can_follow_stored_content_digest(monkeypatch, tmp_path: Path, caps
     assert "# Stored body" in output
 
 
-def test_read_can_follow_explicit_content_locator(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_read_can_follow_explicit_content_locator(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     result = content.materialize_bytes(
@@ -111,7 +123,9 @@ def test_read_can_follow_explicit_content_locator_with_explicit_session(
     tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
@@ -122,14 +136,20 @@ def test_read_can_follow_explicit_content_locator_with_explicit_session(
         metadata={"plugin": "read", "locator": "demo", "canonical_locator": "demo"},
     )
 
-    assert read.main(["--session", str(dirs.session_dir), f"content:{result.digest}"]) == 0
+    assert (
+        read.main(["--session", str(dirs.session_dir), f"content:{result.digest}"]) == 0
+    )
     output = capsys.readouterr().out
     assert "# Stored body" in output
 
 
-def test_read_can_follow_unique_session_artifact_name(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_read_can_follow_unique_session_artifact_name(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.materialize_bytes(
@@ -147,9 +167,13 @@ def test_read_can_follow_unique_session_artifact_name(monkeypatch, tmp_path: Pat
     assert "# Search Artifact" in output
 
 
-def test_read_can_follow_explicit_artifact_locator(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_read_can_follow_explicit_artifact_locator(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     result = content.materialize_bytes(
@@ -162,7 +186,9 @@ def test_read_can_follow_explicit_artifact_locator(monkeypatch, tmp_path: Path, 
     monkeypatch.setenv("GOTTA_SESSION_DIR", str(dirs.session_dir))
     monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(dirs.content_dir))
 
-    assert read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+    assert (
+        read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+    )
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
 
@@ -171,7 +197,9 @@ def test_read_can_follow_explicit_artifact_locator_with_explicit_session(
     tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
@@ -200,7 +228,9 @@ def test_read_can_follow_artifact_locator_from_session_root_state_env(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
@@ -215,7 +245,9 @@ def test_read_can_follow_artifact_locator_from_session_root_state_env(
     monkeypatch.delenv("GOTTA_SESSION_CONTENT_DIR", raising=False)
     monkeypatch.chdir(dirs.session_dir)
 
-    assert read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+    assert (
+        read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+    )
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
 
@@ -224,7 +256,9 @@ def test_read_can_follow_artifact_locator_from_actor_root_state_env(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content.write_state_env(dirs)
@@ -252,7 +286,9 @@ def test_read_can_follow_artifact_locator_from_actor_root_state_env(
     monkeypatch.delenv("GOTTA_SESSION_CONTENT_DIR", raising=False)
     monkeypatch.chdir(actor_root)
 
-    assert read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+    assert (
+        read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+    )
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
 
@@ -287,7 +323,9 @@ def test_read_missing_actor_goal_surface_reports_missing_local_path(
     assert "unsupported target" not in err
 
 
-def test_read_seeded_actor_local_charter_surfaces(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_read_seeded_actor_local_charter_surfaces(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     root = tmp_path / "session-root"
 
     assert session.main(["init", "--session", str(root)]) == 0
@@ -311,9 +349,13 @@ def test_read_seeded_actor_local_charter_surfaces(monkeypatch, tmp_path: Path, c
     assert "# Seed Actor Goal Placeholder" in goal_output
 
 
-def test_read_does_not_materialize_local_artifact_rereads(monkeypatch, tmp_path: Path) -> None:
+def test_read_does_not_materialize_local_artifact_rereads(
+    monkeypatch, tmp_path: Path
+) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     result = content.materialize_bytes(
@@ -335,20 +377,30 @@ def test_read_ambiguous_session_artifact_name_suggests_explicit_artifact_locator
     monkeypatch, tmp_path: Path
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=session_root, content_dir=session_root / "content")
+    dirs = content.ResolvedDirs(
+        session_dir=session_root, content_dir=session_root / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     first = content.materialize_bytes(
         b"# Search Artifact A\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
-        metadata={"plugin": "slack", "locator": "demo-a", "canonical_locator": "demo-a"},
+        metadata={
+            "plugin": "slack",
+            "locator": "demo-a",
+            "canonical_locator": "demo-a",
+        },
     )
     second = content.materialize_bytes(
         b"# Search Artifact B\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
-        metadata={"plugin": "slack", "locator": "demo-b", "canonical_locator": "demo-b"},
+        metadata={
+            "plugin": "slack",
+            "locator": "demo-b",
+            "canonical_locator": "demo-b",
+        },
     )
 
     monkeypatch.setenv("GOTTA_SESSION_DIR", str(dirs.session_dir))
@@ -425,7 +477,10 @@ def test_read_fetch_url_summarizes_html_error_pages(monkeypatch) -> None:
     with pytest.raises(RuntimeError) as excinfo:
         read.fetch_url("https://github.com/acme/widgets/blob/main/missing.md")
 
-    assert str(excinfo.value) == "download failed with 404: Page not found · GitHub · GitHub"
+    assert (
+        str(excinfo.value)
+        == "download failed with 404: Page not found · GitHub · GitHub"
+    )
 
 
 def test_read_fetch_url_uses_timeout_and_caps_remote_body(monkeypatch) -> None:
@@ -477,13 +532,17 @@ def test_read_fetch_url_reports_timeouts_cleanly(monkeypatch) -> None:
 
 
 def test_read_response_body_does_not_mark_exact_cap_as_truncated() -> None:
-    data, truncated = read._read_response_body(io.BytesIO(b"a" * read.REMOTE_FETCH_MAX_BYTES))
+    data, truncated = read._read_response_body(
+        io.BytesIO(b"a" * read.REMOTE_FETCH_MAX_BYTES)
+    )
 
     assert len(data) == read.REMOTE_FETCH_MAX_BYTES
     assert truncated is False
 
 
-def test_read_remote_url_reports_truncation_and_still_applies_head(monkeypatch, capsys) -> None:
+def test_read_remote_url_reports_truncation_and_still_applies_head(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(
         read,
         "resolve_read_target",
@@ -511,21 +570,27 @@ def test_read_remote_url_reports_truncation_and_still_applies_head(monkeypatch, 
 
 
 def test_read_view_shaping_makes_routed_targets_non_materializing() -> None:
-    resolved = target.resolve_read_target(["https://github.com/acme/widgets", "--head", "3"])
+    resolved = target.resolve_read_target(
+        ["https://github.com/acme/widgets", "--head", "3"]
+    )
 
     assert resolved.kind == "routed"
     assert resolved.should_materialize is True
 
 
 def test_read_view_shaping_makes_remote_urls_non_materializing() -> None:
-    resolved = target.resolve_read_target(["https://example.com/manual.txt", "--tail", "5"])
+    resolved = target.resolve_read_target(
+        ["https://example.com/manual.txt", "--tail", "5"]
+    )
 
     assert resolved.kind == "remote_url"
     assert resolved.should_materialize is True
 
 
 def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
-    resolved = target.resolve_read_target(["https://example.com/manual.txt", "--section", "   "])
+    resolved = target.resolve_read_target(
+        ["https://example.com/manual.txt", "--section", "   "]
+    )
 
     assert resolved.kind == "remote_url"
     assert resolved.request.section == ""
@@ -535,8 +600,14 @@ def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
 def test_read_help_text_describes_plain_vs_shaped_materialization() -> None:
     description = target.build_parser().description or ""
 
-    assert "Remote/provider reads store durable evidence only when an initialized session" in description
-    assert "`--head`, `--tail`, and `--section` only trim what is shown to the operator" in read.USAGE
+    assert (
+        "Remote/provider reads store durable evidence only when an initialized session"
+        in description
+    )
+    assert (
+        "`--head`, `--tail`, and `--section` only trim what is shown to the operator"
+        in read.USAGE
+    )
     assert "--actor" in target.build_parser().format_help()
 
 
@@ -574,12 +645,16 @@ def test_execute_materializing_read_keeps_full_routed_bytes_under_bounded_view(
     monkeypatch.setattr(
         read,
         "get_plugin",
-        lambda name: SimpleNamespace(capture=fake_capture, project=fake_project)
-        if name == "github"
-        else None,
+        lambda name: (
+            SimpleNamespace(capture=fake_capture, project=fake_project)
+            if name == "github"
+            else None
+        ),
     )
 
-    outcome = read.execute_materializing_read(["https://github.com/acme/widgets", "--head", "3"])
+    outcome = read.execute_materializing_read(
+        ["https://github.com/acme/widgets", "--head", "3"]
+    )
 
     assert outcome.code == 0
     assert outcome.display_bytes.decode("utf-8") == "# Title\n\nline 1\n"
@@ -595,7 +670,9 @@ def test_execute_materializing_read_keeps_full_remote_bytes_under_bounded_view(
         lambda _target: (b"line 1\nline 2\nline 3\n", "text/plain", False),
     )
 
-    outcome = read.execute_materializing_read(["https://example.com/manual.txt", "--tail", "2"])
+    outcome = read.execute_materializing_read(
+        ["https://example.com/manual.txt", "--tail", "2"]
+    )
 
     assert outcome.code == 0
     assert outcome.display_bytes.decode("utf-8") == "line 2\nline 3\n"
@@ -677,7 +754,10 @@ def test_read_delegates_github_commit_history_limit_after_target(monkeypatch) ->
 
     monkeypatch.setattr(read, "delegate", fake_delegate)
 
-    assert read.main(["https://github.com/acme/widgets/commits/main", "--limit", "10"]) == 0
+    assert (
+        read.main(["https://github.com/acme/widgets/commits/main", "--limit", "10"])
+        == 0
+    )
     assert seen == [
         (
             "github",
@@ -738,7 +818,9 @@ def test_read_can_follow_canonical_granola_search_locator(monkeypatch) -> None:
     assert seen == [("granola", ["search", "--limit", "5", "latency"])]
 
 
-def test_read_can_follow_canonical_granola_transcript_search_locator(monkeypatch) -> None:
+def test_read_can_follow_canonical_granola_transcript_search_locator(
+    monkeypatch,
+) -> None:
     seen: list[tuple[str, list[str]]] = []
 
     def fake_delegate(plugin: str, argv: list[str]) -> int:
@@ -774,18 +856,35 @@ def test_read_can_follow_canonical_search_locator_with_flags(monkeypatch) -> Non
     monkeypatch.setattr(read, "delegate", fake_delegate)
 
     assert (
-        read.main(["slack:search --workspace example-workspace --source archive --limit 10 --output markdown ABC"])
+        read.main(
+            [
+                "slack:search --workspace example-workspace --source archive --limit 10 --output markdown ABC"
+            ]
+        )
         == 0
     )
     assert seen == [
         (
             "slack",
-            ["search", "--workspace", "example-workspace", "--source", "archive", "--limit", "10", "--output", "markdown", "ABC"],
+            [
+                "search",
+                "--workspace",
+                "example-workspace",
+                "--source",
+                "archive",
+                "--limit",
+                "10",
+                "--output",
+                "markdown",
+                "ABC",
+            ],
         )
     ]
 
 
-def test_read_can_follow_canonical_search_locator_with_equals_flags_unquoted(monkeypatch) -> None:
+def test_read_can_follow_canonical_search_locator_with_equals_flags_unquoted(
+    monkeypatch,
+) -> None:
     seen: list[tuple[str, list[str]]] = []
 
     def fake_delegate(plugin: str, argv: list[str]) -> int:
@@ -798,7 +897,9 @@ def test_read_can_follow_canonical_search_locator_with_equals_flags_unquoted(mon
     assert seen == [("jira", ["search", "--limit", "10", "Architecture"])]
 
 
-def test_read_can_follow_canonical_search_locator_with_flags_after_query(monkeypatch) -> None:
+def test_read_can_follow_canonical_search_locator_with_flags_after_query(
+    monkeypatch,
+) -> None:
     seen: list[tuple[str, list[str]]] = []
 
     def fake_delegate(plugin: str, argv: list[str]) -> int:
@@ -807,11 +908,21 @@ def test_read_can_follow_canonical_search_locator_with_flags_after_query(monkeyp
 
     monkeypatch.setattr(read, "delegate", fake_delegate)
 
-    assert read.main(["slack:search ABC reboot --workspace example-workspace --limit 10"]) == 0
+    assert (
+        read.main(["slack:search ABC reboot --workspace example-workspace --limit 10"])
+        == 0
+    )
     assert seen == [
         (
             "slack",
-            ["search", "--workspace", "example-workspace", "--limit", "10", "ABC reboot"],
+            [
+                "search",
+                "--workspace",
+                "example-workspace",
+                "--limit",
+                "10",
+                "ABC reboot",
+            ],
         )
     ]
 
@@ -826,7 +937,9 @@ def test_read_can_follow_canonical_github_search_locator(monkeypatch) -> None:
     monkeypatch.setattr(read, "delegate", fake_delegate)
 
     assert read.main(["github:search --type pr --repo acme/widgets ABC"]) == 0
-    assert seen == [("github", ["search", "--type", "pr", "--repo", "acme/widgets", "ABC"])]
+    assert seen == [
+        ("github", ["search", "--type", "pr", "--repo", "acme/widgets", "ABC"])
+    ]
 
 
 def test_read_can_follow_canonical_global_github_search_locator(monkeypatch) -> None:
@@ -852,7 +965,9 @@ def test_read_can_follow_slack_workspace_locator(monkeypatch) -> None:
     monkeypatch.setattr(read, "delegate", fake_delegate)
 
     assert read.main(["slack:example-workspace"]) == 0
-    assert seen == [("slack", ["status", "--workspace", "example-workspace", "--output", "summary"])]
+    assert seen == [
+        ("slack", ["status", "--workspace", "example-workspace", "--output", "summary"])
+    ]
 
 
 def test_read_joins_unquoted_multiword_search_locator(monkeypatch) -> None:
@@ -868,7 +983,9 @@ def test_read_joins_unquoted_multiword_search_locator(monkeypatch) -> None:
     assert seen == [("jira", ["search", "ABC reboot"])]
 
 
-def test_read_accepts_option_like_locator_tails_after_end_of_options(monkeypatch) -> None:
+def test_read_accepts_option_like_locator_tails_after_end_of_options(
+    monkeypatch,
+) -> None:
     seen: list[tuple[str, list[str]]] = []
 
     def fake_delegate(plugin: str, argv: list[str]) -> int:

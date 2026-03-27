@@ -14,7 +14,11 @@ from typing import TextIO
 
 from gotta.compat import UTC, datetime
 from gotta.actors import ACTOR_SPEAKER_ENV, resolve_actor_context
-from gotta.content import SESSION_REPO_ENV, load_state_env_at_root, session_is_initialized
+from gotta.content import (
+    SESSION_REPO_ENV,
+    load_state_env_at_root,
+    session_is_initialized,
+)
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.friction import append_oops_record
 from gotta.notes import (
@@ -109,7 +113,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         Session layout:
 
         - your actor session root: `{actor_dir}`
-        - shared evidence store: `{actor_dir / 'content'}`
+        - shared evidence store: `{actor_dir / "content"}`
 
         Readable actor surfaces:
 
@@ -122,7 +126,7 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
 
         Canonical actor mutation state:
 
-        - actor-local todo log: `{actor_dir / 'state' / 'todo.jsonl'}`
+        - actor-local todo log: `{actor_dir / "state" / "todo.jsonl"}`
         - notes log: `{notes_log}`
 
         Current actor want / intent frame:
@@ -212,7 +216,13 @@ def _actor_copilot_config_dir(work_root: Path, actor_name: str) -> Path:
 
 def _mark_actor_runtime_active(work_root: Path, actor_name: str) -> None:
     current = _read_actor_state(work_root, actor_name)
-    if str(current.get("status") or "") in {"completed", "failed", "incomplete", "rejected", "signed_off"}:
+    if str(current.get("status") or "") in {
+        "completed",
+        "failed",
+        "incomplete",
+        "rejected",
+        "signed_off",
+    }:
         _write_actor_state(
             work_root,
             actor_name,
@@ -317,7 +327,9 @@ def _apply_feedback_directive(
         action="write into this actor branch",
     )
     if surface == "notes":
-        append_actor_note(actor_root, actor_name, message=message, author=rendered_author)
+        append_actor_note(
+            actor_root, actor_name, message=message, author=rendered_author
+        )
         session_plugin._reset_note_check_feedback(actor_root, actor_name)
         session_plugin._append_actor_event(
             actor_root,
@@ -411,8 +423,18 @@ def _finalize_actor_runtime_exit(
         "pid": None,
     }
     final_status = current_status
-    if final_status not in {"completed", "failed", "incomplete", "rejected", "signed_off"}:
-        if returncode == 0 and requested_status in {"completed", "failed", "signed_off"}:
+    if final_status not in {
+        "completed",
+        "failed",
+        "incomplete",
+        "rejected",
+        "signed_off",
+    }:
+        if returncode == 0 and requested_status in {
+            "completed",
+            "failed",
+            "signed_off",
+        }:
             final_status = requested_status
         elif returncode == 0:
             final_status = "completed"
@@ -420,17 +442,23 @@ def _finalize_actor_runtime_exit(
             final_status = "failed"
     updates["status"] = final_status
     if final_status == "signed_off":
-        updates["signoff_at"] = str(current.get("signoff_at") or requested_at or finished_at)
-        updates["signoff_summary"] = str(
-            current.get("signoff_summary") or requested_summary or ""
-        ) or None
+        updates["signoff_at"] = str(
+            current.get("signoff_at") or requested_at or finished_at
+        )
+        updates["signoff_summary"] = (
+            str(current.get("signoff_summary") or requested_summary or "") or None
+        )
         updates["summary"] = None
     elif final_status == "failed":
-        updates["summary"] = str(current.get("summary") or requested_summary or "").strip() or None
+        updates["summary"] = (
+            str(current.get("summary") or requested_summary or "").strip() or None
+        )
         updates["signoff_at"] = None
         updates["signoff_summary"] = None
     else:
-        updates["summary"] = str(current.get("summary") or requested_summary or "").strip() or None
+        updates["summary"] = (
+            str(current.get("summary") or requested_summary or "").strip() or None
+        )
     updates["requested_mode"] = None
     updates["requested_status"] = None
     updates["requested_summary"] = None
@@ -528,7 +556,7 @@ def _session_root(args: argparse.Namespace) -> Path:
         raise SystemExit(
             "start or bind a session first with `gotta ...`. Stable interactive "
             "contexts adopt and scaffold their deterministic session on first "
-            "session-aware use. Use `gotta session init --session \"$WS\"` only "
+            'session-aware use. Use `gotta session init --session "$WS"` only '
             "when you intentionally want to scaffold one exact root."
         )
     return root.resolve()
@@ -567,7 +595,9 @@ def _status_actors(
 ) -> list[str]:
     selected = list(session_plugin._selected_actor_ids(work_root))
     if not actor_name:
-        explicit_root = Path(explicit_session).expanduser().resolve() if explicit_session else None
+        explicit_root = (
+            Path(explicit_session).expanduser().resolve() if explicit_session else None
+        )
         explicit_shared = bool(
             explicit_root is not None
             and (
@@ -644,12 +674,16 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
         if state.get("still_running"):
             print("  still_running: true")
         if state.get("requested_pending"):
-            print(f"  pending_disposition: {state.get('requested_label') or state['requested_status']}")
+            print(
+                f"  pending_disposition: {state.get('requested_label') or state['requested_status']}"
+            )
         if state.get("next_step"):
             print(f"  next_step: {state['next_step']}")
 
 
-def _sync_actor_outputs(work_root: Path, actor_name: str, *, sync_todo: bool = False) -> None:
+def _sync_actor_outputs(
+    work_root: Path, actor_name: str, *, sync_todo: bool = False
+) -> None:
     if sync_todo:
         session_plugin._sync_actor_todo_state(work_root)
 
@@ -667,7 +701,9 @@ def _record_requested_disposition(
     action_label: str | None = None,
 ) -> int:
     disposition_label = action_label or (
-        "sign-off" if requested_status == "signed_off" else requested_status.replace("_", "-")
+        "sign-off"
+        if requested_status == "signed_off"
+        else requested_status.replace("_", "-")
     )
     timestamp = _timestamp()
     _write_actor_state(
@@ -680,7 +716,9 @@ def _record_requested_disposition(
             "requested_at": timestamp,
         },
     )
-    session_plugin._append_actor_event(work_root, actor_name, event=event, detail=summary)
+    session_plugin._append_actor_event(
+        work_root, actor_name, event=event, detail=summary
+    )
     session_plugin._actor_log_line(work_root, actor_name, log_message)
     _sync_actor_outputs(work_root, actor_name)
     print(
@@ -1053,7 +1091,9 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
             "requested_at": None,
         },
     )
-    session_plugin._append_actor_event(work_root, actor_name, event="starting", detail=str(goal_path))
+    session_plugin._append_actor_event(
+        work_root, actor_name, event="starting", detail=str(goal_path)
+    )
     session_plugin._actor_log_line(work_root, actor_name, f"starting with {model}")
     session_plugin._sync_actor_todo_state(work_root)
     _record_launcher_heartbeat(work_root, actor_name)

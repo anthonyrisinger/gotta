@@ -102,7 +102,10 @@ def canonical_locator(argv: list[str]) -> str:
         return "granola:status"
     if args.command == "transcript":
         selector = args.selector.strip()
-        if _is_document_id(selector) and not str(getattr(args, "query", "") or "").strip():
+        if (
+            _is_document_id(selector)
+            and not str(getattr(args, "query", "") or "").strip()
+        ):
             return f"granola:transcript {selector}"
         return f"granola:{shlex.join(argv)}"
     if args.command == "get":
@@ -119,7 +122,11 @@ def preferred_name(argv: list[str], options: object) -> str:
     args = _parse_cli(argv)
     if args.command == "get":
         selector = args.selector.strip()
-        base = selector if _is_document_id(selector) else _slug(selector, fallback="granola")
+        base = (
+            selector
+            if _is_document_id(selector)
+            else _slug(selector, fallback="granola")
+        )
         return f"{base}.json"
     if args.command == "transcript":
         selector = args.selector.strip()
@@ -135,11 +142,17 @@ def preferred_name(argv: list[str], options: object) -> str:
         suffix: list[str] = []
         if args.mode != "auto":
             suffix.append(args.mode)
-        suffix.extend(_window_name_parts(args, default_time_range=DEFAULT_NOTE_TIME_RANGE))
+        suffix.extend(
+            _window_name_parts(args, default_time_range=DEFAULT_NOTE_TIME_RANGE)
+        )
         suffix_text = f"-{'-'.join(suffix)}" if suffix else ""
-        return f"granola-search-{_slug(args.query, fallback='granola')}{suffix_text}.json"
+        return (
+            f"granola-search-{_slug(args.query, fallback='granola')}{suffix_text}.json"
+        )
     if args.command == "search-transcript":
-        suffix = _window_name_parts(args, default_time_range=DEFAULT_TRANSCRIPT_SEARCH_TIME_RANGE)
+        suffix = _window_name_parts(
+            args, default_time_range=DEFAULT_TRANSCRIPT_SEARCH_TIME_RANGE
+        )
         suffix_text = f"-{'-'.join(suffix)}" if suffix else ""
         return f"granola-transcript-search-{_slug(args.query, fallback='granola')}{suffix_text}.json"
     if args.command == "list":
@@ -185,7 +198,9 @@ def route_target(target: str) -> list[str] | None:
     if target.startswith("granola:get "):
         return _route_subcommand("get", target.removeprefix("granola:get "))
     if target.startswith("granola:transcript "):
-        return _route_subcommand("transcript", target.removeprefix("granola:transcript "))
+        return _route_subcommand(
+            "transcript", target.removeprefix("granola:transcript ")
+        )
     if not target.startswith("granola:"):
         return None
     selector = target.removeprefix("granola:").strip()
@@ -300,7 +315,9 @@ def resolve_window(
         before_end = _date_ceiling(before)
         end = before_end if end is None else min(end, before_end)
     if start and end and start > end:
-        raise ToolError("Granola time window is empty; adjust --after, --before, or --time-range")
+        raise ToolError(
+            "Granola time window is empty; adjust --after, --before, or --time-range"
+        )
 
     parts: list[str] = []
     if selected_time_range != "all":
@@ -310,7 +327,9 @@ def resolve_window(
     if before:
         parts.append(f"before {before}")
     description = ", ".join(parts) if parts else "all notes"
-    return WindowSpec(start=start, end=end, time_range=selected_time_range, description=description)
+    return WindowSpec(
+        start=start, end=end, time_range=selected_time_range, description=description
+    )
 
 
 def filter_documents_by_window(
@@ -333,14 +352,18 @@ def filter_documents_by_window(
 def window_payload(window: WindowSpec) -> dict[str, Any]:
     return {
         "timeRange": window.time_range,
-        "after": window.start.isoformat().replace("+00:00", "Z") if window.start else "",
+        "after": window.start.isoformat().replace("+00:00", "Z")
+        if window.start
+        else "",
         "before": window.end.isoformat().replace("+00:00", "Z") if window.end else "",
         "description": window.description,
         "field": "created_at",
     }
 
 
-def _window_name_parts(args: argparse.Namespace, *, default_time_range: str) -> list[str]:
+def _window_name_parts(
+    args: argparse.Namespace, *, default_time_range: str
+) -> list[str]:
     suffix: list[str] = []
     time_range = str(getattr(args, "time_range", "") or "")
     after = str(getattr(args, "after", "") or "")
@@ -364,7 +387,9 @@ def _read_json(path: Path) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise ToolError(f"Granola local session file not found: {path}") from exc
     except json.JSONDecodeError as exc:
-        raise ToolError(f"Granola local session file is not valid JSON: {path}") from exc
+        raise ToolError(
+            f"Granola local session file is not valid JSON: {path}"
+        ) from exc
 
 
 def load_access_token(supabase_path: Path) -> str:
@@ -380,10 +405,14 @@ def load_access_token(supabase_path: Path) -> str:
     elif isinstance(raw_tokens, dict):
         tokens = raw_tokens
     else:
-        raise ToolError(f"Granola local session is missing workos_tokens: {supabase_path}")
+        raise ToolError(
+            f"Granola local session is missing workos_tokens: {supabase_path}"
+        )
     token = str(tokens.get("access_token") or "").strip()
     if not token:
-        raise ToolError(f"Granola local session does not contain an access token: {supabase_path}")
+        raise ToolError(
+            f"Granola local session does not contain an access token: {supabase_path}"
+        )
     return token
 
 
@@ -413,7 +442,10 @@ def request_json(url: str, token: str, payload: dict[str, Any]) -> Any:
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read()
-            if response.headers.get("Content-Encoding") == "gzip" or raw[:2] == b"\x1f\x8b":
+            if (
+                response.headers.get("Content-Encoding") == "gzip"
+                or raw[:2] == b"\x1f\x8b"
+            ):
                 raw = gzip.decompress(raw)
     except urllib.error.HTTPError as exc:
         raise ToolError(_http_error_message(exc)) from exc
@@ -432,7 +464,9 @@ def post_json(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
-def fetch_documents(api_url: str, token: str, limit: int | None = None) -> list[dict[str, Any]]:
+def fetch_documents(
+    api_url: str, token: str, limit: int | None = None
+) -> list[dict[str, Any]]:
     documents: list[dict[str, Any]] = []
     offset = 0
     page_size = 100 if limit is None else min(max(limit, 1), 100)
@@ -457,7 +491,9 @@ def fetch_documents(api_url: str, token: str, limit: int | None = None) -> list[
         offset += page_size
 
 
-def fetch_transcript(api_url: str, token: str, document_id: str) -> list[dict[str, Any]]:
+def fetch_transcript(
+    api_url: str, token: str, document_id: str
+) -> list[dict[str, Any]]:
     payload = request_json(api_url, token, {"document_id": document_id})
     if not isinstance(payload, list):
         raise ToolError("Granola transcript API returned an unexpected payload shape")
@@ -555,7 +591,9 @@ def prose_to_markdown(node: Any, indent: int = 0) -> str:
             parts.append(prose_to_markdown(child, indent))
         return "".join(parts) + "\n"
     if node_type == "listItem":
-        body = "".join(prose_to_markdown(child, indent + 1) for child in content).strip()
+        body = "".join(
+            prose_to_markdown(child, indent + 1) for child in content
+        ).strip()
         if not body:
             return ""
         body = re.sub(r"\n{3,}", "\n\n", body)
@@ -563,13 +601,18 @@ def prose_to_markdown(node: Any, indent: int = 0) -> str:
         order = attrs.get("_order", node.get("_order"))
         prefix = f"{order}. " if order else "- "
         first = f"{'  ' * indent}{prefix}{lines[0]}"
-        rest = [f"{'  ' * indent}  {line}" if line.strip() else "" for line in lines[1:]]
+        rest = [
+            f"{'  ' * indent}  {line}" if line.strip() else "" for line in lines[1:]
+        ]
         return "\n".join([first, *rest]) + "\n"
     if node_type == "blockquote":
         text = "".join(prose_to_markdown(child, indent) for child in content).strip()
         if not text:
             return ""
-        return "\n".join(f"> {line}" if line else ">" for line in text.splitlines()) + "\n\n"
+        return (
+            "\n".join(f"> {line}" if line else ">" for line in text.splitlines())
+            + "\n\n"
+        )
     if node_type == "codeBlock":
         text = "".join(prose_to_markdown(child, indent) for child in content).rstrip()
         return f"```\n{text}\n```\n\n"
@@ -582,7 +625,9 @@ def prose_to_text(node: Any) -> str:
     if isinstance(node, str):
         return node
     if isinstance(node, list):
-        return " ".join(part for part in (prose_to_text(item) for item in node) if part).strip()
+        return " ".join(
+            part for part in (prose_to_text(item) for item in node) if part
+        ).strip()
     if not isinstance(node, dict):
         return ""
     node_type = str(node.get("type") or "")
@@ -706,7 +751,9 @@ def best_note_body(document: dict[str, Any]) -> RenderedNote:
     panel = document.get("last_viewed_panel") or {}
     panel_content = panel.get("content")
     if document_has_text(panel_content):
-        return RenderedNote(prose_to_markdown(panel_content), "last_viewed_panel.content")
+        return RenderedNote(
+            prose_to_markdown(panel_content), "last_viewed_panel.content"
+        )
 
     original_content = str(panel.get("original_content") or "").strip()
     if original_content:
@@ -777,7 +824,9 @@ def select_document(documents: list[dict[str, Any]], selector: str) -> dict[str,
     for document in documents:
         if str(document.get("id") or "").strip() == selector:
             return document
-    exact_title_matches = [doc for doc in documents if str(doc.get("title") or "") == selector]
+    exact_title_matches = [
+        doc for doc in documents if str(doc.get("title") or "") == selector
+    ]
     if len(exact_title_matches) == 1:
         return exact_title_matches[0]
     if len(exact_title_matches) > 1:
@@ -861,7 +910,11 @@ def search_documents(
             rank = 1
         else:
             rank = 0
-        return (rank, str(item.get("updatedAt") or ""), str(item.get("title") or "").lower())
+        return (
+            rank,
+            str(item.get("updatedAt") or ""),
+            str(item.get("title") or "").lower(),
+        )
 
     ordered = sorted(results, key=sort_key, reverse=True)[:limit]
     return {
@@ -905,7 +958,9 @@ def search_transcripts(
     window: WindowSpec,
 ) -> dict[str, Any]:
     query_text = query.strip()
-    in_scope = sort_documents(filter_documents_by_window(documents, window), sort_by="created", order="desc")
+    in_scope = sort_documents(
+        filter_documents_by_window(documents, window), sort_by="created", order="desc"
+    )
     results: list[dict[str, Any]] = []
     scanned = 0
     for document in in_scope:
@@ -997,7 +1052,9 @@ def _transcript_timestamp(segment: dict[str, Any]) -> str:
     return start or end
 
 
-def transcript_payload(document: dict[str, Any], segments: list[dict[str, Any]]) -> dict[str, Any]:
+def transcript_payload(
+    document: dict[str, Any], segments: list[dict[str, Any]]
+) -> dict[str, Any]:
     return {
         "surface": "granola",
         "locator": f"granola:transcript {document.get('id') or ''}",
@@ -1007,7 +1064,9 @@ def transcript_payload(document: dict[str, Any], segments: list[dict[str, Any]])
     }
 
 
-def format_transcript_markdown(document: dict[str, Any], segments: list[dict[str, Any]]) -> str:
+def format_transcript_markdown(
+    document: dict[str, Any], segments: list[dict[str, Any]]
+) -> str:
     title = str(document.get("title") or "Untitled")
     lines = [
         f"# Transcript: {title}",
@@ -1088,7 +1147,9 @@ def render_list_markdown(payload: dict[str, Any]) -> str:
         source = str(item.get("bodySource") or "")
         if source and source != "none":
             details.append(f"body `{source}`")
-        people = [str(value) for value in item.get("people") or [] if str(value).strip()]
+        people = [
+            str(value) for value in item.get("people") or [] if str(value).strip()
+        ]
         if people:
             details.append(f"people `{', '.join(people)}`")
         if details:
@@ -1169,9 +1230,7 @@ def render_transcript_search_markdown(payload: dict[str, Any]) -> str:
         locator = str(item.get("transcriptLocator") or item.get("locator") or "")
         lines.append(f"#### [{title}]({locator})")
         lines.append("")
-        lines.append(
-            f"- _Matches_: {item.get('matchCount') or 0}"
-        )
+        lines.append(f"- _Matches_: {item.get('matchCount') or 0}")
         note_locator = str(item.get("locator") or "")
         if note_locator:
             lines.append(f"- _Note_: `{note_locator}`")
@@ -1182,7 +1241,11 @@ def render_transcript_search_markdown(payload: dict[str, Any]) -> str:
             speaker = str(match.get("speaker") or "").strip()
             excerpt = str(match.get("excerpt") or "").strip()
             prefix = "  -"
-            details = " ".join(part for part in (speaker, f"({timestamp})" if timestamp else "") if part).strip()
+            details = " ".join(
+                part
+                for part in (speaker, f"({timestamp})" if timestamp else "")
+                if part
+            ).strip()
             if details:
                 lines.append(f"{prefix} `{details}` {excerpt}".rstrip())
             else:
@@ -1232,7 +1295,9 @@ def granola_status_payload(supabase_path: Path, api_url: str) -> dict[str, Any]:
     return payload
 
 
-def _load_recent_documents(args: argparse.Namespace, *, limit: int | None) -> list[dict[str, Any]]:
+def _load_recent_documents(
+    args: argparse.Namespace, *, limit: int | None
+) -> list[dict[str, Any]]:
     token = load_access_token(args.supabase)
     return fetch_documents(args.api_url, token, limit=limit)
 
@@ -1360,7 +1425,11 @@ def capture(argv: list[str], _options: object) -> Capture:
         documents = _load_recent_documents(args, limit=None)
         document = select_document(documents, args.selector)
         selector = args.selector.strip()
-        base = selector if _is_document_id(selector) else _slug(selector, fallback="granola")
+        base = (
+            selector
+            if _is_document_id(selector)
+            else _slug(selector, fallback="granola")
+        )
         return Capture(
             data=json_bytes(document),
             name=f"{base}.json",
@@ -1371,13 +1440,17 @@ def capture(argv: list[str], _options: object) -> Capture:
         token = load_access_token(args.supabase)
         documents = fetch_documents(args.api_url, token, limit=None)
         document = select_document(documents, args.selector)
-        segments = fetch_transcript(args.transcript_api_url, token, str(document.get("id") or ""))
+        segments = fetch_transcript(
+            args.transcript_api_url, token, str(document.get("id") or "")
+        )
         filtered_segments = filter_transcript_segments(segments, args.query)
         payload = transcript_payload(document, filtered_segments)
         if args.query:
             payload["query"] = args.query
             payload["totalSegmentCount"] = len(segments)
-            payload["source"] = "direct live Granola transcript retrieval with local in-note query filter"
+            payload["source"] = (
+                "direct live Granola transcript retrieval with local in-note query filter"
+            )
         else:
             payload["source"] = "direct live Granola transcript retrieval"
         selector = args.selector.strip()
@@ -1474,7 +1547,9 @@ def project(argv: list[str], capture: Capture) -> bytes:
                 return json_bytes(document_meta_payload(payload))
             return capture.data
         if isinstance(payload, dict):
-            return format_markdown_document(payload, best_note_body(payload)).encode("utf-8")
+            return format_markdown_document(payload, best_note_body(payload)).encode(
+                "utf-8"
+            )
         return capture.data
     if args.command == "transcript":
         if args.output == "json":
@@ -1499,13 +1574,17 @@ def cmd_transcript(args: argparse.Namespace) -> int:
     token = load_access_token(args.supabase)
     documents = fetch_documents(args.api_url, token, limit=None)
     document = select_document(documents, args.selector)
-    segments = fetch_transcript(args.transcript_api_url, token, str(document.get("id") or ""))
+    segments = fetch_transcript(
+        args.transcript_api_url, token, str(document.get("id") or "")
+    )
     filtered_segments = filter_transcript_segments(segments, args.query)
     payload = transcript_payload(document, filtered_segments)
     if args.query:
         payload["query"] = args.query
         payload["totalSegmentCount"] = len(segments)
-        payload["source"] = "direct live Granola transcript retrieval with local in-note query filter"
+        payload["source"] = (
+            "direct live Granola transcript retrieval with local in-note query filter"
+        )
     else:
         payload["source"] = "direct live Granola transcript retrieval"
     if args.output == "json":
@@ -1668,7 +1747,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="sort descending or ascending after fetching notes; defaults to desc",
     )
     add_window_arguments(p, default_time_range=DEFAULT_NOTE_TIME_RANGE)
-    p.add_argument("--output", choices=["markdown", "summary", "json"], default="markdown")
+    p.add_argument(
+        "--output", choices=["markdown", "summary", "json"], default="markdown"
+    )
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("search", help="search Granola note titles and bodies")
@@ -1689,14 +1770,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", choices=["markdown", "meta", "json"], default="markdown")
     p.set_defaults(func=cmd_get)
 
-    p = sub.add_parser("transcript", help="fetch one Granola transcript by note id or exact title")
+    p = sub.add_parser(
+        "transcript", help="fetch one Granola transcript by note id or exact title"
+    )
     p.add_argument("selector", help="Granola document id or exact title")
     p.add_argument(
         "--query",
         default="",
         help="filter the fetched transcript locally to matching segments",
     )
-    p.add_argument("--output", choices=["markdown", "summary", "json"], default="markdown")
+    p.add_argument(
+        "--output", choices=["markdown", "summary", "json"], default="markdown"
+    )
     p.set_defaults(func=cmd_transcript)
 
     p = sub.add_parser(
@@ -1714,7 +1799,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_search_transcript)
 
     p = sub.add_parser("export", help="export recent Granola notes as Markdown files")
-    p.add_argument("output_dir", type=Path, help="directory to write Markdown exports into")
+    p.add_argument(
+        "output_dir", type=Path, help="directory to write Markdown exports into"
+    )
     p.add_argument("--limit", type=positive_int, default=DEFAULT_EXPORT_LIMIT)
     p.add_argument(
         "--offset",

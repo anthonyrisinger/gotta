@@ -228,7 +228,9 @@ def visibility_metadata(
 ) -> dict[str, Any]:
     normalized_level = level if level in VISIBILITY_LEVELS else "unknown"
     normalized_boundary = boundary if boundary in VISIBILITY_BOUNDARIES else "unknown"
-    normalized_confidence = confidence if confidence in VISIBILITY_CONFIDENCES else "low"
+    normalized_confidence = (
+        confidence if confidence in VISIBILITY_CONFIDENCES else "low"
+    )
     normalized_basis = _normalize_visibility_basis(basis or [])
     if not normalized_basis:
         normalized_basis = ["classification=insufficient_evidence"]
@@ -259,7 +261,9 @@ def unknown_visibility(
     )
 
 
-def normalize_visibility_metadata(payload: Mapping[str, Any] | dict[str, Any]) -> dict[str, Any]:
+def normalize_visibility_metadata(
+    payload: Mapping[str, Any] | dict[str, Any],
+) -> dict[str, Any]:
     basis = _normalize_visibility_basis(payload.get("visibility_basis"))
     level = str(payload.get("visibility_level") or "").strip()
     boundary = str(payload.get("visibility_boundary") or "").strip()
@@ -286,7 +290,9 @@ def _provider_from_locator(locator: str) -> str:
     return ""
 
 
-def _classify_local_gotta_visibility(*, plugin: str, subcommand: str, locator: str) -> dict[str, Any]:
+def _classify_local_gotta_visibility(
+    *, plugin: str, subcommand: str, locator: str
+) -> dict[str, Any]:
     basis = ["provider=gotta"]
     if plugin:
         basis.append(f"plugin={plugin}")
@@ -359,7 +365,10 @@ def _classify_slack_visibility(payload: Mapping[str, Any]) -> dict[str, Any]:
             provider="slack",
             basis=[f"channel.type={channel_type}"],
         )
-    if boundary == "cross_company" and channel_type in {"private_channel", "public_channel"}:
+    if boundary == "cross_company" and channel_type in {
+        "private_channel",
+        "public_channel",
+    }:
         level = "restricted"
     basis = ["provider=slack", f"channel.type={channel_type}"]
     if is_shared:
@@ -430,7 +439,10 @@ def _jira_security_name(payload: Mapping[str, Any]) -> str:
 def _jira_issue_like_payload(payload: Mapping[str, Any]) -> bool:
     if str(payload.get("issueUrl") or "").strip():
         return True
-    if str(payload.get("siteUrl") or "").strip() and str(payload.get("key") or "").strip():
+    if (
+        str(payload.get("siteUrl") or "").strip()
+        and str(payload.get("key") or "").strip()
+    ):
         return True
     project = payload.get("project")
     if isinstance(project, Mapping) and str(project.get("key") or "").strip():
@@ -625,7 +637,9 @@ def render_visibility_metadata_lines(metadata: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def best_visibility_metadata(*candidates: Mapping[str, Any] | dict[str, Any]) -> dict[str, Any]:
+def best_visibility_metadata(
+    *candidates: Mapping[str, Any] | dict[str, Any],
+) -> dict[str, Any]:
     ranked: list[tuple[int, int, dict[str, Any]]] = []
     for candidate in candidates:
         visibility = normalize_visibility_metadata(candidate)

@@ -141,11 +141,12 @@ gotta ...
 
 ## Development And Quality Gate
 
-The core local gate is:
+The blocking local gate is:
 
 ```bash
 uv run pytest -q
 uv run ruff check src tests
+uv run ruff format --check src tests
 uv run python -m vulture src tests --min-confidence 80
 ```
 
@@ -154,13 +155,58 @@ Structural pressure tools are part of the maintenance discipline:
 ```bash
 uv run python -m radon cc src tests -s
 uv run lizard src tests
+uv run pytest --durations=15 -q
 uv build --python 3.10 --clear
 uvx twine check dist/*
 ```
 
 `pytest`, `ruff`, and `vulture` are the correctness and hygiene gate. `radon`
 and `lizard` are not bug finders; they expose responsibility concentration and
-complexity hotspots so cleanup removes residue instead of burying it.
+complexity hotspots so cleanup removes residue instead of burying it. The
+duration profile keeps performance and pathological tests visible.
+
+For one-command study and maintenance passes, use:
+
+```bash
+./scripts/study
+./scripts/study --deep
+./scripts/study --types
+```
+
+`./scripts/study` runs the blocking gate, pressure tools, and any local study
+binaries already installed. `--deep` adds architecture and
+semantic probes through `import-linter` and `semgrep`. `--types` adds a
+source-only `pyright` pass as a pressure map rather than a release gate.
+
+## Advanced Study Battery
+
+This repo benefits from being studied in layers instead of file-by-file.
+
+- `pytest`, `ruff`, `vulture` verify correctness and hygiene.
+- `radon`, `lizard`, and `pytest --durations` expose responsibility and runtime
+  concentration.
+- `cloc`, `universal-ctags`, and `ast-grep` surface size, symbols, carrier
+  types, and CLI grammar shape.
+- `import-linter` checks explicit architectural contracts.
+- `semgrep` codifies custom invariants such as environment reads and durable
+  writes.
+- `pyan3` is useful for focused call-graph descent through orchestration or
+  synthesis hubs.
+- `tree-sitter` is a precise syntax substrate for structural queries once a
+  grammar is configured intentionally.
+- `CodeQL` is the heavyweight semantic audit path.
+- `scip-python` and `repomix` produce machine-readable indexes and packed
+  handoff artifacts for agent work.
+
+On macOS, the most useful optional local binaries are usually installed with
+Homebrew:
+
+```bash
+brew install ast-grep cloc tree-sitter tree-sitter-python universal-ctags
+```
+
+Everything else in the study battery can be invoked through `uv`, `uvx`, or
+dedicated one-off tooling.
 
 ## Configuration And Durable State
 

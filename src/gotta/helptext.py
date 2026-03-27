@@ -50,7 +50,9 @@ def format_long_help(
         if title in seen:
             return
         seen.add(title)
-        sections.append(f"## {title}\n\n{strip_long_help_boilerplate(current.format_help().rstrip())}")
+        sections.append(
+            f"## {title}\n\n{strip_long_help_boilerplate(current.format_help().rstrip())}"
+        )
 
     for title, current in _iter_parser_tree(parser):
         add_section(title, current)
@@ -76,9 +78,7 @@ def is_long_help_request(argv: list[str] | None) -> bool:
 def strip_long_help_boilerplate(text: str) -> str:
     lines = text.splitlines()
     filtered = [
-        line
-        for line in lines
-        if line.strip() not in LONG_HELP_BOILERPLATE_LINES
+        line for line in lines if line.strip() not in LONG_HELP_BOILERPLATE_LINES
     ]
     collapsed: list[str] = []
     blank_run = 0

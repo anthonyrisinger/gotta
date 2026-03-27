@@ -79,13 +79,17 @@ def _aggregate_logs(
         for record in log_records(actor_root):
             if (
                 actor_root.resolve().parent.name == "actors"
-                and writer_role(actor_root, current_actor, writer=str(record.get("actor") or ""))
+                and writer_role(
+                    actor_root, current_actor, writer=str(record.get("actor") or "")
+                )
                 == "foreign"
             ):
                 continue
             payload = dict(record)
             payload.setdefault("actor", current_actor)
-            payload.setdefault("label", session_plugin._actor_label(current_actor, work_dir=work_dir))
+            payload.setdefault(
+                "label", session_plugin._actor_label(current_actor, work_dir=work_dir)
+            )
             records.append(payload)
     records = sorted(records, key=lambda item: str(item.get("timestamp") or ""))
     return actor_ids, records
@@ -123,12 +127,18 @@ def main(argv: list[str] | None = None) -> int:
             visible = [
                 record
                 for record in log_records(work_dir)
-                if writer_role(work_dir, scoped_actor, writer=str(record.get("actor") or ""))
+                if writer_role(
+                    work_dir, scoped_actor, writer=str(record.get("actor") or "")
+                )
                 != "foreign"
             ]
             entries = sorted(visible, key=lambda item: str(item.get("timestamp") or ""))
-            limited = entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
-            locator = session_plugin._native_surface_locator("logs", actor_name=scoped_actor)
+            limited = (
+                entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
+            )
+            locator = session_plugin._native_surface_locator(
+                "logs", actor_name=scoped_actor
+            )
             payload = {
                 "state_path": str(logs_state_path(work_dir)),
                 "locator": locator,
@@ -147,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
             for record in payload["entries"]:
                 timestamp = str(record.get("timestamp") or "unknown-time")
                 actor = str(record.get("actor") or scoped_actor)
-                message = str(record.get("message") or "").strip() or "unspecified log entry"
+                message = (
+                    str(record.get("message") or "").strip() or "unspecified log entry"
+                )
                 message_lines = message.splitlines() or ["unspecified log entry"]
                 print(f"- `{timestamp}` [{actor}] {message_lines[0]}")
                 for continuation in message_lines[1:]:
@@ -160,8 +172,12 @@ def main(argv: list[str] | None = None) -> int:
                     "no actors bound for this session; bind one intentionally with "
                     + session_plugin._actor_bind_examples(prefix="gotta actor bind")
                 )
-            entries = sorted(log_records(work_dir), key=lambda item: str(item.get("timestamp") or ""))
-            limited = entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
+            entries = sorted(
+                log_records(work_dir), key=lambda item: str(item.get("timestamp") or "")
+            )
+            limited = (
+                entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
+            )
             payload = {
                 "session_root": str(work_dir),
                 "actor_count": 0,
@@ -180,7 +196,9 @@ def main(argv: list[str] | None = None) -> int:
             for record in payload["entries"]:
                 timestamp = str(record.get("timestamp") or "unknown-time")
                 actor = str(record.get("actor") or "session")
-                message = str(record.get("message") or "").strip() or "unspecified log entry"
+                message = (
+                    str(record.get("message") or "").strip() or "unspecified log entry"
+                )
                 message_lines = message.splitlines() or ["unspecified log entry"]
                 print(f"- `{timestamp}` [{actor}] {message_lines[0]}")
                 for continuation in message_lines[1:]:
@@ -194,7 +212,9 @@ def main(argv: list[str] | None = None) -> int:
             "entry_count": len(records),
             "entries": entries,
             "state_paths": {
-                actor: str(logs_state_path(session_plugin._actor_session_dir(work_dir, actor)))
+                actor: str(
+                    logs_state_path(session_plugin._actor_session_dir(work_dir, actor))
+                )
                 for actor in actor_ids
             },
             "locators": {
@@ -202,7 +222,9 @@ def main(argv: list[str] | None = None) -> int:
                 for actor in actor_ids
             },
             "follow_commands": {
-                actor: session_plugin._native_surface_follow_command("logs", actor_name=actor)
+                actor: session_plugin._native_surface_follow_command(
+                    "logs", actor_name=actor
+                )
                 for actor in actor_ids
             },
         }
@@ -214,7 +236,9 @@ def main(argv: list[str] | None = None) -> int:
         for record in payload["entries"]:
             timestamp = str(record.get("timestamp") or "unknown-time")
             actor = str(record.get("actor") or "unknown-actor")
-            message = str(record.get("message") or "").strip() or "unspecified log entry"
+            message = (
+                str(record.get("message") or "").strip() or "unspecified log entry"
+            )
             message_lines = message.splitlines() or ["unspecified log entry"]
             print(f"- `{timestamp}` [{actor}] {message_lines[0]}")
             for continuation in message_lines[1:]:
@@ -246,7 +270,9 @@ def main(argv: list[str] | None = None) -> int:
         for entry in entries:
             append_log_record(
                 work_dir,
-                message=session_plugin._normalize_entry_text(entry, input_name="log entry text"),
+                message=session_plugin._normalize_entry_text(
+                    entry, input_name="log entry text"
+                ),
                 actor=record_actor,
             )
         session_plugin._record_session_activity(
@@ -269,7 +295,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     append_log_record(
         work_dir,
-        message=session_plugin._normalize_entry_text(payload, input_name="log entry text"),
+        message=session_plugin._normalize_entry_text(
+            payload, input_name="log entry text"
+        ),
         actor=record_actor,
     )
     session_plugin._record_session_activity(

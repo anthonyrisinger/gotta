@@ -15,6 +15,7 @@ import uuid
 from gotta.compat import UTC, datetime
 from gotta import binding as binding_helpers
 from gotta import session as sessionlib
+from gotta import stored
 from gotta import topology
 from gotta.content import (
     CONTENT_ENV,
@@ -179,17 +180,31 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    for parser_ in (init, show, doctor, manifest, timeline, graph, analyze, scan, leads):
+    for parser_ in (
+        init,
+        show,
+        doctor,
+        manifest,
+        timeline,
+        graph,
+        analyze,
+        scan,
+        leads,
+    ):
         parser_.add_argument("--session", help="session root")
         parser_.add_argument("--actor", help="actor within the current session")
-        parser_.add_argument("--content-dir", help="explicit content directory override")
+        parser_.add_argument(
+            "--content-dir", help="explicit content directory override"
+        )
 
     bind.add_argument(
         "session_id",
         nargs="?",
         help="session reference: shared session id, exact session root, or <session>/<actor>",
     )
-    bind.add_argument("--output", choices=["summary", "json", "path"], default="summary")
+    bind.add_argument(
+        "--output", choices=["summary", "json", "path"], default="summary"
+    )
 
     init.add_argument(
         "--output",
@@ -295,14 +310,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _options_from_args(
-    args: argparse.Namespace
-) -> CommonOptions:
+def _options_from_args(args: argparse.Namespace) -> CommonOptions:
     return CommonOptions(
         session_dir=getattr(args, "session", None),
         content_dir=getattr(args, "content_dir", None),
         actor=getattr(args, "actor", None),
     )
+
 
 def _explicit_session_ref(args: argparse.Namespace) -> str:
     return str(getattr(args, "session", None) or "").strip()
@@ -317,7 +331,11 @@ def _shared_session_dirs_from_ref(session_ref: str):
     if not normalized:
         return None
     shared_root = resolve_session_reference(normalized, allow_missing=False)
-    if shared_root is None and "/" not in normalized and not Path(normalized).expanduser().is_absolute():
+    if (
+        shared_root is None
+        and "/" not in normalized
+        and not Path(normalized).expanduser().is_absolute()
+    ):
         candidate = shared_session_root(normalized)
         if candidate.exists() or candidate.is_symlink():
             shared_root = candidate.resolve()
@@ -358,7 +376,9 @@ def _session_scope_started(dirs) -> bool:
     if session_is_initialized(dirs.session_dir):
         return True
     session_root = sessionlib._group_session_root(dirs.session_dir)
-    if session_root != dirs.session_dir.resolve() and session_is_initialized(session_root):
+    if session_root != dirs.session_dir.resolve() and session_is_initialized(
+        session_root
+    ):
         return True
     if (session_root / "actors").is_dir() and dirs.content_dir.exists():
         return bool(sessionlib._selected_actor_ids(session_root))
@@ -406,7 +426,12 @@ def _paginate_items(
     normalized_limit = max(limit, 0)
     explicit_offset = max(offset, 0)
     applied_offset = explicit_offset
-    if default_tail_window and not include_all and explicit_offset == 0 and normalized_limit > 0:
+    if (
+        default_tail_window
+        and not include_all
+        and explicit_offset == 0
+        and normalized_limit > 0
+    ):
         applied_offset = max(total_count - normalized_limit, 0)
     if include_all:
         paged = items[applied_offset:]
@@ -435,7 +460,11 @@ def _paging_summary_line(
     offset: int,
     next_offset: int | None,
 ) -> str:
-    parts = [f"{label}: {total_count} total", f"showing {shown_count}", f"offset {offset}"]
+    parts = [
+        f"{label}: {total_count} total",
+        f"showing {shown_count}",
+        f"offset {offset}",
+    ]
     if next_offset is not None:
         parts.append(f"next {next_offset}")
     return "; ".join(parts)
@@ -558,8 +587,11 @@ def _doctor_payload(dirs) -> dict[str, object]:
         and topology.shared_session_id(runtime_root) == target_session_id
     )
     bindings_match_target = all(
-        topology.normalize_session_id(str(record.get("sessionId") or "")) == target_session_id
-        and topology.shared_session_id(Path(str(record.get("sessionRoot") or target_shared_root)))
+        topology.normalize_session_id(str(record.get("sessionId") or ""))
+        == target_session_id
+        and topology.shared_session_id(
+            Path(str(record.get("sessionRoot") or target_shared_root))
+        )
         == target_session_id
         for record in bindings
     )
@@ -670,7 +702,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     write_session_state(
         dirs,
         {
-            SESSION_CREATED_ENV: load_state_env_at_root(current).get(SESSION_CREATED_ENV, "")
+            SESSION_CREATED_ENV: load_state_env_at_root(current).get(
+                SESSION_CREATED_ENV, ""
+            )
             or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             SESSION_ACTIVATION_ENV: "manual",
         },
@@ -762,13 +796,17 @@ def _manifest_entry_sort_key(entry: dict[str, object]) -> tuple[str, str, str]:
 
 def _manifest_identity_locator(entry: dict[str, object]) -> str:
     checksum = str(entry.get("checksum", "")).strip()
-    locator = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip()
+    locator = str(
+        entry.get("canonical_locator", "") or entry.get("locator", "")
+    ).strip()
     if locator:
         return locator
     return content_locator(checksum) if checksum else ""
 
 
-def _aggregate_manifest_entries(entries: list[dict[str, object]]) -> list[dict[str, object]]:
+def _aggregate_manifest_entries(
+    entries: list[dict[str, object]],
+) -> list[dict[str, object]]:
     grouped: dict[tuple[str, str], dict[str, object]] = {}
     for entry in entries:
         checksum = str(entry.get("checksum", "")).strip()
@@ -793,9 +831,13 @@ def _aggregate_manifest_entries(entries: list[dict[str, object]]) -> list[dict[s
         if _manifest_entry_sort_key(entry) >= _manifest_entry_sort_key(latest):
             state["latest"] = entry
         state["fetchCount"] = int(state["fetchCount"]) + 1
-        if fetched_at and (not state["firstFetchedAt"] or fetched_at < state["firstFetchedAt"]):
+        if fetched_at and (
+            not state["firstFetchedAt"] or fetched_at < state["firstFetchedAt"]
+        ):
             state["firstFetchedAt"] = fetched_at
-        if fetched_at and (not state["lastFetchedAt"] or fetched_at > state["lastFetchedAt"]):
+        if fetched_at and (
+            not state["lastFetchedAt"] or fetched_at > state["lastFetchedAt"]
+        ):
             state["lastFetchedAt"] = fetched_at
         plugin = str(entry.get("plugin", "")).strip()
         actor = str(entry.get("actor", "")).strip()
@@ -824,7 +866,9 @@ def _aggregate_manifest_entries(entries: list[dict[str, object]]) -> list[dict[s
     aggregated: list[dict[str, object]] = []
     for (locator, _checksum), state in grouped.items():
         latest = dict(state["latest"])
-        latest["canonical_locator"] = str(latest.get("canonical_locator", "")).strip() or locator
+        latest["canonical_locator"] = (
+            str(latest.get("canonical_locator", "")).strip() or locator
+        )
         latest["fetchCount"] = int(state["fetchCount"])
         latest["firstFetchedAt"] = str(state.get("firstFetchedAt") or "")
         latest["lastFetchedAt"] = str(state.get("lastFetchedAt") or "") or str(
@@ -849,7 +893,9 @@ def _session_read_command(target: str, *, session_ref: str = "") -> str:
 
 
 def _follow_command(locator: str, *, checksum: str = "", session_ref: str = "") -> str:
-    target = locator.strip() or (content_locator(checksum.strip()) if checksum.strip() else "unknown")
+    target = locator.strip() or (
+        content_locator(checksum.strip()) if checksum.strip() else "unknown"
+    )
     return _session_read_command(target, session_ref=session_ref)
 
 
@@ -881,7 +927,13 @@ def _resolved_visibility_metadata(
     classification_payload = {
         key: value
         for key, value in payload.items()
-        if key not in {"visibility_level", "visibility_boundary", "visibility_confidence", "visibility_basis"}
+        if key
+        not in {
+            "visibility_level",
+            "visibility_boundary",
+            "visibility_confidence",
+            "visibility_basis",
+        }
     }
     classified = classify_visibility_metadata(
         classification_payload,
@@ -992,7 +1044,9 @@ def _manifest_payload(
     filter_text = _match_filter_text(filter_query)
     filter_pattern = _compile_filter_pattern(filter_text)
     if filter_pattern is not None:
-        entries = [entry for entry in entries if _manifest_entry_matches(entry, filter_pattern)]
+        entries = [
+            entry for entry in entries if _manifest_entry_matches(entry, filter_pattern)
+        ]
     ordered = sorted(entries, key=_manifest_entry_sort_key, reverse=True)
     discovery_count, evidence_count = _artifact_kind_counts(ordered)
     paged, paging = _paginate_items(
@@ -1020,7 +1074,9 @@ def _manifest_payload(
                 str(entry.get("checksum", "")).strip(),
             ),
             "follow_command": _follow_command(
-                str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
+                str(
+                    entry.get("canonical_locator", "") or entry.get("locator", "")
+                ).strip(),
                 checksum=str(entry.get("checksum", "")).strip(),
                 session_ref=session_ref,
             ),
@@ -1047,7 +1103,9 @@ def _manifest_payload(
                 provider=str(entry.get("plugin") or ""),
                 plugin=str(entry.get("plugin") or ""),
                 subcommand=str(entry.get("subcommand") or ""),
-                locator=str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
+                locator=str(
+                    entry.get("canonical_locator", "") or entry.get("locator", "")
+                ).strip(),
             ),
         }
         for entry in paged
@@ -1110,7 +1168,8 @@ def _scan_entries(
     return [
         entry
         for entry in filtered
-        if _artifact_kind(entry.get("artifact_kind") or entry.get("artifactKind")) == kind_filter
+        if _artifact_kind(entry.get("artifact_kind") or entry.get("artifactKind"))
+        == kind_filter
     ]
 
 
@@ -1192,10 +1251,8 @@ def _scan_snippets(
 
 
 def _scan_display_text(snapshot: ContentSnapshot) -> str:
-    from gotta.plugins import read as read_plugin
-
-    display, _language = read_plugin.stored_display(snapshot.data_path)
-    return display.decode("utf-8", errors="replace")
+    rendered = stored.stored_display(snapshot.data_path)
+    return rendered.data.decode("utf-8", errors="replace")
 
 
 def _scan_payload(
@@ -1228,7 +1285,9 @@ def _scan_payload(
         kind=kind,
     )
     entries = _aggregate_manifest_entries(raw_entries)
-    snapshots = {snapshot.digest: snapshot for snapshot in scan_content_store(dirs.content_dir)}
+    snapshots = {
+        snapshot.digest: snapshot for snapshot in scan_content_store(dirs.content_dir)
+    }
     matches: list[dict[str, object]] = []
     for entry in entries:
         checksum = str(entry.get("checksum", "")).strip()
@@ -1261,11 +1320,15 @@ def _scan_payload(
             ),
             "contentLocator": content_locator(checksum),
             "followCommand": _follow_command(
-                str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
+                str(
+                    entry.get("canonical_locator", "") or entry.get("locator", "")
+                ).strip(),
                 checksum=checksum,
                 session_ref=session_ref,
             ),
-            "contentFollowCommand": _follow_command("", checksum=checksum, session_ref=session_ref),
+            "contentFollowCommand": _follow_command(
+                "", checksum=checksum, session_ref=session_ref
+            ),
             "artifactFollowCommand": (
                 _session_read_command(
                     _artifact_human_locator(
@@ -1290,17 +1353,23 @@ def _scan_payload(
                 provider=str(entry.get("plugin") or ""),
                 plugin=str(entry.get("plugin") or ""),
                 subcommand=str(entry.get("subcommand") or ""),
-                locator=str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
+                locator=str(
+                    entry.get("canonical_locator", "") or entry.get("locator", "")
+                ).strip(),
             ),
         }
         matches.append(match_record)
     ordered = sorted(
         matches,
-        key=lambda entry: str(entry.get("canonical_locator", "") or entry.get("locator", "")),
+        key=lambda entry: str(
+            entry.get("canonical_locator", "") or entry.get("locator", "")
+        ),
     )
     ordered = sorted(
         ordered,
-        key=lambda entry: str(entry.get("lastFetchedAt") or entry.get("fetched_at") or ""),
+        key=lambda entry: str(
+            entry.get("lastFetchedAt") or entry.get("fetched_at") or ""
+        ),
         reverse=True,
     )
     ordered = sorted(
@@ -1339,7 +1408,9 @@ def _parse_source_timestamp(raw: str) -> str | None:
         return None
     if re.fullmatch(r"\d{10}\.\d{6}", value):
         seconds, micros = value.split(".", 1)
-        dt = datetime.fromtimestamp(int(seconds), tz=UTC).replace(microsecond=int(micros))
+        dt = datetime.fromtimestamp(int(seconds), tz=UTC).replace(
+            microsecond=int(micros)
+        )
         return dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
@@ -1348,7 +1419,9 @@ def _parse_source_timestamp(raw: str) -> str | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return (
+        parsed.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    )
 
 
 def _source_timestamps(snapshot: ContentSnapshot) -> dict[str, str]:
@@ -1383,7 +1456,9 @@ def _normalize_timeline_mode(mode: str) -> str:
     raise SystemExit(f"invalid timeline mode: {mode}. expected one of: {choices}")
 
 
-def _source_timestamp_for_mode(snapshot: ContentSnapshot, mode: str) -> tuple[str | None, str]:
+def _source_timestamp_for_mode(
+    snapshot: ContentSnapshot, mode: str
+) -> tuple[str | None, str]:
     if _is_aggregate_source_snapshot(snapshot):
         return None, ""
     timestamps = _source_timestamps(snapshot)
@@ -1414,7 +1489,9 @@ def _strip_read_view_flags(locator: str) -> str:
         if token in {"--head", "--tail", "--section"}:
             index += 2
             continue
-        if any(token.startswith(f"{flag}=") for flag in ("--head", "--tail", "--section")):
+        if any(
+            token.startswith(f"{flag}=") for flag in ("--head", "--tail", "--section")
+        ):
             index += 1
             continue
         cleaned.append(token)
@@ -1434,7 +1511,9 @@ def _counts_as_source_coverage_gap(snapshot: ContentSnapshot) -> bool:
         if not re.match(r"^(?:https?://|[a-z][a-z0-9+.-]*:)", base):
             return False
     if plugin == "slack" and locator.startswith("slack:sql "):
-        if re.search(r"\bPRAGMA\s+table_info\b|\bsqlite_master\b", locator, re.IGNORECASE):
+        if re.search(
+            r"\bPRAGMA\s+table_info\b|\bsqlite_master\b", locator, re.IGNORECASE
+        ):
             return False
     return True
 
@@ -1443,8 +1522,10 @@ LOCAL_TIMELINE_FILES = ("WANT.md", "GOAL.md")
 
 
 def _iso_utc_from_timestamp(value: float) -> str:
-    return datetime.fromtimestamp(value, tz=UTC).isoformat(timespec="seconds").replace(
-        "+00:00", "Z"
+    return (
+        datetime.fromtimestamp(value, tz=UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
     )
 
 
@@ -1475,7 +1556,10 @@ def _timeline_activity_roots(dirs) -> list[Path]:
     if grouped_root != dirs.session_dir.resolve() or (grouped_root / "actors").is_dir():
         actor_ids = list(sessionlib._selected_actor_ids(grouped_root))
         if actor_ids:
-            return [sessionlib._actor_session_dir(grouped_root, actor_id) for actor_id in actor_ids]
+            return [
+                sessionlib._actor_session_dir(grouped_root, actor_id)
+                for actor_id in actor_ids
+            ]
     return [dirs.session_dir.resolve()]
 
 
@@ -1500,16 +1584,21 @@ def _local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list
                 {
                     "mode": "local",
                     "source_time": timestamp,
-                    "source_time_field": str(raw.get("time_field") or "session_recorded_at"),
+                    "source_time_field": str(
+                        raw.get("time_field") or "session_recorded_at"
+                    ),
                     "source_created_at": "",
                     "source_updated_at": "",
                     "source_published_at": "",
                     "fetched_at": timestamp,
                     "plugin": str(raw.get("plugin") or "session").strip() or "session",
-                    "actor": _rendered_actor(raw.get("actor"), session_root=resolved_root),
+                    "actor": _rendered_actor(
+                        raw.get("actor"), session_root=resolved_root
+                    ),
                     "target_actor": str(raw.get("target_actor") or "").strip(),
                     "locator": locator,
-                    "preferred_name": str(raw.get("preferred_name") or locator).strip() or locator,
+                    "preferred_name": str(raw.get("preferred_name") or locator).strip()
+                    or locator,
                     "checksum": "",
                     "artifactKind": "",
                     "content_locator": "",
@@ -1528,19 +1617,15 @@ def _local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list
     candidates: list[tuple[str, Path, str, str, str]] = []
     for activity_root in _timeline_activity_roots(dirs):
         resolved_root = activity_root.resolve()
-        actor = sessionlib.session_actor(resolved_root) if resolved_root.parent.name == "actors" else ""
+        actor = (
+            sessionlib.session_actor(resolved_root)
+            if resolved_root.parent.name == "actors"
+            else ""
+        )
         for relative in LOCAL_TIMELINE_FILES:
             surface = "want" if relative == "WANT.md" else "goal"
-            locator = (
-                f"{surface}:actor:{actor}"
-                if actor
-                else f"{surface}:session"
-            )
-            follow = (
-                f"gotta {surface} --actor {actor}"
-                if actor
-                else f"gotta {surface}"
-            )
+            locator = f"{surface}:actor:{actor}" if actor else f"{surface}:session"
+            follow = f"gotta {surface} --actor {actor}" if actor else f"gotta {surface}"
             candidates.append(
                 (
                     "actor" if actor else "session",
@@ -1552,10 +1637,16 @@ def _local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list
             )
     for plugin, path, locator, follow_command, preferred_name in candidates:
         candidate_scope = str(path.parent.resolve())
-        if (candidate_scope, locator) in seen_locators or not _meaningful_local_surface(path):
+        if (candidate_scope, locator) in seen_locators or not _meaningful_local_surface(
+            path
+        ):
             continue
         timestamp = _iso_utc_from_timestamp(path.stat().st_mtime)
-        actor = sessionlib.session_actor(path.parent) if plugin == "actor" else _fallback_actor(dirs.session_dir)
+        actor = (
+            sessionlib.session_actor(path.parent)
+            if plugin == "actor"
+            else _fallback_actor(dirs.session_dir)
+        )
         events.append(
             {
                 "mode": "local",
@@ -1601,7 +1692,9 @@ def _timeline_payload(
     normalized_mode = _normalize_timeline_mode(mode)
     local_events, activity_paths = _local_activity_timeline_events(dirs)
     primary_activity_path = (
-        activity_paths[0] if activity_paths else str(activity_log_path(dirs.session_dir))
+        activity_paths[0]
+        if activity_paths
+        else str(activity_log_path(dirs.session_dir))
     )
     filter_text = _match_filter_text(filter_query)
     filter_pattern = _compile_filter_pattern(filter_text)
@@ -1612,17 +1705,22 @@ def _timeline_payload(
         for snapshot in snapshots:
             locator = snapshot_locator(snapshot)
             source_payload = {
-                "plugin": str(snapshot.metadata.get("plugin", "")).strip() or "unknown-plugin",
+                "plugin": str(snapshot.metadata.get("plugin", "")).strip()
+                or "unknown-plugin",
                 "actor": _rendered_actor(
                     snapshot.metadata.get("actor"),
                     session_root=dirs.session_dir,
                 ),
-                "target_actor": str(snapshot.metadata.get("target_actor") or "").strip(),
+                "target_actor": str(
+                    snapshot.metadata.get("target_actor") or ""
+                ).strip(),
                 "locator": locator,
                 "preferred_name": snapshot_display_name(snapshot),
                 "event_kind": "source",
             }
-            source_time, source_field = _source_timestamp_for_mode(snapshot, normalized_mode)
+            source_time, source_field = _source_timestamp_for_mode(
+                snapshot, normalized_mode
+            )
             if not source_time:
                 if _counts_as_source_coverage_gap(snapshot) and (
                     filter_pattern is None
@@ -1647,9 +1745,13 @@ def _timeline_payload(
                     "source_time_field": source_field,
                     "source_created_at": source_timestamps.get("source_created_at", ""),
                     "source_updated_at": source_timestamps.get("source_updated_at", ""),
-                    "source_published_at": source_timestamps.get("source_published_at", ""),
+                    "source_published_at": source_timestamps.get(
+                        "source_published_at", ""
+                    ),
                     "checksum": snapshot.digest,
-                    "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
+                    "artifactKind": _artifact_kind(
+                        snapshot.metadata.get("artifact_kind")
+                    ),
                     "content_locator": content_locator(snapshot.digest),
                     "artifact_locator": _artifact_human_locator(
                         snapshot_display_name(snapshot),
@@ -1739,7 +1841,10 @@ def _timeline_payload(
             "plugin": str(entry.get("plugin", "")).strip() or "unknown-plugin",
             "actor": _rendered_actor(entry.get("actor"), session_root=dirs.session_dir),
             "target_actor": str(entry.get("target_actor", "")).strip(),
-            "locator": str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown",
+            "locator": str(
+                entry.get("canonical_locator", "") or entry.get("locator", "")
+            ).strip()
+            or "unknown",
             "preferred_name": str(entry.get("preferred_name", "")).strip() or "data",
             "checksum": str(entry.get("checksum", "")).strip(),
             "artifactKind": _artifact_kind(entry.get("artifact_kind")),
@@ -1752,7 +1857,9 @@ def _timeline_payload(
             ),
             "fetch_link": str(entry.get("fetch_link", "")).strip(),
             "follow_command": _follow_command(
-                str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
+                str(
+                    entry.get("canonical_locator", "") or entry.get("locator", "")
+                ).strip(),
                 checksum=str(entry.get("checksum", "")).strip(),
                 session_ref=session_ref,
             ),
@@ -1762,7 +1869,9 @@ def _timeline_payload(
                 provider=str(entry.get("plugin") or ""),
                 plugin=str(entry.get("plugin") or ""),
                 subcommand=str(entry.get("subcommand") or ""),
-                locator=str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip(),
+                locator=str(
+                    entry.get("canonical_locator", "") or entry.get("locator", "")
+                ).strip(),
             ),
         }
         for entry in _manifest_entries(dirs)
@@ -1920,7 +2029,9 @@ def _graph_payload(
                 if len(source_artifact_kinds.get(locator, set())) == 1
                 else ""
             ),
-            "artifactKinds": sorted(str(value) for value in source_artifact_kinds.get(locator, set())),
+            "artifactKinds": sorted(
+                str(value) for value in source_artifact_kinds.get(locator, set())
+            ),
             "collision": False,
             "variant": len(source_variants.get(locator, set())) > 1,
             "variantCount": len(source_variants.get(locator, set())),
@@ -1942,7 +2053,9 @@ def _graph_payload(
             if snapshot_by_digest.get(checksum) is not None
             else "",
             "contentLocator": content_locator(checksum),
-            "artifactLocator": _artifact_human_locator(content_names.get(checksum, "data"), checksum),
+            "artifactLocator": _artifact_human_locator(
+                content_names.get(checksum, "data"), checksum
+            ),
             "followCommand": _session_read_command(
                 _artifact_human_locator(content_names.get(checksum, "data"), checksum),
                 session_ref=session_ref,
@@ -1952,9 +2065,16 @@ def _graph_payload(
             **(
                 _resolved_visibility_metadata(
                     dict(snapshot_by_digest.get(checksum).metadata),
-                    provider=str(snapshot_by_digest.get(checksum).metadata.get("plugin") or ""),
-                    plugin=str(snapshot_by_digest.get(checksum).metadata.get("plugin") or ""),
-                    subcommand=str(snapshot_by_digest.get(checksum).metadata.get("subcommand") or ""),
+                    provider=str(
+                        snapshot_by_digest.get(checksum).metadata.get("plugin") or ""
+                    ),
+                    plugin=str(
+                        snapshot_by_digest.get(checksum).metadata.get("plugin") or ""
+                    ),
+                    subcommand=str(
+                        snapshot_by_digest.get(checksum).metadata.get("subcommand")
+                        or ""
+                    ),
                     locator=str(next(iter(locators), "")),
                 )
                 if snapshot_by_digest.get(checksum) is not None
@@ -2013,18 +2133,27 @@ def _graph_payload(
                 content_names.get(str(edge["checksum"]), ""),
             )
         }
-        kept_sources = matched_sources.union(source for source, _checksum, _plugin in matched_edges)
-        kept_content = matched_content.union(checksum for _source, checksum, _plugin in matched_edges)
+        kept_sources = matched_sources.union(
+            source for source, _checksum, _plugin in matched_edges
+        )
+        kept_content = matched_content.union(
+            checksum for _source, checksum, _plugin in matched_edges
+        )
         sources = [item for item in sources if str(item["locator"]) in kept_sources]
         content = [item for item in content if str(item["checksum"]) in kept_content]
         edges = [
             edge
             for edge in edges
-            if str(edge["source"]) in kept_sources and str(edge["checksum"]) in kept_content
+            if str(edge["source"]) in kept_sources
+            and str(edge["checksum"]) in kept_content
         ]
     empty = not sources and not content and not edges
-    discovery_count = sum(1 for item in content if item.get("artifactKind") == "discovery")
-    evidence_count = sum(1 for item in content if item.get("artifactKind") == "evidence")
+    discovery_count = sum(
+        1 for item in content if item.get("artifactKind") == "discovery"
+    )
+    evidence_count = sum(
+        1 for item in content if item.get("artifactKind") == "evidence"
+    )
     top_providers = _top_count_records(
         [_provider_name(str(item["locator"])) for item in sources],
         key="provider",
@@ -2070,7 +2199,9 @@ def _render_mermaid(payload: dict[str, object]) -> str:
         "flowchart LR",
     ]
     if payload.get("empty"):
-        lines.append(f'  empty["{_mermaid_label(str(payload.get("nextStep") or _empty_topology_next_step()))}"]')
+        lines.append(
+            f'  empty["{_mermaid_label(str(payload.get("nextStep") or _empty_topology_next_step()))}"]'
+        )
         lines.extend(
             [
                 "  class empty emptyState",
@@ -2170,7 +2301,9 @@ def _render_graph_text(payload: dict[str, object]) -> str:
         for source in preview_sources:
             bits = [f"{int(source.get('contentCount') or 0)} content"]
             if source.get("artifactKinds"):
-                bits.append(",".join(str(value) for value in source.get("artifactKinds") or []))
+                bits.append(
+                    ",".join(str(value) for value in source.get("artifactKinds") or [])
+                )
             if bool(source.get("variant")):
                 bits.append(f"variants {int(source.get('variantCount') or 0)}")
             lines.append(f"  - {source['locator']} ({'; '.join(bits)})")
@@ -2189,7 +2322,10 @@ def _render_graph_text(payload: dict[str, object]) -> str:
             total=len(content_items),
         )
         for item in preview_content:
-            bits = [str(item["checksum"])[:12], f"{int(item.get('sourceCount') or 0)} sources"]
+            bits = [
+                str(item["checksum"])[:12],
+                f"{int(item.get('sourceCount') or 0)} sources",
+            ]
             if item.get("artifactKind"):
                 bits.append(str(item["artifactKind"]))
             lines.append(f"  - {item['preferredName']} ({'; '.join(bits)})")
@@ -2198,8 +2334,12 @@ def _render_graph_text(payload: dict[str, object]) -> str:
                 + ", ".join(
                     part
                     for part in (
-                        f"`{item.get('artifactLocator')}`" if item.get("artifactLocator") else "",
-                        f"`{item.get('contentLocator')}`" if item.get("contentLocator") else "",
+                        f"`{item.get('artifactLocator')}`"
+                        if item.get("artifactLocator")
+                        else "",
+                        f"`{item.get('contentLocator')}`"
+                        if item.get("contentLocator")
+                        else "",
                     )
                     if part
                 )
@@ -2307,7 +2447,9 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
     edges: list[dict[str, str]] = []
     for (locator, _variant), items in sorted(tracks.items()):
         prior_item: dict[str, str] | None = None
-        for item in sorted(items, key=lambda current: (current["timestamp"], current["digest"])):
+        for item in sorted(
+            items, key=lambda current: (current["timestamp"], current["digest"])
+        ):
             if prior_item is None:
                 prior_item = item
                 continue
@@ -2317,7 +2459,8 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
             edges.append(
                 {
                     "locator": locator,
-                    "preferredName": item["preferred_name"] or prior_item["preferred_name"],
+                    "preferredName": item["preferred_name"]
+                    or prior_item["preferred_name"],
                     "from": prior_item["digest"],
                     "to": item["digest"],
                     "fromTimestamp": prior_item["timestamp"],
@@ -2392,7 +2535,9 @@ def _analysis_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
                 "resource_hints": set(),
             },
         )
-        detail["providers"].add(_provider_name(source, plugins=[plugin], fallback=plugin))
+        detail["providers"].add(
+            _provider_name(source, plugins=[plugin], fallback=plugin)
+        )
         detail["actors"].add(actor)
         resource_kind, resource_label = _resource_label(source)
         if resource_kind and resource_label:
@@ -2419,9 +2564,15 @@ def _analysis_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
             "names": snapshot.names,
             "firstFetchedAt": snapshot.events[0].timestamp if snapshot.events else "",
             "lastFetchedAt": snapshot.events[-1].timestamp if snapshot.events else "",
-            "providers": sorted(content_details.get(snapshot.digest, {}).get("providers", set())),
-            "actors": sorted(content_details.get(snapshot.digest, {}).get("actors", set())),
-            "resourceHints": sorted(content_details.get(snapshot.digest, {}).get("resource_hints", set())),
+            "providers": sorted(
+                content_details.get(snapshot.digest, {}).get("providers", set())
+            ),
+            "actors": sorted(
+                content_details.get(snapshot.digest, {}).get("actors", set())
+            ),
+            "resourceHints": sorted(
+                content_details.get(snapshot.digest, {}).get("resource_hints", set())
+            ),
             **_resolved_visibility_metadata(
                 dict(snapshot.metadata),
                 provider=str(snapshot.metadata.get("plugin") or ""),
@@ -2447,12 +2598,12 @@ def _analysis_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
             "actors": sorted(str(value) for value in state["actors"]),
             "locators": sorted(str(value) for value in state["locators"]),
             "collision": False,
-            "duplicateMaterialization": len(state["content"]) > 1 and len(state["variants"]) <= 1,
+            "duplicateMaterialization": len(state["content"]) > 1
+            and len(state["variants"]) <= 1,
             "variant": len(state["variants"]) > 1,
             "variantCount": len(state["variants"]),
             "variants": [
-                _render_variant_label(variant)
-                for variant in sorted(state["variants"])
+                _render_variant_label(variant) for variant in sorted(state["variants"])
             ],
             **best_visibility_metadata(state.get("visibility", {})),
         }
@@ -2481,7 +2632,9 @@ def _analysis_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
             lead["followCommand"] = _follow_command(locator, session_ref=session_ref)
     collisions = [source["locator"] for source in sources if source["collision"]]
     duplicate_materializations = [
-        source["locator"] for source in sources if source.get("duplicateMaterialization")
+        source["locator"]
+        for source in sources
+        if source.get("duplicateMaterialization")
     ]
     variants = [source["locator"] for source in sources if source.get("variant")]
     name_collisions = sorted(
@@ -2490,9 +2643,19 @@ def _analysis_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
     materialized_lead_count = sum(
         1 for source in lead_sources if bool(source["materialized"])
     )
-    empty = not sources and not content and not source_edges and not revision_edges and not lead_edges
-    discovery_count = sum(1 for item in content if item.get("artifactKind") == "discovery")
-    evidence_count = sum(1 for item in content if item.get("artifactKind") == "evidence")
+    empty = (
+        not sources
+        and not content
+        and not source_edges
+        and not revision_edges
+        and not lead_edges
+    )
+    discovery_count = sum(
+        1 for item in content if item.get("artifactKind") == "discovery"
+    )
+    evidence_count = sum(
+        1 for item in content if item.get("artifactKind") == "evidence"
+    )
     return {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
@@ -2541,7 +2704,9 @@ def _provider_name(
     plugins: list[str] | None = None,
     fallback: str = "unknown",
 ) -> str:
-    preferred_plugins = [plugin for plugin in (plugins or []) if plugin and plugin != "read"]
+    preferred_plugins = [
+        plugin for plugin in (plugins or []) if plugin and plugin != "read"
+    ]
     if preferred_plugins:
         return preferred_plugins[0]
     if plugins:
@@ -2668,13 +2833,21 @@ def _leads_payload(
         include_all=include_all,
     )
     selected_lead_locators = {
-        str(lead.get("locator") or "").strip() for lead in lead_sources if str(lead.get("locator") or "").strip()
+        str(lead.get("locator") or "").strip()
+        for lead in lead_sources
+        if str(lead.get("locator") or "").strip()
     }
     selected_edges_by_checksum: dict[str, list[dict[str, object]]] = {}
     for edge in edge_records:
-        if selected_lead_locators and str(edge.get("targetLocator") or "").strip() not in selected_lead_locators:
+        if (
+            selected_lead_locators
+            and str(edge.get("targetLocator") or "").strip()
+            not in selected_lead_locators
+        ):
             continue
-        selected_edges_by_checksum.setdefault(str(edge["sourceChecksum"]), []).append(edge)
+        selected_edges_by_checksum.setdefault(str(edge["sourceChecksum"]), []).append(
+            edge
+        )
     artifacts = []
     if lead_sources:
         for snapshot in selected:
@@ -2695,7 +2868,9 @@ def _leads_payload(
                 {
                     "checksum": snapshot.digest,
                     "preferredName": snapshot_display_name(snapshot),
-                    "artifactKind": _artifact_kind(snapshot.metadata.get("artifact_kind")),
+                    "artifactKind": _artifact_kind(
+                        snapshot.metadata.get("artifact_kind")
+                    ),
                     "sourceLocator": snapshot_locator(snapshot),
                     "artifactLocator": snapshot_artifact_locator(snapshot),
                     "contentLocator": content_locator(snapshot.digest),
@@ -2715,20 +2890,33 @@ def _leads_payload(
     best_locators = {str(item.get("locator") or "").strip() for item in best_overall}
     provider_highlights: list[dict[str, object]] = []
     highlighted_providers: set[str] = {
-        str(item.get("provider") or "").strip() for item in best_overall if str(item.get("provider") or "").strip()
+        str(item.get("provider") or "").strip()
+        for item in best_overall
+        if str(item.get("provider") or "").strip()
     }
     for lead in lead_sources:
         provider = str(lead.get("provider") or "").strip()
         locator = str(lead.get("locator") or "").strip()
-        if not provider or not locator or locator in best_locators or provider in highlighted_providers:
+        if (
+            not provider
+            or not locator
+            or locator in best_locators
+            or provider in highlighted_providers
+        ):
             continue
         provider_highlights.append(lead)
         highlighted_providers.add(provider)
         if len(provider_highlights) >= LEADS_PROVIDER_HIGHLIGHT_LIMIT:
             break
-    materialized_count = sum(1 for source in lead_sources if bool(source["materialized"]))
-    discovery_count = sum(1 for item in artifacts if item.get("artifactKind") == "discovery")
-    evidence_count = sum(1 for item in artifacts if item.get("artifactKind") == "evidence")
+    materialized_count = sum(
+        1 for source in lead_sources if bool(source["materialized"])
+    )
+    discovery_count = sum(
+        1 for item in artifacts if item.get("artifactKind") == "discovery"
+    )
+    evidence_count = sum(
+        1 for item in artifacts if item.get("artifactKind") == "evidence"
+    )
     empty = not artifacts and not lead_sources
     top_providers = _top_count_records(
         [str(source.get("provider") or "").strip() for source in lead_sources],
@@ -2744,7 +2932,9 @@ def _leads_payload(
         key="relation",
     )
     next_step = (
-        _topology_next_step(discovery_count=discovery_count, evidence_count=evidence_count)
+        _topology_next_step(
+            discovery_count=discovery_count, evidence_count=evidence_count
+        )
         if empty and not filter_text and not selected
         else _no_leads_next_step(has_artifacts=bool(selected))
         if not lead_sources and not filter_text and selected
@@ -2848,7 +3038,9 @@ def _semantic_payload(dirs, *, session_ref: str = "") -> dict[str, object]:
     for edge in lineage["sourceEdges"]:
         source_id = f"source:{edge['source']}"
         content_id = f"content:{edge['checksum']}"
-        add_edge(source_id, content_id, ",".join(str(value) for value in edge["plugins"]))
+        add_edge(
+            source_id, content_id, ",".join(str(value) for value in edge["plugins"])
+        )
 
     for edge in lineage["revisionEdges"]:
         from_id = f"content:{edge['from']}"
@@ -2932,7 +3124,9 @@ def _render_semantic_mermaid(payload: dict[str, object]) -> str:
         "flowchart LR",
     ]
     if payload.get("empty"):
-        lines.append(f'  empty["{_mermaid_label(str(payload.get("nextStep") or _empty_topology_next_step()))}"]')
+        lines.append(
+            f'  empty["{_mermaid_label(str(payload.get("nextStep") or _empty_topology_next_step()))}"]'
+        )
         lines.extend(
             [
                 "  class empty emptyState",
@@ -2990,7 +3184,9 @@ def _render_analysis_mermaid(payload: dict[str, object]) -> str:
         "flowchart LR",
     ]
     if payload.get("empty"):
-        lines.append(f'  empty["{_mermaid_label(str(payload.get("nextStep") or _empty_topology_next_step()))}"]')
+        lines.append(
+            f'  empty["{_mermaid_label(str(payload.get("nextStep") or _empty_topology_next_step()))}"]'
+        )
         lines.extend(
             [
                 "  class empty emptyState",
@@ -3012,7 +3208,9 @@ def _render_analysis_mermaid(payload: dict[str, object]) -> str:
         if source.get("variant"):
             label_parts.append(f"renderings: {int(source.get('variantCount') or 0)}")
         elif source.get("duplicateMaterialization"):
-            label_parts.append(f"materializations: {int(source.get('contentCount') or 0)}")
+            label_parts.append(
+                f"materializations: {int(source.get('contentCount') or 0)}"
+            )
         label = _mermaid_label("\n".join(label_parts))
         lines.append(f'  {node_id}["{label}"]')
         if source["collision"]:
@@ -3028,7 +3226,9 @@ def _render_analysis_mermaid(payload: dict[str, object]) -> str:
         providers = ", ".join(str(value) for value in content.get("providers") or [])
         actors = ", ".join(str(value) for value in content.get("actors") or [])
         label_parts = [str(content["preferredName"])]
-        resource_hints = [str(value) for value in content.get("resourceHints") or [] if str(value)]
+        resource_hints = [
+            str(value) for value in content.get("resourceHints") or [] if str(value)
+        ]
         if bool(content.get("nameCollision")) and resource_hints:
             label_parts.append(resource_hints[0])
         if providers:
@@ -3130,7 +3330,9 @@ def _ordered_focus_scan_entries(
     ]
     ordered = sorted(
         entries,
-        key=lambda entry: str(entry.get("lastFetchedAt") or entry.get("fetched_at") or ""),
+        key=lambda entry: str(
+            entry.get("lastFetchedAt") or entry.get("fetched_at") or ""
+        ),
         reverse=True,
     )
     ordered = sorted(
@@ -3140,10 +3342,10 @@ def _ordered_focus_scan_entries(
     )
     ordered = sorted(
         ordered,
-        key=lambda entry: str(
-            entry.get("artifactKind") or entry.get("artifact_kind") or ""
-        )
-        != "evidence",
+        key=lambda entry: (
+            str(entry.get("artifactKind") or entry.get("artifact_kind") or "")
+            != "evidence"
+        ),
     )
     return ordered[: max(limit, 0)]
 
@@ -3183,7 +3385,9 @@ def _lineage_lead_candidate(item: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _analysis_focus_score(node: dict[str, object], query: str) -> tuple[int, int, int, str]:
+def _analysis_focus_score(
+    node: dict[str, object], query: str
+) -> tuple[int, int, int, str]:
     query_lower = query.lower()
     label = str(node.get("label") or "")
     node_id = str(node.get("id") or "")
@@ -3300,7 +3504,9 @@ def _semantic_focus_payload(
             break
     for entry in scan_entries:
         checksum = str(entry.get("checksum") or "").strip()
-        locator = str(entry.get("canonical_locator") or entry.get("locator") or "").strip()
+        locator = str(
+            entry.get("canonical_locator") or entry.get("locator") or ""
+        ).strip()
         if checksum:
             add_seed(f"content:{checksum}")
         if locator:
@@ -3347,7 +3553,9 @@ def _semantic_focus_payload(
         )
     ]
     semantic_incident_edges = [
-        edge for edge in incident_edges if str(edge.get("label") or "") not in structural_labels
+        edge
+        for edge in incident_edges
+        if str(edge.get("label") or "") not in structural_labels
     ]
     selected_edges = semantic_incident_edges or incident_edges
     selected_neighbor_ids: list[str] = []
@@ -3376,7 +3584,9 @@ def _semantic_focus_payload(
                 continue
             if neighbor_id not in relation_labels_by_neighbor:
                 relation_labels_by_neighbor[neighbor_id] = []
-            relation_labels_by_neighbor[neighbor_id].append(str(edge.get("label") or ""))
+            relation_labels_by_neighbor[neighbor_id].append(
+                str(edge.get("label") or "")
+            )
             if neighbor_id not in selected_neighbor_ids:
                 selected_neighbor_ids.append(neighbor_id)
     selected_neighbor_ids = [
@@ -3501,7 +3711,11 @@ def _lineage_focus_payload(
         ),
     ]
     matches = sorted(
-        (candidate for candidate in candidates if _lineage_focus_score(candidate, query)[0] > 0),
+        (
+            candidate
+            for candidate in candidates
+            if _lineage_focus_score(candidate, query)[0] > 0
+        ),
         key=lambda candidate: _lineage_focus_score(candidate, query),
         reverse=True,
     )
@@ -3560,7 +3774,9 @@ def _lineage_focus_payload(
             break
     for entry in scan_entries:
         checksum = str(entry.get("checksum") or "").strip()
-        locator = str(entry.get("canonical_locator") or entry.get("locator") or "").strip()
+        locator = str(
+            entry.get("canonical_locator") or entry.get("locator") or ""
+        ).strip()
         if checksum and checksum in content_index:
             add_seed(_lineage_content_candidate(content_index[checksum]))
         if locator and locator in source_index:
@@ -3731,15 +3947,11 @@ def _lineage_focus_payload(
         for item in ordered_neighbors
         if str(item.get("kind") or "") == "lead"
     }
-    seed_source_labels = {
-        value for kind, value in seen_seed_keys if kind == "source"
-    }
+    seed_source_labels = {value for kind, value in seen_seed_keys if kind == "source"}
     seed_content_checksums = {
         value for kind, value in seen_seed_keys if kind == "content"
     }
-    seed_lead_labels = {
-        value for kind, value in seen_seed_keys if kind == "lead"
-    }
+    seed_lead_labels = {value for kind, value in seen_seed_keys if kind == "lead"}
     selected_sources = {
         locator
         for locator in selected_sources
@@ -3756,9 +3968,13 @@ def _lineage_focus_payload(
         if locator in seed_lead_labels or locator in neighbor_lead_labels
     }
 
-    selected_source_items = [item for item in sources if str(item.get("locator") or "") in selected_sources]
+    selected_source_items = [
+        item for item in sources if str(item.get("locator") or "") in selected_sources
+    ]
     selected_content_items = [
-        item for item in content_items if str(item.get("checksum") or "") in selected_content
+        item
+        for item in content_items
+        if str(item.get("checksum") or "") in selected_content
     ]
     selected_lead_items = [
         item
@@ -3782,13 +3998,18 @@ def _lineage_focus_payload(
         edge
         for edge in payload.get("leadEdges") or []
         if str(edge.get("sourceChecksum") or "") in selected_content
-        and str(edge.get("targetLocator") or "") in selected_leads.union(selected_sources)
+        and str(edge.get("targetLocator") or "")
+        in selected_leads.union(selected_sources)
     ]
     discovery_count = sum(
-        1 for item in selected_content_items if str(item.get("artifactKind") or "") == "discovery"
+        1
+        for item in selected_content_items
+        if str(item.get("artifactKind") or "") == "discovery"
     )
     evidence_count = sum(
-        1 for item in selected_content_items if str(item.get("artifactKind") or "") == "evidence"
+        1
+        for item in selected_content_items
+        if str(item.get("artifactKind") or "") == "evidence"
     )
     return {
         "sessionDir": payload["sessionDir"],
@@ -3865,7 +4086,9 @@ def _analysis_overview_payload(
         if label in {"source", "resource", "resolved_by", "query", "drives"}
     )
     source_node_count = sum(
-        count for kind, count in node_kinds.items() if kind in {"source", "query", "provider"}
+        count
+        for kind, count in node_kinds.items()
+        if kind in {"source", "query", "provider"}
     )
     anchors = sorted(
         [dict(item) for item in lineage.get("content") or []],
@@ -3882,7 +4105,9 @@ def _analysis_overview_payload(
         for node in semantic.get("nodes") or []
         if str(node.get("kind") or "") == "query"
     ][: max(limit, 0)]
-    lead_sources = [dict(item) for item in (lineage.get("leadSources") or [])[: max(limit, 0)]]
+    lead_sources = [
+        dict(item) for item in (lineage.get("leadSources") or [])[: max(limit, 0)]
+    ]
     return {
         "sessionDir": lineage["sessionDir"],
         "contentDir": lineage["contentDir"],
@@ -3902,8 +4127,10 @@ def _analysis_overview_payload(
         "materializedAnchors": anchors,
         "querySeeds": queries,
         "bestLeads": lead_sources,
-        "sourceHeavy": source_node_count * 2 >= max(int(semantic.get("nodeCount") or 0), 1),
-        "structuralHeavy": structural_edge_count * 2 >= max(int(semantic.get("edgeCount") or 0), 1),
+        "sourceHeavy": source_node_count * 2
+        >= max(int(semantic.get("nodeCount") or 0), 1),
+        "structuralHeavy": structural_edge_count * 2
+        >= max(int(semantic.get("edgeCount") or 0), 1),
         "sourceNodeCount": source_node_count,
         "structuralEdgeCount": structural_edge_count,
     }
@@ -3976,7 +4203,9 @@ def _render_analysis_overview_text(payload: dict[str, object]) -> str:
     if payload["bestLeads"]:
         lines.append("best leads:")
         for lead in payload["bestLeads"]:
-            relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+            relation = ", ".join(
+                str(value) for value in lead.get("relationKinds") or [] if str(value)
+            )
             lines.append(
                 f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
                 f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
@@ -4023,7 +4252,9 @@ def _render_lineage_overview_text(
     if payload["leadSources"]:
         lines.append("best leads:")
         for lead in (payload.get("leadSources") or [])[: max(limit, 0)]:
-            relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+            relation = ", ".join(
+                str(value) for value in lead.get("relationKinds") or [] if str(value)
+            )
             lines.append(
                 f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
                 f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
@@ -4090,9 +4321,7 @@ def _render_analysis_focus_text(payload: dict[str, object]) -> str:
             lines.append(f"next: {payload['nextStep']}")
         return "\n".join(lines)
     root = payload["root"]
-    lines.append(
-        f"matched: {root['label']} ({root['kind']}, {root['group']})"
-    )
+    lines.append(f"matched: {root['label']} ({root['kind']}, {root['group']})")
     if int(payload.get("matchedCount") or 0) > 1:
         lines.append(
             f"signal: {int(payload['matchedCount'])} anchors matched this focus; "
@@ -4113,9 +4342,7 @@ def _render_analysis_focus_text(payload: dict[str, object]) -> str:
     if anchors:
         lines.append("also matched:")
         for anchor in anchors:
-            lines.append(
-                f"  - {anchor['label']} ({anchor['kind']}, {anchor['group']})"
-            )
+            lines.append(f"  - {anchor['label']} ({anchor['kind']}, {anchor['group']})")
             if anchor.get("followCommand"):
                 lines.append(f"    follow: `{anchor['followCommand']}`")
     if int(payload.get("suppressedStructuralEdgeCount") or 0) > 0:
@@ -4127,7 +4354,9 @@ def _render_analysis_focus_text(payload: dict[str, object]) -> str:
     if payload["neighbors"]:
         lines.append("neighbors:")
         for neighbor in payload["neighbors"]:
-            relation = ", ".join(str(value) for value in neighbor.get("relations") or [] if str(value))
+            relation = ", ".join(
+                str(value) for value in neighbor.get("relations") or [] if str(value)
+            )
             lines.append(
                 f"  - {neighbor['label']} ({neighbor['kind']}, {neighbor['group']}; {relation or 'adjacent'})"
             )
@@ -4136,7 +4365,9 @@ def _render_analysis_focus_text(payload: dict[str, object]) -> str:
                 bits.append(f"artifact_kind={neighbor['artifactKind']}")
             if bool(neighbor.get("materialized")):
                 bits.append("materialized")
-            if bool(neighbor.get("discovered")) and not bool(neighbor.get("materialized")):
+            if bool(neighbor.get("discovered")) and not bool(
+                neighbor.get("materialized")
+            ):
                 bits.append("discovered-only")
             if bits:
                 lines.append("    state: " + ", ".join(bits))
@@ -4190,7 +4421,11 @@ def _render_lineage_focus_text(payload: dict[str, object]) -> str:
             bits = []
             if neighbor.get("artifactKind"):
                 bits.append(f"artifact_kind={neighbor['artifactKind']}")
-            bits.append("materialized" if bool(neighbor.get("materialized")) else "discovered-only")
+            bits.append(
+                "materialized"
+                if bool(neighbor.get("materialized"))
+                else "discovered-only"
+            )
             lines.append("    state: " + ", ".join(bits))
             if neighbor.get("followCommand"):
                 lines.append(f"    follow: `{neighbor['followCommand']}`")
@@ -4262,29 +4497,41 @@ def _render_analysis_overview_markdown(
     ]
     _render_markdown_list(lines, "Dominant Relations", dominant_relations)
     anchors = []
-    for anchor in list(overview.get("materializedAnchors") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]:
+    for anchor in list(overview.get("materializedAnchors") or [])[
+        : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
+    ]:
         follow = str(anchor.get("followCommand") or "").strip()
         if follow:
             anchors.append(
                 f"[{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']} via `{follow}`"
             )
         else:
-            anchors.append(f"[{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']}")
+            anchors.append(
+                f"[{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']}"
+            )
     _render_markdown_list(lines, "Anchor Shortlist", anchors)
     lineage_preview = [
         f"{item['locator']} ({int(item.get('contentCount') or 0)} materializations)"
-        for item in list(lineage.get("sources") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]
+        for item in list(lineage.get("sources") or [])[
+            : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
+        ]
     ]
     _render_markdown_list(lines, "Lineage Preview", lineage_preview)
     semantic_preview = [
         f"{item['label']} ({item['kind']})"
-        for item in list(overview.get("querySeeds") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]
+        for item in list(overview.get("querySeeds") or [])[
+            : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
+        ]
     ]
     _render_markdown_list(lines, "Semantic Preview", semantic_preview)
     leads_preview = []
-    for lead in list(overview.get("bestLeads") or [])[: max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)]:
+    for lead in list(overview.get("bestLeads") or [])[
+        : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
+    ]:
         follow = str(lead.get("followCommand") or "").strip()
-        relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+        relation = ", ".join(
+            str(value) for value in lead.get("relationKinds") or [] if str(value)
+        )
         label = f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
         if follow:
             label += f" via `{follow}`"
@@ -4362,9 +4609,7 @@ def _stored_target_locators(lead: dict[str, object]) -> list[str]:
 
 def _render_search_origins(lead: dict[str, object]) -> str:
     origins = [
-        origin
-        for origin in lead.get("searchOrigins") or []
-        if isinstance(origin, dict)
+        origin for origin in lead.get("searchOrigins") or [] if isinstance(origin, dict)
     ]
     parts: list[str] = []
     for origin in origins[:3]:
@@ -4466,7 +4711,9 @@ def cmd_leads(args: argparse.Namespace) -> int:
     if payload["bestOverall"]:
         print("best leads:")
         for lead in payload["bestOverall"]:
-            relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+            relation = ", ".join(
+                str(value) for value in lead.get("relationKinds") or [] if str(value)
+            )
             print(
                 f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
                 f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
@@ -4484,13 +4731,17 @@ def cmd_leads(args: argparse.Namespace) -> int:
             search_origins = _render_search_origins(lead)
             if search_origins:
                 print(f"    search_origin: {search_origins}")
-            contexts = [str(value) for value in lead.get("contexts") or [] if str(value)]
+            contexts = [
+                str(value) for value in lead.get("contexts") or [] if str(value)
+            ]
             if contexts:
                 print(f"    context: {contexts[0]}")
     if payload["providerHighlights"]:
         print("provider highlights:")
         for lead in payload["providerHighlights"]:
-            relation = ", ".join(str(value) for value in lead.get("relationKinds") or [] if str(value))
+            relation = ", ".join(
+                str(value) for value in lead.get("relationKinds") or [] if str(value)
+            )
             print(
                 f"  - [{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
                 f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
@@ -4537,7 +4788,9 @@ def cmd_leads(args: argparse.Namespace) -> int:
                     if rank > 0:
                         origin += f" #{rank}"
                     print(f"    source_origin: {origin}")
-                contexts = [str(value) for value in lead.get("contexts") or [] if str(value)]
+                contexts = [
+                    str(value) for value in lead.get("contexts") or [] if str(value)
+                ]
                 if contexts:
                     print(f"    context: {contexts[0]}")
     return 0
@@ -4604,7 +4857,9 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     if top_actors_lines:
         print("\n".join(top_actors_lines))
     if session_ref:
-        print(f"follow: use emitted locators with `gotta read --session {session_ref} <locator>`")
+        print(
+            f"follow: use emitted locators with `gotta read --session {session_ref} <locator>`"
+        )
     preview_entries = list(payload["entries"])[:MANIFEST_TEXT_PREVIEW_LIMIT]
     if payload["entries"]:
         print(
@@ -4614,14 +4869,28 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         )
     for entry in preview_entries:
         fetched_at = str(entry.get("fetched_at", "")).strip() or "unknown-time"
-        plugin_list = [str(value).strip() for value in list(entry.get("plugins") or []) if str(value).strip()]
-        actor_list = [str(value).strip() for value in list(entry.get("actors") or []) if str(value).strip()]
-        plugin = ", ".join(plugin_list) or str(entry.get("plugin", "")).strip() or "unknown-plugin"
-        actor = (
-            ", ".join(actor_list)
-            or _rendered_actor(entry.get("actor"), session_root=dirs.session_dir)
+        plugin_list = [
+            str(value).strip()
+            for value in list(entry.get("plugins") or [])
+            if str(value).strip()
+        ]
+        actor_list = [
+            str(value).strip()
+            for value in list(entry.get("actors") or [])
+            if str(value).strip()
+        ]
+        plugin = (
+            ", ".join(plugin_list)
+            or str(entry.get("plugin", "")).strip()
+            or "unknown-plugin"
         )
-        locator = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown"
+        actor = ", ".join(actor_list) or _rendered_actor(
+            entry.get("actor"), session_root=dirs.session_dir
+        )
+        locator = (
+            str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip()
+            or "unknown"
+        )
         preferred_name = str(entry.get("preferred_name", "")).strip() or "data"
         checksum = str(entry.get("checksum", "")).strip()
         short = checksum[:12] if checksum else "unknown"
@@ -4648,8 +4917,12 @@ def cmd_manifest(args: argparse.Namespace) -> int:
                 + ", ".join(
                     part
                     for part in (
-                        f"`{entry.get('artifact_locator')}`" if entry.get("artifact_locator") else "",
-                        f"`{entry.get('content_locator')}`" if entry.get("content_locator") else "",
+                        f"`{entry.get('artifact_locator')}`"
+                        if entry.get("artifact_locator")
+                        else "",
+                        f"`{entry.get('content_locator')}`"
+                        if entry.get("content_locator")
+                        else "",
                     )
                     if part
                 )
@@ -4755,8 +5028,12 @@ def cmd_timeline(args: argparse.Namespace) -> int:
                     + ", ".join(
                         part
                         for part in (
-                            f"`{event.get('artifact_locator')}`" if event.get("artifact_locator") else "",
-                            f"`{event.get('content_locator')}`" if event.get("content_locator") else "",
+                            f"`{event.get('artifact_locator')}`"
+                            if event.get("artifact_locator")
+                            else "",
+                            f"`{event.get('content_locator')}`"
+                            if event.get("content_locator")
+                            else "",
                         )
                         if part
                     )
@@ -4780,8 +5057,12 @@ def cmd_timeline(args: argparse.Namespace) -> int:
                     + ", ".join(
                         part
                         for part in (
-                            f"`{event.get('artifact_locator')}`" if event.get("artifact_locator") else "",
-                            f"`{event.get('content_locator')}`" if event.get("content_locator") else "",
+                            f"`{event.get('artifact_locator')}`"
+                            if event.get("artifact_locator")
+                            else "",
+                            f"`{event.get('content_locator')}`"
+                            if event.get("content_locator")
+                            else "",
                         )
                         if part
                     )
@@ -4849,7 +5130,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                 _render_text_bundle(
                     [
                         ("Lineage", _render_lineage_focus_text(lineage_focus_payload)),
-                        ("Semantic", _render_analysis_focus_text(semantic_focus_payload)),
+                        (
+                            "Semantic",
+                            _render_analysis_focus_text(semantic_focus_payload),
+                        ),
                     ]
                 )
             )
@@ -4859,7 +5143,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         if args.mode == "lineage":
             print(
                 json.dumps(
-                    lineage_focus_payload if lineage_focus_payload is not None else payload,
+                    lineage_focus_payload
+                    if lineage_focus_payload is not None
+                    else payload,
                     indent=2,
                     sort_keys=True,
                 )
@@ -4867,7 +5153,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         elif args.mode == "semantic":
             print(
                 json.dumps(
-                    semantic_focus_payload if semantic_focus_payload is not None else semantic_payload,
+                    semantic_focus_payload
+                    if semantic_focus_payload is not None
+                    else semantic_payload,
                     indent=2,
                     sort_keys=True,
                 )
@@ -5011,9 +5299,16 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print("no projected materialized artifact matched the current scan")
         return 0
     for entry in payload["entries"]:
-        plugins = ", ".join(str(value) for value in entry.get("plugins") or [] if str(value))
-        actors = ", ".join(str(value) for value in entry.get("actors") or [] if str(value))
-        locator_value = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip() or "unknown"
+        plugins = ", ".join(
+            str(value) for value in entry.get("plugins") or [] if str(value)
+        )
+        actors = ", ".join(
+            str(value) for value in entry.get("actors") or [] if str(value)
+        )
+        locator_value = (
+            str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip()
+            or "unknown"
+        )
         preferred_name = str(entry.get("preferred_name", "")).strip() or "data"
         print(
             f"- [{entry.get('artifactKind') or 'artifact'}; hits {entry.get('hitCount') or 0}] "
@@ -5031,13 +5326,19 @@ def cmd_scan(args: argparse.Namespace) -> int:
             + ", ".join(
                 part
                 for part in (
-                    f"`{entry.get('artifactLocator')}`" if entry.get("artifactLocator") else "",
-                    f"`{entry.get('contentLocator')}`" if entry.get("contentLocator") else "",
+                    f"`{entry.get('artifactLocator')}`"
+                    if entry.get("artifactLocator")
+                    else "",
+                    f"`{entry.get('contentLocator')}`"
+                    if entry.get("contentLocator")
+                    else "",
                 )
                 if part
             )
         )
-        print(f"  follow: `{entry.get('artifactFollowCommand') or entry.get('followCommand')}`")
+        print(
+            f"  follow: `{entry.get('artifactFollowCommand') or entry.get('followCommand')}`"
+        )
         for snippet in entry.get("snippets") or []:
             print(
                 f"  snippet {snippet.get('startLine')}-{snippet.get('endLine')}"
@@ -5085,11 +5386,19 @@ def main(argv: list[str]) -> int:
         if command == "scan":
             return cmd_scan(args)
     except ContentError as exc:
-        if (
-            "missing shared content context" in str(exc)
-            and getattr(args, "command", None)
-            in {None, "show", "doctor", "manifest", "timeline", "graph", "leads", "analyze", "scan"}
-        ):
+        if "missing shared content context" in str(exc) and getattr(
+            args, "command", None
+        ) in {
+            None,
+            "show",
+            "doctor",
+            "manifest",
+            "timeline",
+            "graph",
+            "leads",
+            "analyze",
+            "scan",
+        }:
             parser.exit(
                 status=2,
                 message=(

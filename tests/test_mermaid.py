@@ -26,7 +26,7 @@ def test_render_semantic_mermaid_escapes_quotes_in_labels() -> None:
 
     mermaid = session._render_semantic_mermaid(payload)
 
-    assert '&quot;Condor Integration&quot;' in mermaid
+    assert "&quot;Condor Integration&quot;" in mermaid
     assert '\\"Condor Integration\\"' not in mermaid
 
 
@@ -100,6 +100,11 @@ def test_render_analysis_mermaid_uses_real_newlines_in_labels() -> None:
     mermaid = session._render_analysis_mermaid(payload)
 
     assert "\\n" not in mermaid
-    assert '["slack:thread:C123:1761932107.621519<br/>actor: Codex, primary"]' in mermaid
-    assert '["220.md<br/>thread:C123:1761932107.621519<br/>slack<br/>actor: Codex, primary<br/>cccccccccccc"]' in mermaid
+    assert (
+        '["slack:thread:C123:1761932107.621519<br/>actor: Codex, primary"]' in mermaid
+    )
+    assert (
+        '["220.md<br/>thread:C123:1761932107.621519<br/>slack<br/>actor: Codex, primary<br/>cccccccccccc"]'
+        in mermaid
+    )
     assert "-->|read, read<br/>actor: Codex, primary|" in mermaid

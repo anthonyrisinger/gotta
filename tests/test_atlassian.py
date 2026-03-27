@@ -107,9 +107,7 @@ def test_load_token_uses_cached_oauth_state_when_present(
     assert atlassian.load_token(
         auth_command="confluence",
         base_url_env="GOTTA_CONFLUENCE_BASE_URL",
-    ) == (
-        "oauth-token"
-    )
+    ) == ("oauth-token")
 
 
 def test_atlassian_next_step_prefers_native_refresh_before_auth() -> None:
@@ -128,7 +126,9 @@ def test_atlassian_next_step_prefers_native_refresh_before_auth() -> None:
     assert "`gotta jira auth` only if refresh does not recover the session" in next_step
 
 
-def test_atlassian_missing_credentials_message_points_to_gotta_config(monkeypatch) -> None:
+def test_atlassian_missing_credentials_message_points_to_gotta_config(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("GOTTA_ATLASSIAN_OAUTH_CLIENT_ID", raising=False)
     monkeypatch.delenv("GOTTA_ATLASSIAN_OAUTH_CLIENT_SECRET", raising=False)
     monkeypatch.setattr(atlassian, "load_atlassian_config_env", lambda: {})
@@ -158,7 +158,9 @@ def test_confluence_page_ref_accepts_bare_and_prefixed_page_ids(monkeypatch) -> 
         "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=20202"
     )
     short_url = confluence.parse_page_ref("https://example.atlassian.net/wiki/x/1J0AAA")
-    long_short_url = confluence.parse_page_ref("https://example.atlassian.net/wiki/x/GoD9AgE")
+    long_short_url = confluence.parse_page_ref(
+        "https://example.atlassian.net/wiki/x/GoD9AgE"
+    )
 
     assert bare.page_id == "10101"
     assert bare.base_url == ""
@@ -292,7 +294,9 @@ def test_confluence_get_shortlink_falls_back_to_blogpost_lookup(
     assert any("/blogposts/40404?" in url for url in seen_urls)
 
 
-def test_confluence_update_body_rejects_blogpost_urls_before_api_calls(monkeypatch) -> None:
+def test_confluence_update_body_rejects_blogpost_urls_before_api_calls(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
     monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
 
@@ -510,7 +514,9 @@ def test_confluence_create_page_dry_run_from_markdown_reports_target(
     markdown_path.write_text("# Evidence dossier\n", encoding="utf-8")
     monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
     monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
-    monkeypatch.setattr(confluence, "render_markdown_to_storage", lambda markdown: "<h1>Evidence</h1>")
+    monkeypatch.setattr(
+        confluence, "render_markdown_to_storage", lambda markdown: "<h1>Evidence</h1>"
+    )
     monkeypatch.setattr(
         confluence,
         "load_session",
@@ -568,7 +574,9 @@ def test_confluence_create_page_from_markdown_strips_matching_leading_h1(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     markdown_path = tmp_path / "dossier.md"
-    markdown_path.write_text("# Evidence Dossier\n\nBody paragraph.\n", encoding="utf-8")
+    markdown_path.write_text(
+        "# Evidence Dossier\n\nBody paragraph.\n", encoding="utf-8"
+    )
     monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
     monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
     seen_markdown: list[str] = []
@@ -627,7 +635,9 @@ def test_confluence_create_page_from_markdown_keeps_nonmatching_leading_h1(
     monkeypatch, tmp_path: Path
 ) -> None:
     markdown_path = tmp_path / "dossier.md"
-    markdown_path.write_text("# Alternate Heading\n\nBody paragraph.\n", encoding="utf-8")
+    markdown_path.write_text(
+        "# Alternate Heading\n\nBody paragraph.\n", encoding="utf-8"
+    )
     monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
     monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
     seen_markdown: list[str] = []
@@ -695,7 +705,9 @@ def test_confluence_create_page_apply_posts_storage_body(
     markdown_path.write_text("# Evidence dossier\n", encoding="utf-8")
     monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
     monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
-    monkeypatch.setattr(confluence, "render_markdown_to_storage", lambda markdown: "<h1>Evidence</h1>")
+    monkeypatch.setattr(
+        confluence, "render_markdown_to_storage", lambda markdown: "<h1>Evidence</h1>"
+    )
     monkeypatch.setattr(
         confluence,
         "load_session",
@@ -897,9 +909,15 @@ def test_jira_and_confluence_get_default_to_markdown() -> None:
 
 def test_atlassian_status_defaults_to_summary() -> None:
     assert jira.build_parser().parse_args(["status"]).output == "summary"
-    assert jira.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+    assert (
+        jira.build_parser().parse_args(["status", "--output", "summary"]).output
+        == "summary"
+    )
     assert confluence.build_parser().parse_args(["status"]).output == "summary"
-    assert confluence.build_parser().parse_args(["status", "--output", "summary"]).output == "summary"
+    assert (
+        confluence.build_parser().parse_args(["status", "--output", "summary"]).output
+        == "summary"
+    )
 
 
 def test_jira_search_rejects_obvious_raw_jql() -> None:
@@ -927,18 +945,24 @@ def test_jira_search_keeps_plain_text_queries_plain(monkeypatch, capsys) -> None
 
     monkeypatch.setattr(jira, "search_jira", fake_search_jira)
 
-    result = jira.main(["search", "service continuity and ownership", "--output", "json"])
+    result = jira.main(
+        ["search", "service continuity and ownership", "--output", "json"]
+    )
 
     assert result == 0
-    assert captured["jql"] == jira.build_plaintext_jql("service continuity and ownership")
+    assert captured["jql"] == jira.build_plaintext_jql(
+        "service continuity and ownership"
+    )
     payload = capsys.readouterr().out
     assert '"size": 0' in payload
 
 
 def test_jira_and_confluence_search_use_next_for_continuation_tokens() -> None:
-    jira_args = jira.build_parser().parse_args(["search", "service outage", "--next", "abc123"])
+    jira_args = jira.build_parser().parse_args(
+        ["search", "service outage", "--next", "abc123"]
+    )
     confluence_args = confluence.build_parser().parse_args(
-        ["cql", "text ~ \"service\"", "--next", "def456"]
+        ["cql", 'text ~ "service"', "--next", "def456"]
     )
 
     assert jira_args.next == "abc123"
@@ -951,26 +975,39 @@ def test_jira_search_resolves_exact_issue_keys_directly(monkeypatch, capsys) -> 
     monkeypatch.setattr(
         jira,
         "fetch_issue",
-        lambda issue_ref, *, fields: captured.update(
-            {"issue_key": issue_ref.issue_key, "base_url": issue_ref.base_url, "fields": fields}
-        )
-        or {
-            "key": issue_ref.issue_key,
-            "summary": "Direct issue match",
-            "status": {"name": "Done"},
-            "issueType": {"name": "Task"},
-            "project": {"key": "OPS"},
-            "priority": {"name": "Medium"},
-            "assignee": {"displayName": "Alex"},
-            "labels": ["continuity"],
-            "created": "2026-03-01T10:00:00Z",
-            "updated": "2026-03-02T12:00:00Z",
-            "issueUrl": f"{issue_ref.base_url}/browse/{issue_ref.issue_key}",
-        },
+        lambda issue_ref, *, fields: (
+            captured.update(
+                {
+                    "issue_key": issue_ref.issue_key,
+                    "base_url": issue_ref.base_url,
+                    "fields": fields,
+                }
+            )
+            or {
+                "key": issue_ref.issue_key,
+                "summary": "Direct issue match",
+                "status": {"name": "Done"},
+                "issueType": {"name": "Task"},
+                "project": {"key": "OPS"},
+                "priority": {"name": "Medium"},
+                "assignee": {"displayName": "Alex"},
+                "labels": ["continuity"],
+                "created": "2026-03-01T10:00:00Z",
+                "updated": "2026-03-02T12:00:00Z",
+                "issueUrl": f"{issue_ref.base_url}/browse/{issue_ref.issue_key}",
+            }
+        ),
     )
 
     result = jira.main(
-        ["search", "proj-123", "--base-url", "https://example.atlassian.net", "--output", "json"]
+        [
+            "search",
+            "proj-123",
+            "--base-url",
+            "https://example.atlassian.net",
+            "--output",
+            "json",
+        ]
     )
 
     assert result == 0
@@ -982,9 +1019,7 @@ def test_jira_search_resolves_exact_issue_keys_directly(monkeypatch, capsys) -> 
     assert payload["results"][0]["visibility_level"] == "restricted"
 
     assert (
-        jira.main(
-            ["search", "proj-123", "--base-url", "https://example.atlassian.net"]
-        )
+        jira.main(["search", "proj-123", "--base-url", "https://example.atlassian.net"])
         == 0
     )
     rendered = capsys.readouterr().out
@@ -1025,7 +1060,16 @@ def test_jira_get_and_meta_include_visibility(monkeypatch, capsys) -> None:
     )
 
     assert (
-        jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net", "--output", "json"])
+        jira.main(
+            [
+                "get",
+                "OPS-1",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--output",
+                "json",
+            ]
+        )
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
@@ -1033,14 +1077,25 @@ def test_jira_get_and_meta_include_visibility(monkeypatch, capsys) -> None:
     assert payload["visibility_confidence"] == "high"
 
     assert (
-        jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net", "--output", "meta"])
+        jira.main(
+            [
+                "get",
+                "OPS-1",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--output",
+                "meta",
+            ]
+        )
         == 0
     )
     meta = json.loads(capsys.readouterr().out)
     assert meta["visibility_level"] == "restricted"
     assert meta["visibility_confidence"] == "high"
 
-    assert jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net"]) == 0
+    assert (
+        jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net"]) == 0
+    )
     rendered = capsys.readouterr().out
     assert "- Visibility: restricted (same_company, high)" in rendered
 
@@ -1120,12 +1175,12 @@ def test_confluence_storage_sanitization_strips_confluence_markup_noise() -> Non
 
     cleaned = confluence._sanitize_storage_html_for_markdown(storage_html)
 
-    assert 'ac:local-id=' not in cleaned
-    assert 'data-table-width=' not in cleaned
-    assert 'data-layout=' not in cleaned
-    assert 'data-card-appearance=' not in cleaned
-    assert 'placeholder-inline-tasks' not in cleaned
-    assert 'incomplete' not in cleaned
+    assert "ac:local-id=" not in cleaned
+    assert "data-table-width=" not in cleaned
+    assert "data-layout=" not in cleaned
+    assert "data-card-appearance=" not in cleaned
+    assert "placeholder-inline-tasks" not in cleaned
+    assert "incomplete" not in cleaned
     assert '<a href="https://example.com">x</a>' in cleaned
 
 
@@ -1194,7 +1249,9 @@ def test_confluence_render_page_markdown_marks_drawio_projection_as_lossy() -> N
                 "title": "Example Diagram Page",
                 "createdAt": "2026-03-23T17:13:55.378Z",
                 "version": {"number": 11, "createdAt": "2026-03-24T19:47:30.675Z"},
-                "body": {"storage": {"value": "<ac:structured-macro ac:name=\"drawio\" />"}},
+                "body": {
+                    "storage": {"value": '<ac:structured-macro ac:name="drawio" />'}
+                },
             },
             confluence.Session(
                 token="token",
@@ -1222,7 +1279,9 @@ def test_confluence_render_comment_markdown_marks_drawio_projection_as_lossy() -
                 "title": "Example Comment",
                 "createdAt": "2026-03-23T17:13:55.378Z",
                 "version": {"number": 2, "createdAt": "2026-03-24T19:47:30.675Z"},
-                "body": {"storage": {"value": "<ac:structured-macro ac:name=\"drawio\" />"}},
+                "body": {
+                    "storage": {"value": '<ac:structured-macro ac:name="drawio" />'}
+                },
             },
             confluence.Session(
                 token="token",
@@ -1237,7 +1296,9 @@ def test_confluence_render_comment_markdown_marks_drawio_projection_as_lossy() -
     assert "gotta confluence get 333333 --output body" in rendered
 
 
-def test_confluence_markdown_from_capture_reloads_session_for_drawio_projection(monkeypatch) -> None:
+def test_confluence_markdown_from_capture_reloads_session_for_drawio_projection(
+    monkeypatch,
+) -> None:
     seen_page_refs: list[confluence.PageRef] = []
     original = confluence.render_storage_to_markdown
 
@@ -1254,12 +1315,14 @@ def test_confluence_markdown_from_capture_reloads_session_for_drawio_projection(
         ),
     )
     confluence.render_storage_to_markdown = lambda storage_html, **kwargs: (
-        "Embedded draw.io diagram" if kwargs.get("session") is not None else "no session"
+        "Embedded draw.io diagram"
+        if kwargs.get("session") is not None
+        else "no session"
     )
     try:
         rendered = confluence._markdown_from_capture(
             Capture(
-                data=b"<ac:structured-macro ac:name=\"drawio\" />",
+                data=b'<ac:structured-macro ac:name="drawio" />',
                 meta={
                     "content_kind": "page",
                     "content_id": "222222",
@@ -1280,7 +1343,7 @@ def test_confluence_markdown_from_capture_reloads_session_for_drawio_projection(
 def test_confluence_replace_drawio_macros_emits_structured_fallback() -> None:
     rendered = confluence._replace_drawio_macros(
         (
-            '<h2>Data Flow</h2>'
+            "<h2>Data Flow</h2>"
             '<ac:structured-macro ac:name="drawio" ac:schema-version="1">'
             '<ac:parameter ac:name="custContentId">444444</ac:parameter>'
             '<ac:parameter ac:name="pageId">222222</ac:parameter>'
@@ -1299,7 +1362,9 @@ def test_confluence_replace_drawio_macros_emits_structured_fallback() -> None:
     assert "Structure" in rendered
 
 
-def test_confluence_replace_drawio_macros_summarizes_attachment_when_resolvable(monkeypatch) -> None:
+def test_confluence_replace_drawio_macros_summarizes_attachment_when_resolvable(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         confluence,
         "_resolve_drawio_attachment",
@@ -1365,19 +1430,24 @@ def test_confluence_attachment_download_url_prefers_api_redirect_endpoint() -> N
     )
 
 
-def test_confluence_attachment_download_url_falls_back_to_confluence_download_link() -> None:
+def test_confluence_attachment_download_url_falls_back_to_confluence_download_link() -> (
+    None
+):
     session = confluence.Session(
         token="token",
         cloud_id="cloud-123",
         base_url="https://example.atlassian.net",
     )
 
-    assert confluence._attachment_download_url(
-        session,
-        {
-            "downloadLink": "/download/attachments/222222/example-graph.drawio",
-        },
-    ) == "https://example.atlassian.net/wiki/download/attachments/222222/example-graph.drawio"
+    assert (
+        confluence._attachment_download_url(
+            session,
+            {
+                "downloadLink": "/download/attachments/222222/example-graph.drawio",
+            },
+        )
+        == "https://example.atlassian.net/wiki/download/attachments/222222/example-graph.drawio"
+    )
 
 
 def test_jira_auth_prefers_reuse_or_refresh(monkeypatch, capsys) -> None:
@@ -1404,7 +1474,9 @@ def test_jira_auth_prefers_reuse_or_refresh(monkeypatch, capsys) -> None:
         "run_oauth_bootstrap",
         lambda **kwargs: pytest.fail("full bootstrap should not run by default"),
     )
-    monkeypatch.setattr(jira, "persist_selected_base_urls", lambda base_url: persisted.append(base_url))
+    monkeypatch.setattr(
+        jira, "persist_selected_base_urls", lambda base_url: persisted.append(base_url)
+    )
 
     result = jira.main(["auth"])
 
@@ -1423,7 +1495,9 @@ def test_jira_auth_full_forces_browser_bootstrap(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         jira,
         "load_session",
-        lambda base_url: pytest.fail("default refresh path should be bypassed with --full"),
+        lambda base_url: pytest.fail(
+            "default refresh path should be bypassed with --full"
+        ),
     )
     monkeypatch.setattr(
         jira,
@@ -1434,7 +1508,9 @@ def test_jira_auth_full_forces_browser_bootstrap(monkeypatch, capsys) -> None:
             "expires_at": 456.0,
         },
     )
-    monkeypatch.setattr(jira, "persist_selected_base_urls", lambda base_url: persisted.append(base_url))
+    monkeypatch.setattr(
+        jira, "persist_selected_base_urls", lambda base_url: persisted.append(base_url)
+    )
 
     result = jira.main(["auth", "--full"])
 
@@ -1495,7 +1571,9 @@ def test_confluence_auth_full_forces_browser_bootstrap(monkeypatch, capsys) -> N
     monkeypatch.setattr(
         confluence,
         "load_session",
-        lambda page_ref: pytest.fail("default refresh path should be bypassed with --full"),
+        lambda page_ref: pytest.fail(
+            "default refresh path should be bypassed with --full"
+        ),
     )
     monkeypatch.setattr(
         confluence,
@@ -1557,9 +1635,16 @@ def test_atlassian_api_json_accepts_success_without_body(monkeypatch) -> None:
         def read(self) -> bytes:
             return b""
 
-    monkeypatch.setattr(atlassian.urllib.request, "urlopen", lambda request: FakeResponse())
+    monkeypatch.setattr(
+        atlassian.urllib.request, "urlopen", lambda request: FakeResponse()
+    )
 
-    assert atlassian.api_json("PUT", "https://example.invalid/api", "token", payload={"ok": True}) == {}
+    assert (
+        atlassian.api_json(
+            "PUT", "https://example.invalid/api", "token", payload={"ok": True}
+        )
+        == {}
+    )
 
 
 def test_jira_write_surfaces_default_to_summary_preview() -> None:
@@ -1569,7 +1654,9 @@ def test_jira_write_surfaces_default_to_summary_preview() -> None:
     update_args = jira.build_parser().parse_args(["update", "OPS-1"])
     comment_args = jira.build_parser().parse_args(["comment", "OPS-1"])
     link_args = jira.build_parser().parse_args(["link", "OPS-1", "OPS-2"])
-    transition_args = jira.build_parser().parse_args(["transition", "OPS-1", "--to", "Done"])
+    transition_args = jira.build_parser().parse_args(
+        ["transition", "OPS-1", "--to", "Done"]
+    )
 
     assert create_args.output == "summary"
     assert create_args.apply is False
@@ -1588,7 +1675,10 @@ def test_jira_fields_create_discovery_renders_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         jira,
         "resolve_project",
-        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+        lambda base_url, project: (
+            session,
+            {"id": "10000", "key": "OPS", "name": "Operations"},
+        ),
     )
     monkeypatch.setattr(
         jira,
@@ -1627,7 +1717,9 @@ def test_jira_fields_create_discovery_renders_json(monkeypatch, capsys) -> None:
     assert payload["fields"]["summary"]["required"] is True
 
 
-def test_jira_create_preview_reports_missing_required_fields(monkeypatch, capsys) -> None:
+def test_jira_create_preview_reports_missing_required_fields(
+    monkeypatch, capsys
+) -> None:
     session = jira.Session(
         token="token",
         cloud_id="cloud-123",
@@ -1636,7 +1728,10 @@ def test_jira_create_preview_reports_missing_required_fields(monkeypatch, capsys
     monkeypatch.setattr(
         jira,
         "resolve_project",
-        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+        lambda base_url, project: (
+            session,
+            {"id": "10000", "key": "OPS", "name": "Operations"},
+        ),
     )
     monkeypatch.setattr(
         jira,
@@ -1653,7 +1748,11 @@ def test_jira_create_preview_reports_missing_required_fields(monkeypatch, capsys
             ),
             "customfield_10000": jira.normalize_field_metadata(
                 "customfield_10000",
-                {"name": "Acceptance Criteria", "required": True, "schema": {"type": "string"}},
+                {
+                    "name": "Acceptance Criteria",
+                    "required": True,
+                    "schema": {"type": "string"},
+                },
             ),
         },
     )
@@ -1703,7 +1802,10 @@ def test_jira_create_apply_creates_issue_and_links(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         jira,
         "resolve_project",
-        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+        lambda base_url, project: (
+            session,
+            {"id": "10000", "key": "OPS", "name": "Operations"},
+        ),
     )
     monkeypatch.setattr(
         jira,
@@ -1723,23 +1825,25 @@ def test_jira_create_apply_creates_issue_and_links(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         jira,
         "create_issue",
-        lambda session, *, payload_fields: created_payloads.append(payload_fields)
-        or {
-            "siteUrl": session.base_url,
-            "issueUrl": f"{session.base_url}/browse/OPS-101",
-            "id": "10101",
-            "key": "OPS-101",
-            "summary": payload_fields["summary"],
-            "status": {"name": "To Do"},
-            "issueType": {"name": "Task"},
-            "project": {"key": "OPS", "name": "Operations"},
-            "priority": payload_fields.get("priority"),
-            "assignee": None,
-            "reporter": None,
-            "labels": [],
-            "created": "2026-03-18T00:00:00Z",
-            "updated": "2026-03-18T00:00:00Z",
-        },
+        lambda session, *, payload_fields: (
+            created_payloads.append(payload_fields)
+            or {
+                "siteUrl": session.base_url,
+                "issueUrl": f"{session.base_url}/browse/OPS-101",
+                "id": "10101",
+                "key": "OPS-101",
+                "summary": payload_fields["summary"],
+                "status": {"name": "To Do"},
+                "issueType": {"name": "Task"},
+                "project": {"key": "OPS", "name": "Operations"},
+                "priority": payload_fields.get("priority"),
+                "assignee": None,
+                "reporter": None,
+                "labels": [],
+                "created": "2026-03-18T00:00:00Z",
+                "updated": "2026-03-18T00:00:00Z",
+            }
+        ),
     )
     monkeypatch.setattr(
         jira,
@@ -1756,10 +1860,9 @@ def test_jira_create_apply_creates_issue_and_links(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         jira,
         "create_remote_link",
-        lambda session, issue_key, *, payload: remote_links.append(
-            {"issue": issue_key, "payload": payload}
-        )
-        or {},
+        lambda session, issue_key, *, payload: (
+            remote_links.append({"issue": issue_key, "payload": payload}) or {}
+        ),
     )
 
     assert (
@@ -1791,7 +1894,10 @@ def test_jira_create_apply_creates_issue_and_links(monkeypatch, capsys) -> None:
     assert created_payloads[0]["project"] == {"key": "OPS"}
     assert issue_links == [("OPS-101", "OPS-2", "Relates")]
     assert remote_links[0]["issue"] == "OPS-101"
-    assert remote_links[0]["payload"]["object"]["url"] == "https://example.invalid/request/42"
+    assert (
+        remote_links[0]["payload"]["object"]["url"]
+        == "https://example.invalid/request/42"
+    )
     assert payload["issue"]["key"] == "OPS-101"
 
 
@@ -1804,7 +1910,10 @@ def test_jira_create_preview_resolves_current_sprint(monkeypatch, capsys) -> Non
     monkeypatch.setattr(
         jira,
         "resolve_project",
-        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+        lambda base_url, project: (
+            session,
+            {"id": "10000", "key": "OPS", "name": "Operations"},
+        ),
     )
     monkeypatch.setattr(
         jira,
@@ -1869,7 +1978,10 @@ def test_jira_create_apply_assigns_created_issue_to_sprint(monkeypatch, capsys) 
     monkeypatch.setattr(
         jira,
         "resolve_project",
-        lambda base_url, project: (session, {"id": "10000", "key": "OPS", "name": "Operations"}),
+        lambda base_url, project: (
+            session,
+            {"id": "10000", "key": "OPS", "name": "Operations"},
+        ),
     )
     monkeypatch.setattr(
         jira,
@@ -1918,7 +2030,9 @@ def test_jira_create_apply_assigns_created_issue_to_sprint(monkeypatch, capsys) 
     monkeypatch.setattr(
         jira,
         "add_issues_to_sprint",
-        lambda session, sprint_id, *, issue_keys: seen_assignments.append((sprint_id, issue_keys)),
+        lambda session, sprint_id, *, issue_keys: seen_assignments.append(
+            (sprint_id, issue_keys)
+        ),
     )
 
     assert (
@@ -1967,7 +2081,11 @@ def test_jira_update_preview_upserts_markdown_section(monkeypatch, capsys) -> No
             {
                 "summary": jira.normalize_field_metadata(
                     "summary",
-                    {"name": "Summary", "required": False, "schema": {"type": "string"}},
+                    {
+                        "name": "Summary",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
                 )
             },
         ),
@@ -2084,7 +2202,9 @@ def test_jira_update_preview_supports_sprint_only_change(monkeypatch, capsys) ->
     assert payload["target"]["sprint"] == "31"
 
 
-def test_jira_update_apply_sprint_only_assigns_without_field_update(monkeypatch, capsys) -> None:
+def test_jira_update_apply_sprint_only_assigns_without_field_update(
+    monkeypatch, capsys
+) -> None:
     session = jira.Session(
         token="token",
         cloud_id="cloud-123",
@@ -2131,13 +2251,17 @@ def test_jira_update_apply_sprint_only_assigns_without_field_update(monkeypatch,
     )
 
     def fail_update_issue_fields(session, issue_key, *, payload_fields):
-        raise AssertionError("update_issue_fields should not run for sprint-only updates")
+        raise AssertionError(
+            "update_issue_fields should not run for sprint-only updates"
+        )
 
     monkeypatch.setattr(jira, "update_issue_fields", fail_update_issue_fields)
     monkeypatch.setattr(
         jira,
         "add_issues_to_sprint",
-        lambda session, sprint_id, *, issue_keys: seen_assignments.append((sprint_id, issue_keys)),
+        lambda session, sprint_id, *, issue_keys: seen_assignments.append(
+            (sprint_id, issue_keys)
+        ),
     )
 
     assert (
@@ -2193,7 +2317,10 @@ def test_jira_comment_preview_renders_markdown_to_adf(monkeypatch, capsys) -> No
     payload = json.loads(capsys.readouterr().out)
     paragraph = payload["payload"]["body"]["content"][0]
     assert paragraph["type"] == "paragraph"
-    assert payload["bodyMarkdown"] == "Need **follow-up** on [spec](https://example.invalid/spec)."
+    assert (
+        payload["bodyMarkdown"]
+        == "Need **follow-up** on [spec](https://example.invalid/spec)."
+    )
 
 
 def test_jira_link_preview_supports_remote_links(monkeypatch, capsys) -> None:
@@ -2232,7 +2359,9 @@ def test_jira_link_preview_supports_remote_links(monkeypatch, capsys) -> None:
     assert payload["payload"]["object"]["title"] == "https://example.invalid/request/42"
 
 
-def test_jira_transition_preview_reports_missing_required_fields(monkeypatch, capsys) -> None:
+def test_jira_transition_preview_reports_missing_required_fields(
+    monkeypatch, capsys
+) -> None:
     session = jira.Session(
         token="token",
         cloud_id="cloud-123",
@@ -2291,7 +2420,9 @@ def test_atlassian_default_scope_includes_jira_software_sprint_scopes() -> None:
     assert "write:sprint:jira-software" in atlassian.DEFAULT_OAUTH_SCOPE
 
 
-def test_jira_sprints_summary_lists_scrum_boards_and_sprints(monkeypatch, capsys) -> None:
+def test_jira_sprints_summary_lists_scrum_boards_and_sprints(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(
         jira,
         "collect_board_sprints",
@@ -2307,8 +2438,18 @@ def test_jira_sprints_summary_lists_scrum_boards_and_sprints(monkeypatch, capsys
                     "name": "Delivery Board",
                     "type": "scrum",
                     "sprints": [
-                        {"id": "31", "name": "Sprint 31", "state": "active", "goal": ""},
-                        {"id": "32", "name": "Sprint 32", "state": "future", "goal": ""},
+                        {
+                            "id": "31",
+                            "name": "Sprint 31",
+                            "state": "active",
+                            "goal": "",
+                        },
+                        {
+                            "id": "32",
+                            "name": "Sprint 32",
+                            "state": "future",
+                            "goal": "",
+                        },
                     ],
                 }
             ],
@@ -2328,16 +2469,41 @@ def test_jira_projects_supports_bounded_json_pages(monkeypatch, capsys) -> None:
         jira,
         "fetch_projects",
         lambda base_url: (
-            jira.Session(token="token", cloud_id="cloud-123", base_url="https://example.atlassian.net"),
+            jira.Session(
+                token="token",
+                cloud_id="cloud-123",
+                base_url="https://example.atlassian.net",
+            ),
             [
-                {"id": "10000", "key": "OPS", "name": "Operations", "projectTypeKey": "software", "simplified": False},
-                {"id": "10001", "key": "PLAT", "name": "Platform", "projectTypeKey": "software", "simplified": False},
-                {"id": "10002", "key": "SEC", "name": "Security", "projectTypeKey": "software", "simplified": False},
+                {
+                    "id": "10000",
+                    "key": "OPS",
+                    "name": "Operations",
+                    "projectTypeKey": "software",
+                    "simplified": False,
+                },
+                {
+                    "id": "10001",
+                    "key": "PLAT",
+                    "name": "Platform",
+                    "projectTypeKey": "software",
+                    "simplified": False,
+                },
+                {
+                    "id": "10002",
+                    "key": "SEC",
+                    "name": "Security",
+                    "projectTypeKey": "software",
+                    "simplified": False,
+                },
             ],
         ),
     )
 
-    assert jira.main(["projects", "--limit", "1", "--offset", "1", "--output", "json"]) == 0
+    assert (
+        jira.main(["projects", "--limit", "1", "--offset", "1", "--output", "json"])
+        == 0
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["totalCount"] == 3
@@ -2364,21 +2530,48 @@ def test_jira_sprints_pages_across_project_sprints(monkeypatch, capsys) -> None:
                     "name": "Delivery Board",
                     "type": "scrum",
                     "sprints": [
-                        {"id": "31", "name": "Sprint 31", "state": "active", "goal": ""},
-                        {"id": "32", "name": "Sprint 32", "state": "future", "goal": ""},
+                        {
+                            "id": "31",
+                            "name": "Sprint 31",
+                            "state": "active",
+                            "goal": "",
+                        },
+                        {
+                            "id": "32",
+                            "name": "Sprint 32",
+                            "state": "future",
+                            "goal": "",
+                        },
                     ],
                 },
                 {
                     "id": "22",
                     "name": "Platform Board",
                     "type": "scrum",
-                    "sprints": [{"id": "41", "name": "Sprint 41", "state": "active", "goal": ""}],
+                    "sprints": [
+                        {"id": "41", "name": "Sprint 41", "state": "active", "goal": ""}
+                    ],
                 },
             ],
         ),
     )
 
-    assert jira.main(["sprints", "--project", "OPS", "--limit", "1", "--offset", "1", "--output", "json"]) == 0
+    assert (
+        jira.main(
+            [
+                "sprints",
+                "--project",
+                "OPS",
+                "--limit",
+                "1",
+                "--offset",
+                "1",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["pagingUnit"] == "sprints"
@@ -2409,13 +2602,30 @@ def test_jira_explicit_board_sprint_page_exhaustion_does_not_render_empty_board(
                     "id": "21",
                     "name": "Delivery Board",
                     "type": "scrum",
-                    "sprints": [{"id": "31", "name": "Sprint 31", "state": "active", "goal": ""}],
+                    "sprints": [
+                        {"id": "31", "name": "Sprint 31", "state": "active", "goal": ""}
+                    ],
                 }
             ],
         ),
     )
 
-    assert jira.main(["sprints", "--board", "21", "--limit", "1", "--offset", "99", "--output", "json"]) == 0
+    assert (
+        jira.main(
+            [
+                "sprints",
+                "--board",
+                "21",
+                "--limit",
+                "1",
+                "--offset",
+                "99",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["pagingUnit"] == "sprints"
@@ -2424,14 +2634,18 @@ def test_jira_explicit_board_sprint_page_exhaustion_does_not_render_empty_board(
     assert payload["offset"] == 99
     assert payload["boards"] == []
 
-    assert jira.main(["sprints", "--board", "21", "--limit", "1", "--offset", "99"]) == 0
+    assert (
+        jira.main(["sprints", "--board", "21", "--limit", "1", "--offset", "99"]) == 0
+    )
     rendered = capsys.readouterr().out
     assert "sprints: 1 total (showing 0, offset 99)" in rendered
     assert "Delivery Board" not in rendered
     assert "no sprints" not in rendered
 
 
-def test_jira_add_to_sprint_preview_resolves_current_sprint(monkeypatch, capsys) -> None:
+def test_jira_add_to_sprint_preview_resolves_current_sprint(
+    monkeypatch, capsys
+) -> None:
     session = jira.Session(
         token="token",
         cloud_id="cloud-123",
@@ -2473,7 +2687,9 @@ def test_jira_add_to_sprint_preview_resolves_current_sprint(monkeypatch, capsys)
     assert payload["target"]["sprintState"] == "active"
 
 
-def test_jira_add_to_sprint_apply_posts_issue_to_resolved_sprint(monkeypatch, capsys) -> None:
+def test_jira_add_to_sprint_apply_posts_issue_to_resolved_sprint(
+    monkeypatch, capsys
+) -> None:
     session = jira.Session(
         token="token",
         cloud_id="cloud-123",
@@ -2546,8 +2762,12 @@ def test_jira_resolve_current_sprint_requires_disambiguation(monkeypatch) -> Non
         ),
     )
 
-    with pytest.raises(jira.ToolError, match="multiple active sprints.*--board or --sprint"):
-        jira.resolve_current_sprint("https://example.atlassian.net", project_key_or_id="OPS")
+    with pytest.raises(
+        jira.ToolError, match="multiple active sprints.*--board or --sprint"
+    ):
+        jira.resolve_current_sprint(
+            "https://example.atlassian.net", project_key_or_id="OPS"
+        )
 
 
 def test_confluence_search_markdown_is_readable() -> None:
@@ -2604,7 +2824,9 @@ def test_confluence_cql_markdown_is_readable(monkeypatch, capsys) -> None:
         },
     )
 
-    assert confluence.main(["cql", 'text ~ "Architecture"', "--output", "markdown"]) == 0
+    assert (
+        confluence.main(["cql", 'text ~ "Architecture"', "--output", "markdown"]) == 0
+    )
     rendered = capsys.readouterr().out
     assert "### Confluence Search:" in rendered
     assert "locator `confluence:10101`" in rendered

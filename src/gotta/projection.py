@@ -6,16 +6,20 @@ import json
 import os
 from pathlib import Path
 
-from gotta.content import write_text_atomic
+from gotta.content import PRIVATE_FILE_MODE, ensure_private_dir, write_text_atomic
 
 
 def append_chunk(path: Path, chunk: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+    ensure_private_dir(path.parent)
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, PRIVATE_FILE_MODE)
     try:
         os.write(fd, chunk.encode("utf-8"))
     finally:
         os.close(fd)
+    try:
+        path.chmod(PRIVATE_FILE_MODE)
+    except OSError:
+        pass
 
 
 def append_jsonl(path: Path, payload: dict[str, object]) -> None:
@@ -39,7 +43,7 @@ def read_jsonl_records(path: Path) -> list[dict[str, object]]:
 
 
 def write_projection_if_changed(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     if path.exists():
         try:
             if path.read_text(encoding="utf-8") == text:

@@ -111,7 +111,10 @@ def discovered_plugins(group: str = DEFAULT_PLUGIN_GROUP) -> dict[str, PluginSpe
         _builtin_core_plugins() if group == DEFAULT_PLUGIN_GROUP else {}
     )
     for entry_point in sorted(entry_points(group=group), key=_shadow_priority):
-        if group == DEFAULT_PLUGIN_GROUP and _dist_name(entry_point) in CORE_PLUGIN_DISTS:
+        if (
+            group == DEFAULT_PLUGIN_GROUP
+            and _dist_name(entry_point) in CORE_PLUGIN_DISTS
+        ):
             # Source-defined core plugins are canonical. When running from source,
             # installed core metadata may lag behind and still advertise removed
             # plugins; skip all core entry-point metadata instead of warning on it.
@@ -168,7 +171,11 @@ def _runner(module_name: str):
         except BrokenPipeError:
             raise
         except Exception as exc:
-            if isinstance(tool_error, type) and isinstance(exc, tool_error) and callable(die):
+            if (
+                isinstance(tool_error, type)
+                and isinstance(exc, tool_error)
+                and callable(die)
+            ):
                 return int(die(str(exc)))
             raise
 

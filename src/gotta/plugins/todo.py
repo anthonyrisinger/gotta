@@ -84,14 +84,18 @@ def session_access_mode(argv: list[str]) -> str:
 
 
 def _format_markdown_bullet(body: str, *, prefix: str = "- ") -> str:
-    lines = session_plugin._normalize_entry_text(body, input_name="entry text").split("\n")
+    lines = session_plugin._normalize_entry_text(body, input_name="entry text").split(
+        "\n"
+    )
     first = f"{prefix}{lines[0].strip()}"
     if len(lines) == 1:
         return first
     return "\n".join([first, *[f"  {line}" if line else "  " for line in lines[1:]]])
 
 
-def _todo_markdown_block_entries(text: str, *, input_name: str) -> tuple[list[str], int]:
+def _todo_markdown_block_entries(
+    text: str, *, input_name: str
+) -> tuple[list[str], int]:
     lines: list[str] = []
     item_count = 0
     for raw_line in text.split("\n"):
@@ -115,11 +119,15 @@ def _todo_markdown_block_entries(text: str, *, input_name: str) -> tuple[list[st
             continue
         bullet_match = TODO_BULLET_INPUT_RE.match(line)
         if bullet_match:
-            lines.append(f"{bullet_match.group('indent')}- [ ] {bullet_match.group('body').strip()}")
+            lines.append(
+                f"{bullet_match.group('indent')}- [ ] {bullet_match.group('body').strip()}"
+            )
             item_count += 1
             continue
         lines.append(line)
-    entry = session_plugin._normalize_entry_text("\n".join(lines), input_name=input_name)
+    entry = session_plugin._normalize_entry_text(
+        "\n".join(lines), input_name=input_name
+    )
     if entry.splitlines() and TODO_HEADING_INPUT_RE.match(entry.splitlines()[0]):
         entry = "\n" + entry
     return [entry], max(item_count, 1)
@@ -273,8 +281,14 @@ def main(argv: list[str] | None = None) -> int:
     action = args.action or "show"
     if action == "show":
         payload = todo_payload(work_dir, status=args.status, limit=max(args.limit, 0))
-        actor_scope = session_plugin.session_actor(work_dir) if work_dir.resolve().parent.name == "actors" else ""
-        payload["locator"] = session_plugin._native_surface_locator("todo", actor_name=actor_scope)
+        actor_scope = (
+            session_plugin.session_actor(work_dir)
+            if work_dir.resolve().parent.name == "actors"
+            else ""
+        )
+        payload["locator"] = session_plugin._native_surface_locator(
+            "todo", actor_name=actor_scope
+        )
         payload["follow_command"] = session_plugin._native_surface_follow_command(
             "todo",
             actor_name=actor_scope,
@@ -302,7 +316,9 @@ def main(argv: list[str] | None = None) -> int:
         create_todo_item(
             work_dir,
             section="Captured Work",
-            text=session_plugin._normalize_entry_text(payload, input_name="TODO item text"),
+            text=session_plugin._normalize_entry_text(
+                payload, input_name="TODO item text"
+            ),
         )
         session_plugin._record_session_activity(
             work_dir,
@@ -323,7 +339,9 @@ def main(argv: list[str] | None = None) -> int:
             input_name="TODO item text",
         )
         for entry in entries:
-            for item in _todo_items_from_markdown_entry(entry, default_section="Captured Work"):
+            for item in _todo_items_from_markdown_entry(
+                entry, default_section="Captured Work"
+            ):
                 create_todo_item(
                     work_dir,
                     section=str(item["section"]),

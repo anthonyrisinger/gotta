@@ -247,13 +247,13 @@ def write_binding(
     created_at: str,
     updated_at: str,
 ) -> Path:
-    from gotta.content import write_text_atomic
+    from gotta.content import ensure_private_dir, write_text_atomic
 
     path = binding_path_for(binding_id)
     resolved_root = session_root.expanduser().resolve()
     if path.is_symlink() or path.is_file():
         path.unlink(missing_ok=True)
-    path.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path)
     root_link = binding_root_path_for(binding_id)
     desired = os.path.relpath(resolved_root, start=root_link.parent)
     if root_link.is_symlink():

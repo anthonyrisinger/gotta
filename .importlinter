@@ -1,0 +1,10 @@
+[importlinter]
+root_package = gotta
+
+[importlinter:contract:providers-do-not-import-plugins]
+name = Providers must not import plugins
+type = forbidden
+source_modules =
+    gotta.providers
+forbidden_modules =
+    gotta.plugins

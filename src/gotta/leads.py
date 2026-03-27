@@ -19,6 +19,7 @@ from gotta.content import (
     write_text_atomic,
 )
 from gotta.providers import atlassian as atl
+from gotta import stored
 from gotta.source import (
     best_visibility_metadata,
     classify_visibility_metadata,
@@ -43,7 +44,7 @@ CANONICAL_LOCATOR_RE = re.compile(
 )
 _TRAILING_PUNCTUATION = ".,;:!?)>]}`'\"`"
 LEADS_CACHE_NAME = "leads.json"
-LEADS_CACHE_VERSION = 7
+LEADS_CACHE_VERSION = 8
 MAX_SNIPPET_CHARS = 240
 SLACK_PERMALINK_RE = re.compile(
     r"https://[^/.]+\.slack\.com/archives/(?P<channel>[A-Z0-9]+)(?:/p(?P<pnum>[0-9]{16}))?"
@@ -51,7 +52,9 @@ SLACK_PERMALINK_RE = re.compile(
 JIRA_BROWSE_RE = re.compile(r"/browse/(?P<issue>[A-Z][A-Z0-9]+-\d+)(?:/|$)")
 CONFLUENCE_PAGE_ID_QUERY_RE = re.compile(r"(?:^|&)pageId=(?P<page_id>\d+)(?:&|$)")
 CONFLUENCE_PAGE_PATH_RE = re.compile(r"/pages/(?P<page_id>\d+)(?:/|$)")
-CONFLUENCE_SPACE_PAGE_PATH_RE = re.compile(r"/spaces/[^/]+/pages/(?P<page_id>\d+)(?:/|$)")
+CONFLUENCE_SPACE_PAGE_PATH_RE = re.compile(
+    r"/spaces/[^/]+/pages/(?P<page_id>\d+)(?:/|$)"
+)
 GDOC_URL_RE = re.compile(r"/document/d/(?P<doc_id>[A-Za-z0-9_-]+)(?:/|$)")
 GSHEET_URL_RE = re.compile(r"/spreadsheets/d/(?P<sheet_id>[A-Za-z0-9_-]+)(?:/|$)")
 GDRIVE_FILE_RE = re.compile(r"/file/d/(?P<file_id>[A-Za-z0-9_-]+)(?:/|$)")
@@ -149,7 +152,10 @@ def snapshot_display_name(snapshot: ContentSnapshot) -> str:
 
 def snapshot_locator(snapshot: ContentSnapshot) -> str:
     return (
-        str(snapshot.metadata.get("canonical_locator", "") or snapshot.metadata.get("locator", "")).strip()
+        str(
+            snapshot.metadata.get("canonical_locator", "")
+            or snapshot.metadata.get("locator", "")
+        ).strip()
         or "unknown"
     )
 
@@ -170,7 +176,9 @@ def snapshot_sort_key(snapshot: ContentSnapshot) -> tuple[str, str]:
 
 def _trim_candidate(raw: str) -> str:
     cleaned = raw.strip()
-    ellipsized_url = cleaned.startswith(("http://", "https://")) and cleaned.rstrip().endswith("...")
+    ellipsized_url = cleaned.startswith(
+        ("http://", "https://")
+    ) and cleaned.rstrip().endswith("...")
     if ")](" in cleaned:
         left, right = cleaned.split(")](", 1)
         cleaned = right if right.startswith(("http://", "https://")) else left
@@ -187,16 +195,14 @@ def _trim_candidate(raw: str) -> str:
     cleaned = cleaned.strip()
     if ellipsized_url and cleaned.startswith(("http://", "https://")):
         parsed = urllib.parse.urlparse(cleaned)
-        if parsed.netloc and not parsed.path and not parsed.query and not parsed.fragment:
+        if (
+            parsed.netloc
+            and not parsed.path
+            and not parsed.query
+            and not parsed.fragment
+        ):
             return ""
     return cleaned
-
-
-def _decode_text_bytes(data: bytes) -> str:
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return data.decode("utf-8", errors="ignore")
 
 
 def _clip_snippet(raw_line: str, needle: str = "") -> str:
@@ -219,23 +225,11 @@ def _clip_snippet(raw_line: str, needle: str = "") -> str:
     return f"{line[: max(MAX_SNIPPET_CHARS - 4, 1)].rstrip()} ..."
 
 
-def _lead_text_for_path(path: Path, *, raw_data: bytes | None = None) -> str:
-    try:
-        from gotta.plugins import read as read_plugin
-
-        display, _language = read_plugin.stored_display(path)
-    except Exception:
-        if raw_data is None:
-            try:
-                raw_data = path.read_bytes()
-            except OSError:
-                return ""
-        if b"\x00" in raw_data:
-            return ""
-        return _decode_text_bytes(raw_data)
-    if display.startswith(b"# Binary Content\n"):
-        return ""
-    return display.decode("utf-8", errors="ignore")
+def _lead_text_for_path(path: Path) -> tuple[str, tuple[str, ...]]:
+    rendered = stored.stored_display(path)
+    if rendered.data.startswith(b"# Binary Content\n"):
+        return ("", rendered.degradations)
+    return (rendered.data.decode("utf-8", errors="ignore"), rendered.degradations)
 
 
 def _provider_for_url(target: str) -> str:
@@ -434,7 +428,9 @@ def _semantic_search_locator(provider: str, query: str, *, text: str) -> str:
             text,
         )
         workspace = (
-            workspace_match.group("workspace").strip() if workspace_match is not None else ""
+            workspace_match.group("workspace").strip()
+            if workspace_match is not None
+            else ""
         )
         if workspace:
             return f"slack:search --workspace {workspace} {query}"
@@ -568,7 +564,9 @@ def _relation_set_priority(values: set[str] | list[str]) -> int:
 def _search_seed_signal_sort_key(query: str) -> tuple[object, ...]:
     tokens = [token for token in query.split() if token]
     uppercase_count = sum(1 for token in tokens if token.isupper())
-    titlecase_count = sum(1 for token in tokens if token[:1].isupper() and not token.isupper())
+    titlecase_count = sum(
+        1 for token in tokens if token[:1].isupper() and not token.isupper()
+    )
     long_lowercase_count = sum(
         1
         for token in tokens
@@ -629,7 +627,9 @@ def edge_best_first_sort_key(item: dict[str, object]) -> tuple[object, ...]:
         bool(item.get("sourceSearchLike")),
         -_relation_priority(str(item.get("relation") or "")),
         -int(item.get("occurrenceCount") or 0),
-        source_rank if bool(item.get("sourceSearchLike")) and source_rank > 0 else 1_000_000,
+        source_rank
+        if bool(item.get("sourceSearchLike")) and source_rank > 0
+        else 1_000_000,
         *_search_seed_signal_sort_key(query),
         str(item.get("targetLocator") or "").casefold(),
     )
@@ -658,8 +658,10 @@ def lead_source_best_first_sort_key(item: dict[str, object]) -> tuple[object, ..
     )
 
 
-def _serialize_mentions(mentions: list[LeadMention]) -> dict[str, Any]:
-    return {
+def _serialize_mentions(
+    mentions: list[LeadMention], *, degradations: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    payload = {
         "version": LEADS_CACHE_VERSION,
         "leadCount": len(mentions),
         "entries": [
@@ -675,6 +677,9 @@ def _serialize_mentions(mentions: list[LeadMention]) -> dict[str, Any]:
             for mention in mentions
         ],
     }
+    if degradations:
+        payload["degradations"] = list(degradations)
+    return payload
 
 
 def _deserialize_mentions(payload: dict[str, Any]) -> list[LeadMention] | None:
@@ -711,10 +716,20 @@ def _load_lead_cache_payload(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _write_lead_cache(content_dir: Path, mentions: list[LeadMention]) -> Path:
+def _write_lead_cache(
+    content_dir: Path,
+    mentions: list[LeadMention],
+    *,
+    degradations: tuple[str, ...] = (),
+) -> Path:
     return write_text_atomic(
         lead_cache_path(content_dir),
-        json.dumps(_serialize_mentions(mentions), indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            _serialize_mentions(mentions, degradations=degradations),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
     )
 
 
@@ -736,7 +751,9 @@ def _provider_for_content_dir(content_dir: Path) -> str:
         return ""
     if not isinstance(payload, dict):
         return ""
-    locator = str(payload.get("canonical_locator", "") or payload.get("locator", "")).strip()
+    locator = str(
+        payload.get("canonical_locator", "") or payload.get("locator", "")
+    ).strip()
     provider = _provider_for_locator(locator)
     if provider != "external":
         return provider
@@ -854,14 +871,12 @@ def _filter_explicit_mentions(
     return filtered
 
 
-def maybe_write_lead_cache(content_dir: Path, *, data: bytes) -> Path | None:
+def maybe_write_lead_cache(content_dir: Path) -> Path | None:
     path = lead_cache_path(content_dir)
     payload = _load_lead_cache_payload(path)
     if payload is not None and int(payload.get("version") or 0) == LEADS_CACHE_VERSION:
         return path
-    text = _lead_text_for_path(content_dir / "data", raw_data=data)
-    if not text.strip():
-        return None
+    text, degradations = _lead_text_for_path(content_dir / "data")
     mentions = extract_explicit_leads(text)
     provider = _provider_for_content_dir(content_dir)
     source_locator = ""
@@ -886,15 +901,21 @@ def maybe_write_lead_cache(content_dir: Path, *, data: bytes) -> Path | None:
         for mention in mentions
     ):
         mentions.extend(extract_semantic_search_leads(text, provider=provider))
-    return _write_lead_cache(content_dir, mentions)
+    if not text.strip() and not degradations:
+        return None
+    return _write_lead_cache(
+        content_dir,
+        mentions,
+        degradations=degradations,
+    )
 
 
 def lead_mentions_for_snapshot(snapshot: ContentSnapshot) -> list[LeadMention]:
     cached = _read_lead_cache(snapshot)
     if cached is not None:
         return cached
-    text = _lead_text_for_path(snapshot.data_path)
-    if not text.strip():
+    text, degradations = _lead_text_for_path(snapshot.data_path)
+    if not text.strip() and not degradations:
         return []
     mentions = _filter_explicit_mentions(
         source_locator=snapshot_locator(snapshot).strip(),
@@ -908,7 +929,7 @@ def lead_mentions_for_snapshot(snapshot: ContentSnapshot) -> list[LeadMention]:
                 provider=_snapshot_provider(snapshot),
             )
         )
-    _write_lead_cache(snapshot.content_dir, mentions)
+    _write_lead_cache(snapshot.content_dir, mentions, degradations=degradations)
     return mentions
 
 
@@ -999,7 +1020,9 @@ def materialized_source_index(
 ) -> dict[str, set[str]]:
     index: dict[str, set[str]] = {}
     for entry in manifest_entries:
-        locator = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip()
+        locator = str(
+            entry.get("canonical_locator", "") or entry.get("locator", "")
+        ).strip()
         checksum = str(entry.get("checksum", "")).strip()
         if not locator or not checksum or checksum not in snapshot_by_digest:
             continue
@@ -1084,9 +1107,16 @@ def build_lead_edge_records(
                 or mention_ordinal < int(state.get("sourceRank") or 0)
             ):
                 state["sourceRank"] = mention_ordinal
-            if mention.raw not in state["rawExamples"] and len(state["rawExamples"]) < 3:
+            if (
+                mention.raw not in state["rawExamples"]
+                and len(state["rawExamples"]) < 3
+            ):
                 state["rawExamples"].append(mention.raw)
-            if mention.snippet and mention.snippet not in state["contexts"] and len(state["contexts"]) < 3:
+            if (
+                mention.snippet
+                and mention.snippet not in state["contexts"]
+                and len(state["contexts"]) < 3
+            ):
                 state["contexts"].append(mention.snippet)
         for state in edge_state.values():
             artifact_locators, content_locators = materialized_target_locators(
@@ -1125,7 +1155,9 @@ def build_lead_edge_records(
     )
 
 
-def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[str, object]]:
+def aggregate_lead_sources(
+    edge_records: list[dict[str, object]],
+) -> list[dict[str, object]]:
     aggregated: dict[str, dict[str, object]] = {}
     for edge in edge_records:
         locator = str(edge["targetLocator"])
@@ -1155,7 +1187,9 @@ def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[s
         state["firstParty"] = bool(state["firstParty"] or edge.get("firstParty"))
         state["searchSeed"] = bool(state["searchSeed"] or edge.get("searchSeed"))
         state["materialized"] = bool(state["materialized"] or edge["materialized"])
-        state["occurrenceCount"] = int(state["occurrenceCount"]) + int(edge["occurrenceCount"])
+        state["occurrenceCount"] = int(state["occurrenceCount"]) + int(
+            edge["occurrenceCount"]
+        )
         state["relationKinds"].add(str(edge["relation"]))
         state["sourceChecksums"].add(str(edge["sourceChecksum"]))
         if bool(edge.get("sourceSearchLike")):
@@ -1201,13 +1235,11 @@ def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[s
         artifact_count = len(state["sourceChecksums"])
         search_like_source_count = len(state["searchLikeChecksums"])
         search_origins = sorted(
-            [
-                origin
-                for origin in state["searchOrigins"]
-                if isinstance(origin, dict)
-            ],
+            [origin for origin in state["searchOrigins"] if isinstance(origin, dict)],
             key=lambda item: (
-                int(item.get("rank") or 0) if int(item.get("rank") or 0) > 0 else 1_000_000,
+                int(item.get("rank") or 0)
+                if int(item.get("rank") or 0) > 0
+                else 1_000_000,
                 str(item.get("provider") or "").casefold(),
                 str(item.get("subcommand") or "").casefold(),
                 str(item.get("artifactLocator") or "").casefold(),
@@ -1225,11 +1257,17 @@ def aggregate_lead_sources(edge_records: list[dict[str, object]]) -> list[dict[s
                 "occurrenceCount": int(state["occurrenceCount"]),
                 "artifactCount": artifact_count,
                 "relationKinds": sorted(relation_kinds),
-                "artifactLocators": sorted(str(value) for value in state["artifactLocators"]),
-                "contentLocators": sorted(str(value) for value in state["contentLocators"]),
+                "artifactLocators": sorted(
+                    str(value) for value in state["artifactLocators"]
+                ),
+                "contentLocators": sorted(
+                    str(value) for value in state["contentLocators"]
+                ),
                 "exampleRaw": str(state["exampleRaw"]),
                 "contexts": list(state["contexts"]),
-                "bestSearchRank": int(search_origins[0].get("rank") or 0) if search_origins else 0,
+                "bestSearchRank": int(search_origins[0].get("rank") or 0)
+                if search_origins
+                else 0,
                 "searchLikeSourceCount": search_like_source_count,
                 "searchOrigins": search_origins[:5],
                 **best_visibility_metadata(state.get("visibility", {})),
@@ -1251,19 +1289,25 @@ def resolve_lead_snapshots(
     if requested.startswith("content:"):
         requested = requested.removeprefix("content:").strip()
     if requested and all(char in "0123456789abcdef" for char in requested.casefold()):
-        matches = [snapshot for snapshot in ordered if snapshot.digest.startswith(requested)]
+        matches = [
+            snapshot for snapshot in ordered if snapshot.digest.startswith(requested)
+        ]
         if not matches:
             raise ContentError(
                 f"no stored artifact matched checksum or content locator `{target}`"
             )
         if len(matches) > 1:
-            suggestions = ", ".join(content_locator(snapshot.digest) for snapshot in matches[:5])
+            suggestions = ", ".join(
+                content_locator(snapshot.digest) for snapshot in matches[:5]
+            )
             raise ContentError(
                 f"ambiguous content locator `{target}`; disambiguate with one of: {suggestions}"
             )
         return matches
     artifact_matches = [
-        snapshot for snapshot in ordered if snapshot_artifact_locator(snapshot) == requested
+        snapshot
+        for snapshot in ordered
+        if snapshot_artifact_locator(snapshot) == requested
     ]
     if artifact_matches:
         return artifact_matches
@@ -1275,13 +1319,17 @@ def resolve_lead_snapshots(
     if len(name_matches) == 1:
         return name_matches
     if len(name_matches) > 1:
-        suggestions = ", ".join(snapshot_artifact_locator(snapshot) for snapshot in name_matches[:5])
+        suggestions = ", ".join(
+            snapshot_artifact_locator(snapshot) for snapshot in name_matches[:5]
+        )
         raise ContentError(
             f"ambiguous stored artifact name `{target}`; disambiguate with one of: {suggestions}"
         )
     locator_matches: set[str] = set()
     for entry in manifest_entries:
-        locator = str(entry.get("canonical_locator", "") or entry.get("locator", "")).strip()
+        locator = str(
+            entry.get("canonical_locator", "") or entry.get("locator", "")
+        ).strip()
         if locator == requested:
             checksum = str(entry.get("checksum", "")).strip()
             if checksum and checksum in by_digest:
