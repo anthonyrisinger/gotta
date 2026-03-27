@@ -2842,7 +2842,9 @@ def _render_actor_bind_message(payload: dict[str, object]) -> str:
     todo_cmd = str(payload.get("todoCommand") or "").strip()
     launch_cmd = str(payload.get("launchCommand") or "").strip()
     actor_blockers = [
-        str(item).strip() for item in (payload.get("blockers") or []) if str(item).strip()
+        str(item).strip()
+        for item in (payload.get("blockers") or [])
+        if str(item).strip()
     ]
     if actor_blockers:
         suffix = (

@@ -809,9 +809,7 @@ def _cmd_status(args: argparse.Namespace, work_root: Path, actor_name: str) -> i
     return 0
 
 
-def _cmd_bind(
-    args: argparse.Namespace, work_root: Path, actor_names: list[str]
-) -> int:
+def _cmd_bind(args: argparse.Namespace, work_root: Path, actor_names: list[str]) -> int:
     if not actor_names:
         raise SystemExit(
             "missing actor for `gotta actor bind`; use "

@@ -4536,7 +4536,9 @@ def _render_semantic_overview_markdown(payload: dict[str, object]) -> str:
         lines.extend(["## Synthesis", "", next_step, ""])
     provider_clusters = [
         f"{cluster['provider']}: {cluster['nodeCount']} nodes"
-        for cluster in list(payload.get("providerClusters") or [])[:SUMMARY_BUCKET_LIMIT]
+        for cluster in list(payload.get("providerClusters") or [])[
+            :SUMMARY_BUCKET_LIMIT
+        ]
     ]
     _render_markdown_list(lines, "Provider Clusters", provider_clusters)
     dominant_kinds = [
@@ -4578,7 +4580,9 @@ def _render_lineage_focus_markdown_section(payload: dict[str, object]) -> list[s
     state_bits = []
     if root.get("artifactKind"):
         state_bits.append(f"artifact_kind={root['artifactKind']}")
-    state_bits.append("materialized" if bool(root.get("materialized")) else "discovered-only")
+    state_bits.append(
+        "materialized" if bool(root.get("materialized")) else "discovered-only"
+    )
     if state_bits:
         lines.append(f"- State: {', '.join(state_bits)}")
     follow = str(root.get("followCommand") or "").strip()
@@ -4599,7 +4603,9 @@ def _render_lineage_focus_markdown_section(payload: dict[str, object]) -> list[s
         )
         if hidden_anchors > 0:
             lines.append(f"- ... {hidden_anchors} additional matched anchors hidden")
-    neighbors = list(payload.get("neighbors") or [])[:ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT]
+    neighbors = list(payload.get("neighbors") or [])[
+        :ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT
+    ]
     lines.extend(["", "### Neighbors", ""])
     if neighbors:
         for neighbor in neighbors:
@@ -4607,7 +4613,9 @@ def _render_lineage_focus_markdown_section(payload: dict[str, object]) -> list[s
             if neighbor.get("artifactKind"):
                 bits.append(f"artifact_kind={neighbor['artifactKind']}")
             bits.append(
-                "materialized" if bool(neighbor.get("materialized")) else "discovered-only"
+                "materialized"
+                if bool(neighbor.get("materialized"))
+                else "discovered-only"
             )
             entry = (
                 f"`{neighbor['label']}` ({neighbor['kind']}; {neighbor['relation']}; "
@@ -4677,7 +4685,9 @@ def _render_semantic_focus_markdown_section(payload: dict[str, object]) -> list[
         lines.append(
             f"- Signal: suppressed {suppressed} lower-signal structural edges to keep this neighborhood readable"
         )
-    neighbors = list(payload.get("neighbors") or [])[:ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT]
+    neighbors = list(payload.get("neighbors") or [])[
+        :ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT
+    ]
     lines.extend(["", "### Neighbors", ""])
     if neighbors:
         for neighbor in neighbors:

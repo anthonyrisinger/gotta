@@ -775,7 +775,9 @@ def test_actor_bind_output_json_returns_structured_bindings(
 
     _init_session(root, capsys)
 
-    assert actor.main(["bind", "Scout", "--session", str(root), "--output", "json"]) == 0
+    assert (
+        actor.main(["bind", "Scout", "--session", str(root), "--output", "json"]) == 0
+    )
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["sessionRoot"] == str(root.resolve())
@@ -786,14 +788,17 @@ def test_actor_bind_output_json_returns_structured_bindings(
     assert binding["alreadyBound"] is False
     assert binding["status"] == "bound"
     assert binding["actorRoot"] == str((root / "actors" / binding["actor"]).resolve())
-    assert binding["wantPath"] == str((root / "actors" / binding["actor"] / "WANT.md").resolve())
-    assert binding["goalPath"] == str((root / "actors" / binding["actor"] / "GOAL.md").resolve())
+    assert binding["wantPath"] == str(
+        (root / "actors" / binding["actor"] / "WANT.md").resolve()
+    )
+    assert binding["goalPath"] == str(
+        (root / "actors" / binding["actor"] / "GOAL.md").resolve()
+    )
     assert binding["wantCommand"] == f"gotta want --actor {binding['actor']} --stdin"
     assert binding["goalCommand"] == f"gotta goal --actor {binding['actor']} --stdin"
     assert binding["todoCommand"] == f"gotta todo --actor {binding['actor']}"
     assert binding["launchCommand"] == (
-        f"gotta actor launch {binding['actor']} --session "
-        f"{content.sh_quote(str(root))}"
+        f"gotta actor launch {binding['actor']} --session {content.sh_quote(str(root))}"
     )
     assert binding["message"].startswith(f"bound {binding['actor']} (Scout) session")
 
