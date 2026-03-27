@@ -131,6 +131,7 @@ If you are developing on the repo, sync a local uv-managed environment:
 
 ```bash
 uv sync --python 3.10 --extra dev
+./scripts/install-hooks
 ```
 
 Installed entrypoints:
@@ -149,6 +150,14 @@ uv run ruff check src tests
 uv run ruff format --check src tests
 uv run python -m vulture src tests --min-confidence 80
 ```
+
+The repo-managed pre-commit hook is the default formatter path. It formats
+staged `*.py` files with `uv run ruff format`, re-stages them, and then runs
+`uv run ruff check` on those same files. Install it once per checkout with
+`./scripts/install-hooks`. The study and release wrappers still keep
+`ruff format --check` as the hard gate. Partially staged Python files are
+rejected instead of being auto-formatted so the hook never smashes unstaged
+worktree edits into the index.
 
 Structural pressure tools are part of the maintenance discipline:
 

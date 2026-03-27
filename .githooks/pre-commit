@@ -1,0 +1,46 @@
+#!/usr/bin/env sh
+
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged_python="$(mktemp)"
+partial_python="$(mktemp)"
+cleanup() {
+  rm -f "$staged_python"
+  rm -f "$partial_python"
+}
+trap cleanup EXIT INT TERM
+
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.py' >"$staged_python"
+
+if [ ! -s "$staged_python" ]; then
+  exit 0
+fi
+
+xargs -0 -I{} sh -c '
+  status=0
+  git diff --quiet -- "$1" || status=$?
+  if [ "$status" -eq 1 ]; then
+    printf "%s\n" "$1"
+    exit 0
+  fi
+  exit "$status"
+' sh {} <"$staged_python" >"$partial_python"
+
+if [ -s "$partial_python" ]; then
+  printf '%s\n' 'pre-commit refuses to auto-format partially staged Python files:' >&2
+  cat "$partial_python" >&2
+  printf '%s\n' 'fully stage those files or stash the remaining edits, then commit again' >&2
+  exit 1
+fi
+
+printf 'format staged Python files with ruff\n'
+xargs -0 uv run ruff format <"$staged_python"
+
+printf 're-stage formatted Python files\n'
+xargs -0 git add -- <"$staged_python"
+
+printf 'lint staged Python files with ruff\n'
+xargs -0 uv run ruff check <"$staged_python"

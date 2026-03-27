@@ -9,7 +9,14 @@ If you do not already have `uv`, install it first from Astral's official
 
 ```bash
 uv sync --python 3.10 --extra dev
+./scripts/install-hooks
 ```
+
+`./scripts/install-hooks` sets `core.hooksPath` to the repo-owned
+`.githooks/` directory. The default pre-commit hook formats staged `*.py`
+files with `uv run ruff format`, re-stages them, and then runs
+`uv run ruff check` on those same files. Partially staged Python files are
+rejected so the hook never pulls unstaged edits into the commit.
 
 ## Before You Open A Change
 
