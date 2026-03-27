@@ -369,8 +369,8 @@ gotta slack workspaces
 gotta slack auth --workspace demo
 
 # Plain-text remote discovery
-gotta search jira:retry budget
-gotta search github:service ownership
+gotta search 'jira:retry budget'
+gotta search 'github:service ownership'
 gotta slack search "handoff failure"
 
 # Provider-exact discovery and retrieval
@@ -440,20 +440,21 @@ happen against the same session context.
 
 ```bash
 gotta search jira:Architecture
-gotta search slack:ABC reboot
-gotta search github:SomeFunction ownership
+gotta search 'slack:ABC reboot'
+gotta search 'github:SomeFunction ownership'
 gotta search confluence:Architecture
 gotta search 'jira:retry --literal-token'
+gotta search 'github:search SomeFunction ownership'
 ```
 
 The top-level verb already means search, so the routed target omits the
 subcommand by default. Explicit aliases like `github:search foo` are still
-tolerated, but `github:foo` is canonical. Top-level `gotta search` forwards
-one plain-text query string only; it does not forward provider-specific search
-flags. Quote dash-prefixed or flag-shaped search text inside the query itself,
-and use provider-exact surfaces such as `gotta slack search ...`, `gotta
-github search ...`, or `gotta confluence search ...` when you need structured
-flags.
+tolerated, but `github:foo` is canonical. Top-level `gotta search` takes
+exactly one provider-qualified plain-text query string; it does not forward
+provider-specific search flags. Quote the full `<provider>:<query>` argument
+when the query contains spaces or flag-shaped text, and use provider-exact
+surfaces such as `gotta slack search ...`, `gotta github search ...`, or
+`gotta confluence search ...` when you need structured flags.
 
 ## Session Synthesis Surfaces
 

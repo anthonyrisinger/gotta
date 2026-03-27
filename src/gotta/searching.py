@@ -64,19 +64,14 @@ def _raw_tail(argv: list[str]) -> tuple[str, str, str]:
         raise SearchRouteError(
             "search target must start with <provider>:<query>; use `gotta search jira:Architecture`"
         )
-    extra_terms: list[str] = []
-    for raw_part in argv[1:]:
-        part = str(raw_part or "").strip()
-        if not part:
-            continue
-        if part.startswith("-"):
-            raise SearchRouteError(
-                "top-level `gotta search` takes one provider-qualified plain-text query; "
-                f"quote dash-prefixed search text inside that query or use `gotta {provider} search ...` "
-                "for provider-specific flags"
-            )
-        extra_terms.append(part)
-    raw_tail = " ".join(part.strip() for part in [tail, *extra_terms] if str(part).strip()).strip()
+    extra_terms = [str(raw_part or "").strip() for raw_part in argv[1:] if str(raw_part or "").strip()]
+    if extra_terms:
+        raise SearchRouteError(
+            "top-level `gotta search` takes exactly one provider-qualified plain-text query string; "
+            f"quote the full `<provider>:<query>` argument or use `gotta {provider} search ...` "
+            "for structured flags"
+        )
+    raw_tail = tail.strip()
     if not raw_tail:
         raise SearchRouteError(
             "search target must include a query seed after the provider; use `gotta search jira:Architecture`"

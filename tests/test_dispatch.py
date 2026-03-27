@@ -244,7 +244,7 @@ def test_search_resolve_invocation_routes_provider_search_with_implicit_search()
 def test_search_resolve_invocation_accepts_explicit_search_alias() -> None:
     resolved = invocation.resolve_invocation(
         "search",
-        ["slack:search", "ABC", "reboot"],
+        ["slack:search ABC reboot"],
         content.CommonOptions(),
     )
 
@@ -252,10 +252,18 @@ def test_search_resolve_invocation_accepts_explicit_search_alias() -> None:
     assert resolved.resolved_argv == ["search", "ABC reboot"]
 
 
+def test_search_resolve_route_rejects_extra_unquoted_query_terms() -> None:
+    with pytest.raises(
+        SearchRouteError,
+        match=r"top-level `gotta search` takes exactly one provider-qualified plain-text query string; quote the full `<provider>:<query>` argument or use `gotta github search \.\.\.` for structured flags",
+    ):
+        resolve_search_route(["github:SomeFunction", "ownership"])
+
+
 def test_search_resolve_route_rejects_unknown_flag_shaped_tokens() -> None:
     with pytest.raises(
         SearchRouteError,
-        match=r"top-level `gotta search` takes one provider-qualified plain-text query; quote dash-prefixed search text inside that query or use `gotta jira search \.\.\.` for provider-specific flags",
+        match=r"top-level `gotta search` takes exactly one provider-qualified plain-text query string; quote the full `<provider>:<query>` argument or use `gotta jira search \.\.\.` for structured flags",
     ):
         resolve_search_route(["jira:retry", "--bogus", "bar"])
 
@@ -269,7 +277,7 @@ def test_search_resolve_route_preserves_flag_shaped_text_inside_quoted_query() -
 
 def test_search_resolve_invocation_disables_materialization_on_invalid_target() -> None:
     resolved = invocation.resolve_invocation(
-        "search", ["jira:jql", "project = OPS"], content.CommonOptions()
+        "search", ["jira:jql project = OPS"], content.CommonOptions()
     )
 
     assert resolved.should_materialize is False

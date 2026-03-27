@@ -17,19 +17,20 @@ from gotta.searching import SearchRouteError, resolve_search_route
 
 
 def build_usage() -> str:
-    return """usage: gotta search <provider>:<query-seed> [extra query terms...]
+    return """usage: gotta search '<provider>:<query>'
 
 Route plain-text remote discovery through the provider-native search surface.
 
 Examples:
   gotta search jira:Architecture
-  gotta search slack:ABC reboot
-  gotta search github:SomeFunction ownership
+  gotta search 'slack:ABC reboot'
+  gotta search 'github:SomeFunction ownership'
+  gotta search 'github:search SomeFunction ownership'
   gotta search 'jira:retry --literal-token'
 
 Notes:
-  Top-level `gotta search` forwards one plain-text query string only.
-  Quote dash-prefixed or flag-shaped search text inside that query.
+  Top-level `gotta search` takes exactly one provider-qualified plain-text query string.
+  Quote the full `<provider>:<query>` argument when the query contains spaces or flag-shaped text.
   Explicit aliases like `github:search foo` are tolerated, but `github:foo` is canonical.
   Use provider-exact surfaces for structured flags:
     gotta slack search ...

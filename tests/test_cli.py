@@ -439,10 +439,22 @@ def test_main_top_level_search_accepts_explicit_search_alias(
         github, "project", lambda argv, capture: b"# Search Results\n\n- one\n"
     )
 
-    assert cli.main(["search", "github:search", "platform"]) == 0
+    assert cli.main(["search", "github:search platform"]) == 0
     receipt = _last_stderr_json(capsys.readouterr().err)
 
     assert receipt["artifactKind"] == "discovery"
+
+
+def test_main_top_level_search_rejects_extra_unquoted_query_terms(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["search", "github:SomeFunction", "ownership"]) == 2
+    captured = capsys.readouterr()
+
+    assert "takes exactly one provider-qualified plain-text query string" in captured.err
 
 
 def test_main_top_level_search_redirects_provider_native_jql(
@@ -451,7 +463,7 @@ def test_main_top_level_search_redirects_provider_native_jql(
     _set_default_session_root(monkeypatch, tmp_path / "session")
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["search", "jira:jql", "project = OPS"]) == 2
+    assert cli.main(["search", "jira:jql project = OPS"]) == 2
     captured = capsys.readouterr()
 
     assert "gotta jira jql" in captured.err
@@ -463,17 +475,17 @@ def test_main_top_level_search_redirects_read_like_provider_target_to_canonical_
     _set_default_session_root(monkeypatch, tmp_path / "session")
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert cli.main(["search", "jira:get", "OPS-1"]) == 2
+    assert cli.main(["search", "jira:get OPS-1"]) == 2
     captured = capsys.readouterr()
 
     assert "gotta read jira:OPS-1" in captured.err
 
-    assert cli.main(["search", "confluence:get", "123"]) == 2
+    assert cli.main(["search", "confluence:get 123"]) == 2
     captured = capsys.readouterr()
 
     assert "gotta read confluence:123" in captured.err
 
-    assert cli.main(["search", "github:get", "acme/widgets"]) == 2
+    assert cli.main(["search", "github:get acme/widgets"]) == 2
     captured = capsys.readouterr()
 
     assert "gotta read https://github.com/acme/widgets" in captured.err
