@@ -77,6 +77,8 @@ TIMELINE_TEXT_PREVIEW_LIMIT = 20
 LEADS_BEST_OVERALL_LIMIT = 6
 LEADS_PROVIDER_HIGHLIGHT_LIMIT = 4
 ANALYZE_ANCHOR_PREVIEW_LIMIT = 4
+ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT = 4
+ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT = 8
 
 TIMELINE_MODE_HELP = "chronology mode: acquired, created, updated, or best-effort"
 
@@ -4456,6 +4458,303 @@ def _render_markdown_list(lines: list[str], heading: str, entries: list[str]) ->
     lines.append("")
 
 
+def _render_lineage_overview_markdown(payload: dict[str, object], *, limit: int) -> str:
+    lines = [
+        "# gotta session analyze",
+        "",
+        f"Session: `{payload['sessionDir']}`",
+        "",
+        (
+            f"Artifacts: {payload['contentCount']} total "
+            f"(discovery {payload['discoveryArtifactCount']}, "
+            f"evidence {payload['evidenceArtifactCount']})"
+        ),
+        (
+            f"Lineage: {payload['sourceCount']} sources, "
+            f"{payload['leadSourceCount']} lead sources, "
+            f"{payload['leadEdgeCount']} lead edges"
+        ),
+        "",
+    ]
+    next_step = str(payload.get("nextStep") or "").strip()
+    if next_step:
+        lines.extend(["## Synthesis", "", next_step, ""])
+    sources = [
+        f"{source['locator']} ({int(source.get('contentCount') or 0)} materializations)"
+        for source in list(payload.get("sources") or [])[: max(limit, 0)]
+    ]
+    _render_markdown_list(lines, "Materialized Sources", sources)
+    leads_preview = []
+    for lead in list(payload.get("leadSources") or [])[: max(limit, 0)]:
+        relation = ", ".join(
+            str(value) for value in lead.get("relationKinds") or [] if str(value)
+        )
+        label = (
+            f"[{'; '.join(_lead_signal_labels(lead, aggregated=True))}] "
+            f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+        )
+        follow = str(lead.get("followCommand") or "").strip()
+        if follow:
+            label += f" via `{follow}`"
+        leads_preview.append(label)
+    _render_markdown_list(lines, "Lead Preview", leads_preview)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+def _render_semantic_overview_markdown(payload: dict[str, object]) -> str:
+    lines = [
+        "# gotta session analyze",
+        "",
+        f"Session: `{payload['sessionDir']}`",
+        "",
+        (
+            f"Artifacts: {payload['contentCount']} total "
+            f"(discovery {payload['discoveryArtifactCount']}, "
+            f"evidence {payload['evidenceArtifactCount']})"
+        ),
+        (
+            f"Semantic: {payload['semanticNodeCount']} nodes, "
+            f"{payload['semanticEdgeCount']} edges"
+        ),
+        "",
+    ]
+    shape_parts: list[str] = []
+    if bool(payload.get("sourceHeavy")):
+        shape_parts.append(
+            f"source-heavy ({int(payload['sourceNodeCount'])}/{int(payload['semanticNodeCount'])} source/query/provider nodes)"
+        )
+    if bool(payload.get("structuralHeavy")):
+        shape_parts.append(
+            f"structural-edge-heavy ({int(payload['structuralEdgeCount'])}/{int(payload['semanticEdgeCount'])} structural edges)"
+        )
+    if shape_parts:
+        lines.extend(["## Shape", "", "; ".join(shape_parts), ""])
+    next_step = str(payload.get("nextStep") or "").strip()
+    if next_step:
+        lines.extend(["## Synthesis", "", next_step, ""])
+    provider_clusters = [
+        f"{cluster['provider']}: {cluster['nodeCount']} nodes"
+        for cluster in list(payload.get("providerClusters") or [])[:SUMMARY_BUCKET_LIMIT]
+    ]
+    _render_markdown_list(lines, "Provider Clusters", provider_clusters)
+    dominant_kinds = [
+        f"{item['kind']}: {item['nodeCount']}"
+        for item in list(payload.get("dominantKinds") or [])[:SUMMARY_BUCKET_LIMIT]
+    ]
+    _render_markdown_list(lines, "Dominant Node Kinds", dominant_kinds)
+    dominant_relations = [
+        f"{item['label']}: {item['edgeCount']} edges"
+        for item in list(payload.get("dominantRelations") or [])[:SUMMARY_BUCKET_LIMIT]
+    ]
+    _render_markdown_list(lines, "Dominant Relations", dominant_relations)
+    query_seeds = [
+        str(node.get("label") or "").strip()
+        for node in list(payload.get("querySeeds") or [])[:SUMMARY_BUCKET_LIMIT]
+        if str(node.get("label") or "").strip()
+    ]
+    _render_markdown_list(lines, "Query Seeds", query_seeds)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+def _render_lineage_focus_markdown_section(payload: dict[str, object]) -> list[str]:
+    lines: list[str] = ["## Lineage Focus", ""]
+    if not payload.get("matched"):
+        lines.append("- Match: none")
+        next_step = str(payload.get("nextStep") or "").strip()
+        if next_step:
+            lines.append(f"- Next: {next_step}")
+        lines.append("")
+        return lines
+    root = payload["root"]
+    lines.append(f"- Matched: `{root['label']}` ({root['kind']})")
+    if int(payload.get("matchedCount") or 0) > 1:
+        lines.append(
+            f"- Signal: {int(payload['matchedCount'])} anchors matched this focus; showing the strongest root plus nearby corroborating anchors"
+        )
+    state_bits = []
+    if root.get("artifactKind"):
+        state_bits.append(f"artifact_kind={root['artifactKind']}")
+    state_bits.append("materialized" if bool(root.get("materialized")) else "discovered-only")
+    if state_bits:
+        lines.append(f"- State: {', '.join(state_bits)}")
+    follow = str(root.get("followCommand") or "").strip()
+    if follow:
+        lines.append(f"- Follow: `{follow}`")
+    anchors = list(payload.get("anchors") or [])[:ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT]
+    if anchors:
+        lines.extend(["", "### Also Matched", ""])
+        for anchor in anchors:
+            entry = f"`{anchor['label']}` ({anchor['kind']})"
+            follow = str(anchor.get("followCommand") or "").strip()
+            if follow:
+                entry += f" via `{follow}`"
+            lines.append(f"- {entry}")
+        hidden_anchors = max(
+            int(len(payload.get("anchors") or [])) - len(anchors),
+            0,
+        )
+        if hidden_anchors > 0:
+            lines.append(f"- ... {hidden_anchors} additional matched anchors hidden")
+    neighbors = list(payload.get("neighbors") or [])[:ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT]
+    lines.extend(["", "### Neighbors", ""])
+    if neighbors:
+        for neighbor in neighbors:
+            bits = []
+            if neighbor.get("artifactKind"):
+                bits.append(f"artifact_kind={neighbor['artifactKind']}")
+            bits.append(
+                "materialized" if bool(neighbor.get("materialized")) else "discovered-only"
+            )
+            entry = (
+                f"`{neighbor['label']}` ({neighbor['kind']}; {neighbor['relation']}; "
+                f"{', '.join(bits)})"
+            )
+            follow = str(neighbor.get("followCommand") or "").strip()
+            if follow:
+                entry += f" via `{follow}`"
+            lines.append(f"- {entry}")
+        hidden_neighbors = max(
+            int(len(payload.get("neighbors") or [])) - len(neighbors),
+            0,
+        )
+        if hidden_neighbors > 0:
+            lines.append(f"- ... {hidden_neighbors} additional neighbors hidden")
+    else:
+        lines.append("- None")
+    lines.append("")
+    return lines
+
+
+def _render_semantic_focus_markdown_section(payload: dict[str, object]) -> list[str]:
+    lines: list[str] = ["## Semantic Focus", ""]
+    if not payload.get("matched"):
+        lines.append("- Match: none")
+        next_step = str(payload.get("nextStep") or "").strip()
+        if next_step:
+            lines.append(f"- Next: {next_step}")
+        lines.append("")
+        return lines
+    root = payload["root"]
+    lines.append(f"- Matched: `{root['label']}` ({root['kind']}, {root['group']})")
+    if int(payload.get("matchedCount") or 0) > 1:
+        lines.append(
+            f"- Signal: {int(payload['matchedCount'])} anchors matched this focus; showing the strongest root plus nearby corroborating anchors"
+        )
+    state_bits = []
+    if root.get("artifactKind"):
+        state_bits.append(f"artifact_kind={root['artifactKind']}")
+    if bool(root.get("materialized")):
+        state_bits.append("materialized")
+    if bool(root.get("discovered")) and not bool(root.get("materialized")):
+        state_bits.append("discovered-only")
+    if state_bits:
+        lines.append(f"- State: {', '.join(state_bits)}")
+    follow = str(root.get("followCommand") or "").strip()
+    if follow:
+        lines.append(f"- Follow: `{follow}`")
+    anchors = list(payload.get("anchors") or [])[:ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT]
+    if anchors:
+        lines.extend(["", "### Also Matched", ""])
+        for anchor in anchors:
+            entry = f"`{anchor['label']}` ({anchor['kind']}, {anchor['group']})"
+            follow = str(anchor.get("followCommand") or "").strip()
+            if follow:
+                entry += f" via `{follow}`"
+            lines.append(f"- {entry}")
+        hidden_anchors = max(
+            int(len(payload.get("anchors") or [])) - len(anchors),
+            0,
+        )
+        if hidden_anchors > 0:
+            lines.append(f"- ... {hidden_anchors} additional matched anchors hidden")
+    suppressed = int(payload.get("suppressedStructuralEdgeCount") or 0)
+    if suppressed > 0:
+        lines.append("")
+        lines.append(
+            f"- Signal: suppressed {suppressed} lower-signal structural edges to keep this neighborhood readable"
+        )
+    neighbors = list(payload.get("neighbors") or [])[:ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT]
+    lines.extend(["", "### Neighbors", ""])
+    if neighbors:
+        for neighbor in neighbors:
+            relation = ", ".join(
+                str(value) for value in neighbor.get("relations") or [] if str(value)
+            )
+            bits = []
+            if neighbor.get("artifactKind"):
+                bits.append(f"artifact_kind={neighbor['artifactKind']}")
+            if bool(neighbor.get("materialized")):
+                bits.append("materialized")
+            if bool(neighbor.get("discovered")) and not bool(
+                neighbor.get("materialized")
+            ):
+                bits.append("discovered-only")
+            entry = (
+                f"`{neighbor['label']}` ({neighbor['kind']}, {neighbor['group']}; "
+                f"{relation or 'adjacent'}"
+            )
+            if bits:
+                entry += f"; {', '.join(bits)}"
+            entry += ")"
+            follow = str(neighbor.get("followCommand") or "").strip()
+            if follow:
+                entry += f" via `{follow}`"
+            lines.append(f"- {entry}")
+        hidden_neighbors = max(
+            int(len(payload.get("neighbors") or [])) - len(neighbors),
+            0,
+        )
+        if hidden_neighbors > 0:
+            lines.append(f"- ... {hidden_neighbors} additional neighbors hidden")
+    else:
+        lines.append("- None")
+    lines.append("")
+    return lines
+
+
+def _render_combined_focus_markdown(
+    *, lineage: dict[str, object], semantic: dict[str, object]
+) -> str:
+    focus = str(lineage.get("focus") or semantic.get("focus") or "").strip()
+    lines = [
+        "# gotta session analyze",
+        "",
+        f"Session: `{lineage['sessionDir']}`",
+        "",
+        f"Focus: `{focus or '(empty)'}`",
+        "",
+    ]
+    lines.extend(_render_lineage_focus_markdown_section(lineage))
+    lines.extend(_render_semantic_focus_markdown_section(semantic))
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+def _render_single_focus_markdown(
+    *,
+    session_dir: str,
+    focus: str,
+    section_lines: list[str],
+) -> str:
+    lines = [
+        "# gotta session analyze",
+        "",
+        f"Session: `{session_dir}`",
+        "",
+        f"Focus: `{focus or '(empty)'}`",
+        "",
+    ]
+    lines.extend(section_lines)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
 def _render_analysis_overview_markdown(
     overview: dict[str, object],
     *,
@@ -5183,48 +5482,37 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     elif args.output == "markdown":
         if args.mode == "lineage":
             print(
-                _render_markdown_bundle(
-                    [
-                        (
-                            "Lineage",
-                            _render_analysis_mermaid(lineage_focus_payload)
-                            if lineage_focus_payload is not None
-                            else mermaid,
-                        )
-                    ]
+                _render_single_focus_markdown(
+                    session_dir=str(lineage_focus_payload["sessionDir"]),
+                    focus=str(lineage_focus_payload.get("focus") or ""),
+                    section_lines=_render_lineage_focus_markdown_section(
+                        lineage_focus_payload
+                    ),
                 )
+                if lineage_focus_payload is not None
+                else _render_lineage_overview_markdown(payload, limit=focus_limit),
+                end="",
             )
         elif args.mode == "semantic":
             print(
-                _render_markdown_bundle(
-                    [
-                        (
-                            "Semantic",
-                            _render_semantic_mermaid(semantic_focus_payload)
-                            if semantic_focus_payload is not None
-                            else semantic_mermaid,
-                        )
-                    ]
+                _render_single_focus_markdown(
+                    session_dir=str(semantic_focus_payload["sessionDir"]),
+                    focus=str(semantic_focus_payload.get("focus") or ""),
+                    section_lines=_render_semantic_focus_markdown_section(
+                        semantic_focus_payload
+                    ),
                 )
+                if semantic_focus_payload is not None
+                else _render_semantic_overview_markdown(overview),
+                end="",
             )
         elif focus_query:
             print(
-                _render_markdown_bundle(
-                    [
-                        (
-                            "Lineage",
-                            _render_analysis_mermaid(lineage_focus_payload)
-                            if lineage_focus_payload is not None
-                            else mermaid,
-                        ),
-                        (
-                            "Semantic",
-                            _render_semantic_mermaid(semantic_focus_payload)
-                            if semantic_focus_payload is not None
-                            else semantic_mermaid,
-                        ),
-                    ]
-                )
+                _render_combined_focus_markdown(
+                    lineage=lineage_focus_payload,
+                    semantic=semantic_focus_payload,
+                ),
+                end="",
             )
         else:
             print(

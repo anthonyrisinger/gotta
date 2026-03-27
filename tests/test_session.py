@@ -768,6 +768,36 @@ def test_actor_bind_without_actor_teaches_canonical_usage(
     assert "gotta actor bind Claude" in err
 
 
+def test_actor_bind_output_json_returns_structured_bindings(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+
+    assert actor.main(["bind", "Scout", "--session", str(root), "--output", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["sessionRoot"] == str(root.resolve())
+    assert len(payload["bindings"]) == 1
+    binding = payload["bindings"][0]
+    assert binding["label"] == "Scout"
+    assert binding["created"] is True
+    assert binding["alreadyBound"] is False
+    assert binding["status"] == "bound"
+    assert binding["actorRoot"] == str((root / "actors" / binding["actor"]).resolve())
+    assert binding["wantPath"] == str((root / "actors" / binding["actor"] / "WANT.md").resolve())
+    assert binding["goalPath"] == str((root / "actors" / binding["actor"] / "GOAL.md").resolve())
+    assert binding["wantCommand"] == f"gotta want --actor {binding['actor']} --stdin"
+    assert binding["goalCommand"] == f"gotta goal --actor {binding['actor']} --stdin"
+    assert binding["todoCommand"] == f"gotta todo --actor {binding['actor']}"
+    assert binding["launchCommand"] == (
+        f"gotta actor launch {binding['actor']} --session "
+        f"{content.sh_quote(str(root))}"
+    )
+    assert binding["message"].startswith(f"bound {binding['actor']} (Scout) session")
+
+
 def test_actor_status_discovers_initialized_fingerprint_actors_missing_from_metadata(
     tmp_path: Path, capsys
 ) -> None:
@@ -3488,10 +3518,72 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
         == 0
     )
     markdown_output = capsys.readouterr().out
-    assert markdown_output.startswith(
-        "# gotta session analyze\n\n## Lineage\n\n```mermaid\n"
+    assert markdown_output.startswith("# gotta session analyze\n\nSession: `")
+    assert "\nFocus: `" in markdown_output
+    assert "\n## Lineage Focus\n" in markdown_output
+    assert "\n## Semantic Focus\n" in markdown_output
+    assert "```mermaid" not in markdown_output
+
+
+def test_session_analyze_mode_markdown_stays_dossier_not_mermaid(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    dirs = initialize_session(local_root)
+    content.materialize_bytes(
+        (
+            "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+            "artifact_kind": "evidence",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
     )
-    assert "\n## Semantic\n\n```mermaid\n" in markdown_output
+    monkeypatch.chdir(local_root)
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--output",
+                "markdown",
+                "--mode",
+                "lineage",
+            ]
+        )
+        == 0
+    )
+    lineage_output = capsys.readouterr().out
+    assert lineage_output.startswith("# gotta session analyze\n\nSession: `")
+    assert "\n## Materialized Sources\n" in lineage_output
+    assert "```mermaid" not in lineage_output
+
+    assert (
+        session.main(
+            [
+                "analyze",
+                "--session",
+                str(local_root),
+                "--output",
+                "markdown",
+                "--mode",
+                "semantic",
+            ]
+        )
+        == 0
+    )
+    semantic_output = capsys.readouterr().out
+    assert semantic_output.startswith("# gotta session analyze\n\nSession: `")
+    assert "\n## Provider Clusters\n" in semantic_output
+    assert "```mermaid" not in semantic_output
 
 
 def test_session_scan_searches_projected_materialized_corpus(

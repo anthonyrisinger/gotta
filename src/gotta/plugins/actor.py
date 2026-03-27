@@ -809,17 +809,31 @@ def _cmd_status(args: argparse.Namespace, work_root: Path, actor_name: str) -> i
     return 0
 
 
-def _cmd_bind(work_root: Path, actor_names: list[str]) -> int:
+def _cmd_bind(
+    args: argparse.Namespace, work_root: Path, actor_names: list[str]
+) -> int:
     if not actor_names:
         raise SystemExit(
             "missing actor for `gotta actor bind`; use "
             + session_plugin._actor_bind_examples(prefix="gotta actor bind")
         )
-    results: list[str] = []
+    results: list[dict[str, object]] = []
     for actor_name in actor_names:
         results.append(session_plugin._bind_actor(work_root, actor_name))
+    if args.output == "json":
+        print(
+            json.dumps(
+                {
+                    "sessionRoot": str(work_root.resolve()),
+                    "bindings": results,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     for result in results:
-        print(result)
+        print(str(result.get("message") or "").strip())
     return 0
 
 
@@ -1156,7 +1170,7 @@ def main(argv: list[str] | None = None) -> int:
     action = args.action or "status"
     work_root = _session_root(args)
     if action == "bind":
-        return _cmd_bind(work_root, _actor_names(args))
+        return _cmd_bind(args, work_root, _actor_names(args))
     actor_name = _actor_name(args, action)
     if action == "status":
         return _cmd_status(args, work_root, actor_name)

@@ -290,7 +290,9 @@ actors/<actor-id>/
 Top-level fingerprint bindings live separately:
 
 ```text
-<gotta data dir>/bindings/<fingerprint> -> ../sessions/<session-id>/actors/<actor-id>
+<gotta data dir>/bindings/<fingerprint>/
+  binding.json
+  root -> <concrete-session-scope>
 ```
 
 The default private session for an unbound fingerprint is:
@@ -549,7 +551,7 @@ root intentionally. For shared-topology sessions, other contexts should reuse
 the shared session id with `--session <shared-session-id>` or `gotta session
 bind <shared-session-id>`. Exact-root reuse with `--session <session-root>` or
 `gotta session bind '<session-root>'` is the low-level path for non-shared
-roots or intentionally reusing one concrete actor root.
+roots or intentionally reusing one concrete exact-root session scope.
 
 Examples:
 
@@ -664,8 +666,10 @@ These terms appear throughout `gotta` and its documentation:
   can be human operators, AI agents, or automated workflows.
 
 - **fingerprint** — the context identity that binds the current terminal,
-  thread, or environment to a session and actor root. Fingerprints are derived
-  from terminal session IDs, Codex thread IDs, or explicit bindings.
+  thread, or environment to one concrete session scope: an exact root, a shared
+  session through the caller's actor root, or an explicit actor root.
+  Fingerprints are derived from terminal session IDs, Codex thread IDs, or
+  explicit bindings.
 
 - **materialization** — the act of capturing command output as a durable,
   content-addressed artifact in the session's content store. Materialized
