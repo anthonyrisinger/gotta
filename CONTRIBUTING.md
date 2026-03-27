@@ -43,15 +43,20 @@ If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts through the canonical release wrapper:
 
 ```bash
+./scripts/release prepare patch
+./scripts/release prepare minor
+./scripts/release publish
 ./scripts/release patch
 ./scripts/release minor
 ```
 
 `./scripts/release` is the canonical path for shipping. It bumps the version
-with `uv`, runs the release gate, validates fresh artifacts, smoke-installs the
-wheel, commits the release metadata, pushes `main`, publishes to PyPI, and
-waits for public propagation. It reads the PyPI token from `~/.pypirc` under
-`[pypi].password`.
+with `uv`, runs `./scripts/study`, validates fresh artifacts, smoke-installs
+the wheel, commits the release metadata, and either stops for review or pushes
+and publishes. `prepare` stops with a committed release bump so the exact
+release candidate can be reviewed. `publish` validates the current prepared
+version and then pushes `main`, publishes to PyPI, and waits for public
+propagation. It reads the PyPI token from `~/.pypirc` under `[pypi].password`.
 
 ## Project Expectations
 

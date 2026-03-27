@@ -787,13 +787,20 @@ for the repository baseline.
 Build and validate artifacts with `uv`:
 
 ```bash
+./scripts/release prepare patch
+./scripts/release prepare minor
+./scripts/release publish
 ./scripts/release patch
 ./scripts/release minor
 ```
 
 The script is the canonical release path. It bumps the version with `uv`,
-runs the release gate, builds the wheel and sdist, validates them with
+runs `./scripts/study`, builds the wheel and sdist, validates them with
 `twine check`, smoke-installs the wheel on Python 3.10, commits the release
-metadata, pushes `main`, publishes to PyPI, and waits for public propagation.
+metadata, and then either stops for review or pushes and publishes. `prepare`
+creates the reviewable release commit without pushing. `publish` validates the
+current prepared version and then pushes `main`, publishes to PyPI, and waits
+for public propagation. One-shot `patch` and `minor` still do the full flow in
+one pass.
 
 It reads the PyPI token from `~/.pypirc` under `[pypi].password`.

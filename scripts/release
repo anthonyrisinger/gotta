@@ -10,9 +10,14 @@ die() {
 usage() {
   cat <<'EOF'
 usage: ./scripts/release [patch|minor]
+       ./scripts/release prepare [patch|minor]
+       ./scripts/release publish
 
-Bump the package version, run the release gate, commit the release metadata,
-push main, and publish the validated artifacts to PyPI.
+Prepare and/or publish a gotta release.
+
+  patch|minor         bump, validate, commit, push, and publish in one pass
+  prepare patch|minor bump, validate, and commit, but stop before push/publish
+  publish             validate the current prepared version, then push/publish
 EOF
 }
 
@@ -60,19 +65,82 @@ raise SystemExit(f"PyPI never reported {target}")
 PY
 }
 
-if [ "$#" -ne 1 ]; then
+run_release_gate() {
+  version="$1"
+  sdist="dist/gotta-${version}.tar.gz"
+  wheel="dist/gotta-${version}-py3-none-any.whl"
+
+  ./scripts/study
+  uv build --python 3.10 --clear
+  uvx twine check "$sdist" "$wheel"
+
+  tmpdir="$(mktemp -d)"
+  cleanup() {
+    rm -rf "$tmpdir"
+  }
+  trap cleanup EXIT INT TERM
+
+  uv venv --python 3.10 "$tmpdir/venv"
+  uv pip install --python "$tmpdir/venv/bin/python" "$wheel"
+  "$tmpdir/venv/bin/gotta" --help >/dev/null
+  "$tmpdir/venv/bin/gotta" session --help >/dev/null
+  "$tmpdir/venv/bin/gotta" read --help >/dev/null
+}
+
+publish_release() {
+  version="$1"
+  sdist="dist/gotta-${version}.tar.gz"
+  wheel="dist/gotta-${version}-py3-none-any.whl"
+  token="$(read_pypi_token)"
+
+  git push origin main
+
+  export UV_PUBLISH_TOKEN="$token"
+  uv publish --dry-run "$sdist" "$wheel"
+  uv publish "$sdist" "$wheel"
+  wait_for_pypi "$version"
+  git status --short --branch
+}
+
+mode=""
+bump=""
+
+if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
   usage
-  exit 64
+  exit 0
 fi
 
-case "$1" in
-  patch|minor)
-    bump="$1"
+case "$#" in
+  1)
+    case "$1" in
+      patch|minor)
+        mode="release"
+        bump="$1"
+        ;;
+      publish)
+        mode="publish"
+        ;;
+      *)
+        usage
+        exit 64
+        ;;
+    esac
+    ;;
+  2)
+    case "$1:$2" in
+      prepare:patch|prepare:minor)
+        mode="prepare"
+        bump="$2"
+        ;;
+      *)
+        usage
+        exit 64
+        ;;
+    esac
     ;;
   *)
     usage
     exit 64
-    ;;
 esac
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -84,41 +152,24 @@ branch="$(git branch --show-current)"
 status="$(git status --porcelain)"
 [ -z "$status" ] || die "refusing to release with a dirty worktree"
 
-token="$(read_pypi_token)"
-
 git pull --ff-only origin main
 
-version="$(uv version --bump "$bump" --no-sync --short)"
-sdist="dist/gotta-${version}.tar.gz"
-wheel="dist/gotta-${version}-py3-none-any.whl"
-
-uv lock --check
-uv run pytest -q
-uv run ruff check src tests
-uv run ruff format --check src tests
-uv run python -m vulture src tests --min-confidence 80
-uv build --python 3.10 --clear
-uvx twine check "$sdist" "$wheel"
-
-tmpdir="$(mktemp -d)"
-cleanup() {
-  rm -rf "$tmpdir"
-}
-trap cleanup EXIT INT TERM
-
-uv venv --python 3.10 "$tmpdir/venv"
-uv pip install --python "$tmpdir/venv/bin/python" "$wheel"
-"$tmpdir/venv/bin/gotta" --help >/dev/null
-"$tmpdir/venv/bin/gotta" session --help >/dev/null
-"$tmpdir/venv/bin/gotta" read --help >/dev/null
-
-git add pyproject.toml uv.lock
-git commit -m "release: bump to ${version}"
-git push origin main
-
-export UV_PUBLISH_TOKEN="$token"
-uv publish --dry-run "$sdist" "$wheel"
-uv publish "$sdist" "$wheel"
-
-wait_for_pypi "$version"
-git status --short --branch
+case "$mode" in
+  prepare|release)
+    version="$(uv version --bump "$bump" --no-sync --short)"
+    run_release_gate "$version"
+    git add pyproject.toml uv.lock
+    git commit -m "release: bump to ${version}"
+    if [ "$mode" = "prepare" ]; then
+      printf 'prepared release %s; review, then run ./scripts/release publish\n' "$version"
+      git status --short --branch
+      exit 0
+    fi
+    publish_release "$version"
+    ;;
+  publish)
+    version="$(uv version --short)"
+    run_release_gate "$version"
+    publish_release "$version"
+    ;;
+esac
