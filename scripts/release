@@ -65,12 +65,15 @@ raise SystemExit(f"PyPI never reported {target}")
 PY
 }
 
-run_release_gate() {
+run_study_gate() {
+  ./scripts/study
+}
+
+run_artifact_gate() {
   version="$1"
   sdist="dist/gotta-${version}.tar.gz"
   wheel="dist/gotta-${version}-py3-none-any.whl"
 
-  ./scripts/study
   uv build --python 3.10 --clear
   uvx twine check "$sdist" "$wheel"
 
@@ -156,8 +159,9 @@ git pull --ff-only origin main
 
 case "$mode" in
   prepare|release)
+    run_study_gate
     version="$(uv version --bump "$bump" --no-sync --short)"
-    run_release_gate "$version"
+    run_artifact_gate "$version"
     git add pyproject.toml uv.lock
     git commit -m "release: bump to ${version}"
     if [ "$mode" = "prepare" ]; then
@@ -169,7 +173,8 @@ case "$mode" in
     ;;
   publish)
     version="$(uv version --short)"
-    run_release_gate "$version"
+    run_study_gate
+    run_artifact_gate "$version"
     publish_release "$version"
     ;;
 esac

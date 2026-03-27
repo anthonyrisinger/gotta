@@ -820,10 +820,11 @@ Build and validate artifacts with `uv`:
 ./scripts/release minor
 ```
 
-The script is the canonical release path. It bumps the version with `uv`,
-runs `./scripts/study`, builds the wheel and sdist, validates them with
-`twine check`, smoke-installs the wheel on Python 3.10, commits the release
-metadata, and then either stops for review or pushes and publishes. The
+The script is the canonical release path. It runs `./scripts/study` on the
+unbumped tree, then bumps the version with `uv`, builds the wheel and sdist,
+validates them with `twine check`, smoke-installs the wheel on Python 3.10,
+commits the release metadata, and then either stops for review or pushes and
+publishes. The
 blocking correctness gate still comes from `pytest`, `ruff`, `vulture`, build,
 and packaging validation; pressure-map output from `./scripts/study` is
 surfaced for review without blocking the release candidate. `prepare` creates
