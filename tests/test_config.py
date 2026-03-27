@@ -41,7 +41,9 @@ def test_config_slack_generic_app_link_uses_unique_known_workspace(
 
     monkeypatch.setenv("GOTTA_CONFIG_FILE", str(config_file))
     monkeypatch.setattr(config_plugin, "is_interactive", lambda: False)
-    monkeypatch.setattr(slack_provider.shutil, "which", lambda _cmd: "/usr/bin/slackdump")
+    monkeypatch.setattr(
+        slack_provider.shutil, "which", lambda _cmd: "/usr/bin/slackdump"
+    )
     monkeypatch.setattr(slack_provider, "known_workspaces", lambda: ["demo"])
 
     assert config_plugin.main(["slack", app_link, "--output", "json"]) == 0
@@ -67,7 +69,10 @@ def test_config_slack_rejects_generic_app_link_without_unambiguous_workspace(
     captured = capsys.readouterr()
 
     assert "unable to derive a Slack workspace from that target" in captured.err
-    assert "generic Slack link when exactly one local workspace is unambiguous" in captured.err
+    assert (
+        "generic Slack link when exactly one local workspace is unambiguous"
+        in captured.err
+    )
     assert load_config() == {}
 
 
@@ -203,13 +208,20 @@ def test_slack_auth_does_not_persist_default_workspace(
     auth_file = tmp_path / "demo-auth.json"
 
     monkeypatch.setenv("GOTTA_CONFIG_FILE", str(config_file))
-    monkeypatch.setattr(slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None)
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
     monkeypatch.setattr(
         slack,
         "export_slack_auth_from_slackdump",
-        lambda workspace: {"token": "xoxp-demo", "cookies": [{"name": "d", "value": "cookie"}]},
+        lambda workspace: {
+            "token": "xoxp-demo",
+            "cookies": [{"name": "d", "value": "cookie"}],
+        },
     )
-    monkeypatch.setattr(slack, "persist_slack_auth_state", lambda workspace, payload: auth_file)
+    monkeypatch.setattr(
+        slack, "persist_slack_auth_state", lambda workspace, payload: auth_file
+    )
     monkeypatch.setattr(slack, "slack_auth_test", lambda workspace, auth_state: {})
     monkeypatch.setattr(slack, "known_workspaces", lambda: ["demo"])
 
@@ -224,11 +236,19 @@ def test_slack_status_and_missing_workspace_guidance_point_to_config(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     monkeypatch.setattr(slack_provider, "known_workspaces", lambda: ["demo"])
-    monkeypatch.setattr(slack_provider.shutil, "which", lambda _cmd: "/usr/bin/slackdump")
+    monkeypatch.setattr(
+        slack_provider.shutil, "which", lambda _cmd: "/usr/bin/slackdump"
+    )
     monkeypatch.setattr(slack_provider, "default_workspace", lambda: "")
-    monkeypatch.setattr(slack_provider, "slack_auth_path", lambda workspace: tmp_path / f"{workspace}.json")
+    monkeypatch.setattr(
+        slack_provider,
+        "slack_auth_path",
+        lambda workspace: tmp_path / f"{workspace}.json",
+    )
     monkeypatch.setattr(slack, "workspace_archive_result", lambda workspace: None)
-    monkeypatch.setattr(slack, "directory_db_path", lambda workspace: tmp_path / "_directory.sqlite")
+    monkeypatch.setattr(
+        slack, "directory_db_path", lambda workspace: tmp_path / "_directory.sqlite"
+    )
 
     assert "gotta config slack demo" in slack_provider.missing_workspace_message()
 

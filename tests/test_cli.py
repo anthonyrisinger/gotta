@@ -454,7 +454,9 @@ def test_main_top_level_search_rejects_extra_unquoted_query_terms(
     assert cli.main(["search", "github:SomeFunction", "ownership"]) == 2
     captured = capsys.readouterr()
 
-    assert "takes exactly one provider-qualified plain-text query string" in captured.err
+    assert (
+        "takes exactly one provider-qualified plain-text query string" in captured.err
+    )
 
 
 def test_main_top_level_search_redirects_provider_native_jql(
