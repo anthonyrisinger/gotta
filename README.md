@@ -245,6 +245,14 @@ GOTTA_GRAFANA_SERVICE_ACCOUNT_TOKEN = "glsa_your_service_account_token"
 GOTTA_GRAFANA_ORG_ID = "1"
 ```
 
+For canonical durable setup, use `gotta config` instead of relying on
+incidental side effects from operational commands. For Slack, the intended
+entrypoint is `gotta config slack <workspace-or-link>`, which persists the
+default workspace, can derive it from a workspace-hosted Slack permalink, and
+can also use a generic Slack link when one local workspace is already
+unambiguous. Ordinary Slack `--workspace` flags stay per-command; the low-level
+exact auth surface remains `gotta slack auth --workspace <workspace>`.
+
 Durable OAuth state lands under gotta's OS-native state directory:
 
 - macOS: `~/Library/Application Support/gotta/auth/`
@@ -373,6 +381,7 @@ gotta gdocs search "incident response"
 gotta granola list --time-range last_30_days --limit 5
 gotta granola transcript 11111111-1111-1111-1111-111111111111 --query latency
 gotta granola search-transcript latency --time-range last_30_days
+gotta config slack https://demo.slack.com/archives/C12345678/p1773085070240949
 gotta slack workspaces
 gotta slack auth
 gotta slack search "handoff failure"

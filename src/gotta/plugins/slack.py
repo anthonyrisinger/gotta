@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import shlex
 import sqlite3
@@ -40,15 +39,13 @@ from gotta.providers.slack import (
     ensure_workspace_auth,
     export_slack_auth_from_slackdump,
     known_workspaces,
-    load_slack_auth_state,
     missing_workspace_message,
-    persist_selected_workspace,
     persist_slack_auth_state,
     resolve_workspace,
     SlackError,
     slack_api_post,
-    slack_auth_path,
     slack_auth_test,
+    slack_status_payload,
     slack_web_get,
 )
 
@@ -3686,7 +3683,6 @@ def cmd_auth(args: argparse.Namespace) -> int:
     auth_state = export_slack_auth_from_slackdump(workspace)
     auth_path = persist_slack_auth_state(workspace, auth_state)
     slack_auth_test(workspace, auth_state)
-    persist_selected_workspace(workspace)
     print_json(
         {
             "authenticated": True,
@@ -4148,54 +4144,14 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    slackdump_path = shutil.which("slackdump") or ""
-    known = known_workspaces() if slackdump_path else []
-    selected_workspace = args.workspace.strip() or default_workspace()
-    workspace = (
-        resolve_workspace(args.workspace) if slackdump_path else selected_workspace
-    )
+    payload = slack_status_payload(args.workspace)
+    workspace = str(payload.get("workspace") or "").strip()
     archive = workspace_archive_result(workspace) if workspace else None
     directory_path = directory_db_path(workspace) if workspace else None
-    slackdump_auth_configured = workspace in known if workspace else False
-    live_auth_path = slack_auth_path(workspace) if workspace else None
-    live_auth_configured = bool(live_auth_path and live_auth_path.exists())
-    live_auth_usable = False
-    if workspace and live_auth_configured:
-        try:
-            auth_state = load_slack_auth_state(workspace)
-            if auth_state is not None:
-                slack_auth_test(workspace, auth_state)
-                live_auth_usable = True
-        except ToolError:
-            live_auth_usable = False
-    next_step = "ready"
-    if not slackdump_path:
-        next_step = "install slackdump"
-    elif not workspace:
-        next_step = missing_workspace_message()
-    elif not slackdump_auth_configured:
-        next_step = f"run `gotta slack auth --workspace {workspace}`"
-    elif not live_auth_configured:
-        next_step = f"run `gotta slack auth --workspace {workspace}` to import Slack live-search auth"
-    elif not live_auth_usable:
-        next_step = f"rerun `gotta slack auth --workspace {workspace}`"
-    payload: dict[str, Any] = {
-        "workspace": workspace,
-        "selectedWorkspace": selected_workspace,
-        "knownWorkspaces": known,
-        "slackdumpPath": slackdump_path,
-        "slackdumpPresent": bool(slackdump_path),
-        "authConfigured": slackdump_auth_configured,
-        "slackdumpAuthConfigured": slackdump_auth_configured,
-        "liveSearchAuthConfigured": live_auth_configured,
-        "liveSearchAuthUsable": live_auth_usable,
-        "liveSearchAuthPath": str(live_auth_path) if live_auth_path else "",
-        "archivePath": str(archive.db_path) if archive else "",
-        "archiveExists": archive.db_path.exists() if archive else False,
-        "directoryPath": str(directory_path) if directory_path else "",
-        "directoryExists": directory_path.exists() if directory_path else False,
-        "nextStep": next_step,
-    }
+    payload["archivePath"] = str(archive.db_path) if archive else ""
+    payload["archiveExists"] = archive.db_path.exists() if archive else False
+    payload["directoryPath"] = str(directory_path) if directory_path else ""
+    payload["directoryExists"] = directory_path.exists() if directory_path else False
     if directory_path and directory_path.exists():
         conn = open_directory_db(workspace)
         try:
@@ -4229,12 +4185,13 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
     lines = [
         f"workspace\t{workspace}",
-        f"selected_workspace\t{selected_workspace}",
-        f"known_workspaces\t{','.join(known)}",
+        f"selected_workspace\t{payload.get('selectedWorkspace') or ''}",
+        f"known_workspaces\t{','.join(payload.get('knownWorkspaces') or [])}",
         f"slackdump_present\t{str(bool(payload['slackdumpPresent'])).lower()}",
         f"auth_configured\t{str(bool(payload['authConfigured'])).lower()}",
         f"archive_exists\t{str(bool(payload['archiveExists'])).lower()}",
         f"directory_exists\t{str(bool(payload['directoryExists'])).lower()}",
+        f"config_file\t{payload.get('configPathDisplay') or ''}",
         f"next_step\t{payload['nextStep']}",
     ]
     sys.stdout.write("\n".join(lines) + "\n")
@@ -4581,20 +4538,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "auth",
-        help="ensure slackdump auth exists and import gotta-owned live-search auth",
+        help="low-level exact Slack auth surface; use `gotta config slack ...` for canonical durable setup",
     )
     p.add_argument("--workspace", default=default_workspace())
     p.set_defaults(func=cmd_auth)
 
     p = sub.add_parser(
         "status",
-        help="inspect slackdump auth, gotta live-search auth, archive, and directory-cache state",
+        help="inspect Slack readiness; use `gotta config slack ...` to persist defaults and guide setup",
     )
     p.add_argument("--workspace", default=default_workspace())
     p.add_argument("--output", choices=["json", "summary"], default="summary")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("workspaces", help="list locally known Slack workspaces")
+    p = sub.add_parser(
+        "workspaces",
+        help="list locally known Slack workspaces before choosing a durable default",
+    )
     p.add_argument("--output", choices=["json", "text"], default="json")
     p.set_defaults(func=cmd_workspaces)
 

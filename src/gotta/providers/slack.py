@@ -15,9 +15,11 @@ import urllib.parse
 import urllib.request
 
 from gotta.config import (
+    display_path,
     env_or_config,
     extract_provider_env,
     load_config,
+    primary_config_file,
     set_provider_env_values,
     user_state_dir,
 )
@@ -25,6 +27,9 @@ from gotta.vault import load_secret_json_object, write_secret_json_atomic
 
 DEFAULT_WORKSPACE = ""
 SLACK_WORKSPACE_ENV = "GOTTA_SLACK_WORKSPACE"
+WORKSPACE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+GENERIC_SLACK_HOSTS = {"slack.com"}
+GENERIC_SLACK_WORKSPACE_NAMES = {"app", "slack"}
 WORKSPACE_LIST_RE = re.compile(
     r"(?m)^\s*(?:=>\s+)?(?P<workspace>[A-Za-z0-9._-]+)\s+\(file:"
 )
@@ -101,22 +106,166 @@ def resolve_workspace(workspace: str) -> str:
     return known[0] if len(known) == 1 else ""
 
 
+def config_command(workspace: str = "") -> str:
+    candidate = workspace.strip()
+    if candidate:
+        return f"gotta config slack {candidate}"
+    return "gotta config slack <workspace-or-link>"
+
+
+def auth_command(workspace: str) -> str:
+    candidate = workspace.strip() or "<workspace>"
+    return f"gotta slack auth --workspace {candidate}"
+
+
+def status_command(workspace: str = "") -> str:
+    candidate = workspace.strip()
+    if candidate:
+        return f"gotta slack status --workspace {candidate}"
+    return "gotta slack status"
+
+
+def workspaces_command() -> str:
+    return "gotta slack workspaces"
+
+
+def _unique_known_workspace() -> str:
+    known = known_workspaces()
+    return known[0] if len(known) == 1 else ""
+
+
+def _looks_like_generic_slack_target(parsed: urllib.parse.ParseResult) -> bool:
+    path = parsed.path.strip()
+    if not path:
+        return False
+    return path.startswith(("/client/", "/docs/", "/archives/"))
+
+
+def workspace_from_target(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        return ""
+    if value.startswith("slack:workspace:"):
+        candidate = value.removeprefix("slack:workspace:").strip()
+        return candidate if WORKSPACE_NAME_RE.fullmatch(candidate) else ""
+    if value.startswith("slack:"):
+        candidate = value.removeprefix("slack:").strip()
+        return candidate if WORKSPACE_NAME_RE.fullmatch(candidate) else ""
+    parsed = urllib.parse.urlparse(value)
+    host = parsed.netloc.strip().lower()
+    if host:
+        match = re.fullmatch(
+            r"(?P<workspace>[^/.]+)(?:\.enterprise)?\.slack\.com",
+            host,
+        )
+        if match is not None:
+            workspace = match.group("workspace").strip()
+            if workspace not in GENERIC_SLACK_WORKSPACE_NAMES:
+                return workspace
+            if _looks_like_generic_slack_target(parsed):
+                return _unique_known_workspace()
+            return ""
+        if host in GENERIC_SLACK_HOSTS and _looks_like_generic_slack_target(parsed):
+            return _unique_known_workspace()
+    return value if WORKSPACE_NAME_RE.fullmatch(value) else ""
+
+
 def missing_workspace_message() -> str:
     known = known_workspaces()
     if len(known) == 1:
         return (
-            f"missing Slack workspace; pass --workspace {known[0]}, "
-            f"set {SLACK_WORKSPACE_ENV}, or run `gotta slack auth --workspace {known[0]}`"
+            f"missing Slack workspace; run `{config_command(known[0])}` to persist it, "
+            f"or pass `--workspace {known[0]}` for this command only"
         )
     if known:
         return (
-            f"missing Slack workspace; pass --workspace or set {SLACK_WORKSPACE_ENV}. "
+            f"missing Slack workspace; run `{config_command()}` to persist one default, "
+            f"or pass `--workspace <workspace>` for this command only. "
             f"Known workspaces: {', '.join(known)}"
         )
     return (
-        f"missing Slack workspace; pass --workspace, set {SLACK_WORKSPACE_ENV}, "
-        "or run `gotta slack auth --workspace <workspace>`"
+        f"missing Slack workspace; run `{config_command()}` to persist one default, "
+        "or pass `--workspace <workspace>` for this command only"
     )
+
+
+def slack_status_payload(workspace: str = "") -> dict[str, Any]:
+    slackdump_path = shutil.which("slackdump") or ""
+    known = known_workspaces() if slackdump_path else []
+    selected_workspace = default_workspace()
+    explicit_workspace = workspace.strip()
+    resolved_workspace = (
+        resolve_workspace(explicit_workspace)
+        if slackdump_path
+        else explicit_workspace or selected_workspace
+    )
+    slackdump_auth_configured = (
+        resolved_workspace in known if resolved_workspace else False
+    )
+    live_auth_path = slack_auth_path(resolved_workspace) if resolved_workspace else None
+    live_auth_configured = bool(live_auth_path and live_auth_path.exists())
+    live_auth_usable = False
+    if resolved_workspace and live_auth_configured:
+        try:
+            auth_state = load_slack_auth_state(resolved_workspace)
+            if auth_state is not None:
+                slack_auth_test(resolved_workspace, auth_state)
+                live_auth_usable = True
+        except SlackError:
+            live_auth_usable = False
+    if not slackdump_path:
+        next_step = (
+            f"install slackdump, then run `{config_command(resolved_workspace)}` "
+            "in an interactive terminal"
+        )
+    elif not resolved_workspace:
+        next_step = missing_workspace_message()
+    elif not slackdump_auth_configured:
+        next_step = (
+            f"run `{config_command(resolved_workspace)}` in an interactive terminal"
+        )
+    elif not live_auth_configured:
+        next_step = (
+            f"run `{config_command(resolved_workspace)}` in an interactive terminal "
+            "to import gotta-owned Slack live-search auth"
+        )
+    elif not live_auth_usable:
+        next_step = (
+            f"rerun `{config_command(resolved_workspace)}` in an interactive terminal"
+        )
+    else:
+        next_step = "ready"
+    payload: dict[str, Any] = {
+        "workspace": resolved_workspace,
+        "workspaceHint": explicit_workspace,
+        "selectedWorkspace": selected_workspace,
+        "knownWorkspaces": known,
+        "slackdumpPath": slackdump_path,
+        "slackdumpPresent": bool(slackdump_path),
+        "authConfigured": slackdump_auth_configured,
+        "slackdumpAuthConfigured": slackdump_auth_configured,
+        "liveSearchAuthConfigured": live_auth_configured,
+        "liveSearchAuthUsable": live_auth_usable,
+        "liveSearchAuthPath": str(live_auth_path) if live_auth_path else "",
+        "configFile": str(primary_config_file()),
+        "configPathDisplay": display_path(primary_config_file()),
+        "ready": bool(
+            resolved_workspace
+            and slackdump_path
+            and slackdump_auth_configured
+            and live_auth_configured
+            and live_auth_usable
+        ),
+        "nextStep": next_step,
+        "commands": {
+            "config": config_command(resolved_workspace),
+            "auth": auth_command(resolved_workspace),
+            "status": status_command(resolved_workspace),
+            "workspaces": workspaces_command(),
+        },
+        "configReference": f"[providers.slack.env] in {display_path(primary_config_file())}",
+    }
+    return payload
 
 
 def ensure_slackdump() -> None:
@@ -408,7 +557,8 @@ def ensure_workspace_auth(workspace: str, *, interactive_ok: bool) -> None:
         return
     if not interactive_ok:
         raise SlackError(
-            f"no Slack auth for {workspace}. run: gotta slack auth --workspace {workspace}"
+            f"no Slack auth for {workspace}. run `{config_command(workspace)}` "
+            f"or the exact auth surface `{auth_command(workspace)}`"
         )
     proc = subprocess.run(
         ["slackdump", "workspace", "new", workspace],
@@ -418,9 +568,9 @@ def ensure_workspace_auth(workspace: str, *, interactive_ok: bool) -> None:
     if proc.returncode != 0 or not _workspace_exists(workspace):
         raise SlackError(
             f"failed to authenticate Slack workspace {workspace}. rerun "
-            f"'gotta slack auth --workspace {workspace}' in an interactive terminal."
+            f"`{config_command(workspace)}` in an interactive terminal, or use "
+            f"`{auth_command(workspace)}` directly."
         )
-    persist_selected_workspace(workspace)
 
 
 def ensure_live_search_auth(
@@ -435,7 +585,7 @@ def ensure_live_search_auth(
     if not interactive_ok:
         raise SlackError(
             f"missing gotta-owned Slack live-search auth for {workspace}. run "
-            f"`gotta slack auth --workspace {workspace}`."
+            f"`{config_command(workspace)}` or `{auth_command(workspace)}`."
         )
     ensure_workspace_auth(workspace, interactive_ok=True)
     auth_state = export_slack_auth_from_slackdump(workspace)

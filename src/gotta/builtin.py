@@ -213,6 +213,16 @@ def confluence_plugin() -> PluginSpec:
     )
 
 
+def config_plugin() -> PluginSpec:
+    return PluginSpec(
+        name="config",
+        description="persist durable provider defaults and guide provider readiness",
+        runner=_runner("gotta.plugins.config"),
+        should_materialize=lambda argv: False,
+        session_access="none",
+    )
+
+
 def ask_plugin() -> PluginSpec:
     return PluginSpec(
         name="ask",
@@ -459,6 +469,7 @@ def search_plugin() -> PluginSpec:
 def _builtin_core_plugins() -> dict[str, PluginSpec]:
     factories = (
         ask_plugin,
+        config_plugin,
         confluence_plugin,
         grafana_plugin,
         gdocs_plugin,
