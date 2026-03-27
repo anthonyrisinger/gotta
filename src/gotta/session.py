@@ -1461,7 +1461,11 @@ def _seed_session_files(
         create_todo_item(
             session_dir,
             section="Status",
-            text="Decide whether to bind an actor with `gotta actor bind ...` and actually consult them if it helps.",
+            text=(
+                "If a sibling actor will help, bind them first with `gotta actor bind ...`; "
+                "actor-targeted `gotta want|goal --actor ...` rewrites only become addressable "
+                "after that bind completes, then actually consult them if it helps."
+            ),
         )
     if not logs_state_path(session_dir).exists():
         bootstrap_lines = [
@@ -2853,7 +2857,7 @@ def _bind_actor(session_root: Path, actor_name: str) -> str:
     actor_blockers = _actor_launch_blockers(session_root, actor_name=actor)
     if actor_blockers:
         suffix = (
-            f"; not launched. Rewrite `{actor_want}` and `{actor_goal}` for {_actor_label(actor, work_dir=session_root)} with `{want_cmd}` and `{goal_cmd}` first. "
+            f"; not launched. This bind completed the addressable actor target, so rewrite `{actor_want}` and `{actor_goal}` for {_actor_label(actor, work_dir=session_root)} with `{want_cmd}` and `{goal_cmd}` first. "
             "Use `gotta todo --actor "
             f"{actor}` to extend the minimal actor-local checklist before launch if useful, "
             f"then launch with `{launch_cmd}` when you actually want {_actor_label(actor, work_dir=session_root)} to start"

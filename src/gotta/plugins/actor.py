@@ -516,8 +516,8 @@ def build_parser(command_name: str = "gotta actor") -> argparse.ArgumentParser:
             "active session. Actor launch creates the live actor runtime itself; do "
             "not pair another agent into that actor. If you need parallelism, bind "
             "and launch a sibling actor. Actor launch requires a real WANT.md and "
-            "GOAL.md first; rewrite actor charters with `gotta want|goal --actor "
-            "<actor> ...`."
+            "GOAL.md first; bind the actor, then rewrite actor charters with "
+            "`gotta want|goal --actor <actor> ...`."
         ),
     )
     parser.add_argument(

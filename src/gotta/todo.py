@@ -244,7 +244,7 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
         lines.extend(
             [
                 f"- Choose the team intentionally. Available actors today are {_default_actor_summary()}.",
-                f"- `gotta actor bind <actor...>` binds sibling actor sessions inside this shared session; use {_actor_bind_examples(prefix='gotta actor bind')}.",
+                f"- `gotta actor bind <actor...>` binds sibling actor sessions inside this shared session and creates the actor-local WANT/GOAL targets; only after bind completes can `gotta want|goal --actor <actor>` address that actor. Use {_actor_bind_examples(prefix='gotta actor bind')}.",
                 "- If you choose an actor, actually consult them with `gotta actor launch <actor>`.",
                 "- Actor checklist pressure begins only after a launched actor starts real evidence collection.",
             ]

@@ -233,6 +233,21 @@ def test_session_init_is_idempotent_and_preserves_rewritten_charters(
     assert len(session_todo.todo_items(root)) == initial_todo_count
 
 
+def test_session_bootstrap_todo_teaches_bind_precedes_actor_charter_rewrites(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+
+    texts = [str(item["text"]) for item in session_todo.todo_items(root)]
+    assert any(
+        "actor-targeted `gotta want|goal --actor ...` rewrites only become addressable after that bind completes"
+        in text
+        for text in texts
+    )
+
+
 def test_want_and_goal_support_show_and_session_relative_from_file(
     tmp_path: Path, capsys
 ) -> None:
@@ -349,6 +364,7 @@ def test_actor_bind_binds_grouped_actor_surfaces_without_launching(
     assert f"bound {codex} (Codex) session" in output
     assert f"gotta want --actor {claude} --stdin" in output
     assert f"gotta goal --actor {claude} --stdin" in output
+    assert "This bind completed the addressable actor target" in output
     assert "minimal actor-local canonical state" in output
     assert "actor-local notes/logs/oops surfaces" not in output
     for actor_name in (claude, codex):
