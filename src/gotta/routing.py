@@ -5,7 +5,6 @@ from __future__ import annotations
 import shlex
 import urllib.parse
 
-
 def split_locator_tail(tail: str) -> list[str]:
     try:
         parts = shlex.split(tail)

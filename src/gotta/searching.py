@@ -24,7 +24,6 @@ class SearchRoute:
     provider: str
     provider_argv: list[str]
     target: str
-    explicit_alias: bool
 
 
 class SearchRouteError(ValueError):
@@ -65,28 +64,24 @@ def _raw_tail(argv: list[str]) -> tuple[str, str, str]:
         raise SearchRouteError(
             "search target must start with <provider>:<query>; use `gotta search jira:Architecture`"
         )
-    raw_tail = " ".join(
-        part.strip() for part in [tail, *argv[1:]] if str(part).strip()
-    ).strip()
+    extra_terms: list[str] = []
+    for raw_part in argv[1:]:
+        part = str(raw_part or "").strip()
+        if not part:
+            continue
+        if part.startswith("-"):
+            raise SearchRouteError(
+                "top-level `gotta search` takes one provider-qualified plain-text query; "
+                f"quote dash-prefixed search text inside that query or use `gotta {provider} search ...` "
+                "for provider-specific flags"
+            )
+        extra_terms.append(part)
+    raw_tail = " ".join(part.strip() for part in [tail, *extra_terms] if str(part).strip()).strip()
     if not raw_tail:
         raise SearchRouteError(
             "search target must include a query seed after the provider; use `gotta search jira:Architecture`"
         )
     return provider, raw_tail, target
-
-
-def _tail_after_first_word(text: str) -> str:
-    stripped = text.strip()
-    if not stripped:
-        return ""
-    try:
-        parts = shlex.split(stripped)
-    except ValueError:
-        _first, _separator, rest = stripped.partition(" ")
-        return rest.strip()
-    if len(parts) < 2:
-        return ""
-    return " ".join(parts[1:]).strip()
 
 
 def _canonical_read_locator(
@@ -101,6 +96,20 @@ def _canonical_read_locator(
         if locator:
             return locator
     return fallback
+
+
+def _tail_after_first_word(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    try:
+        parts = shlex.split(stripped)
+    except ValueError:
+        _first, _separator, rest = stripped.partition(" ")
+        return rest.strip()
+    if len(parts) < 2:
+        return ""
+    return " ".join(parts[1:]).strip()
 
 
 def _discover_read_locator(provider: str, candidate: str) -> str:
@@ -170,7 +179,6 @@ def resolve_search_route(argv: list[str]) -> SearchRoute:
         raise SearchRouteError(
             f"`gotta search` is for plain-text search; use `gotta {specialized}` for `{provider}:{first}`"
         )
-    explicit_alias = first == "search"
     if first in READ_LIKE_PROVIDER_COMMANDS:
         read_target = _canonical_read_redirect(provider, raw_tail)
         if read_target:
@@ -180,40 +188,15 @@ def resolve_search_route(argv: list[str]) -> SearchRoute:
         raise SearchRouteError(
             f"read-like provider targets belong on `gotta read`; use `{suggestion}`"
         )
-    candidate = (
-        f"{provider}:{raw_tail}" if explicit_alias else f"{provider}:search {raw_tail}"
-    )
-    routed = discover_plugin_route(candidate)
-    if routed is None:
+    explicit_alias = first == "search"
+    query = _tail_after_first_word(raw_tail) if explicit_alias else raw_tail
+    query = query.strip()
+    if not query:
         raise SearchRouteError(
-            f"no provider-native search route matched `{target}`; use `<provider>:<query>` for plain-text search"
+            "search target must include a query seed after the provider; use `gotta search jira:Architecture`"
         )
-    routed_provider, provider_argv = routed
-    if routed_provider != provider:
-        raise SearchRouteError(
-            f"`{target}` resolved to `{routed_provider}` unexpectedly; search targets must stay within one provider"
-        )
-    if not provider_argv:
-        raise SearchRouteError(
-            f"no provider-native search route matched `{target}`; use `<provider>:<query>` for plain-text search"
-        )
-    subcommand = provider_argv[0]
-    if subcommand == "search":
-        return SearchRoute(
-            provider=provider,
-            provider_argv=provider_argv,
-            target=target,
-            explicit_alias=explicit_alias,
-        )
-    if subcommand in READ_LIKE_PROVIDER_COMMANDS:
-        read_target = _canonical_read_redirect(provider, raw_tail)
-        if read_target:
-            suggestion = shlex.join(["gotta", "read", read_target])
-        else:
-            suggestion = shlex.join(["gotta", provider, *provider_argv])
-        raise SearchRouteError(
-            f"read-like provider targets belong on `gotta read`; use `{suggestion}`"
-        )
-    raise SearchRouteError(
-        f"`gotta search` only routes provider plain-text search; use `gotta {provider} {subcommand}` directly"
+    return SearchRoute(
+        provider=provider,
+        provider_argv=["search", query],
+        target=target,
     )

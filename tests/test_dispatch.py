@@ -17,6 +17,7 @@ from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
 from gotta.plugins import read as read_plugin
 from gotta.plugins import session as session_plugin
+from gotta.searching import SearchRouteError, resolve_search_route
 
 
 def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
@@ -243,17 +244,27 @@ def test_search_resolve_invocation_routes_provider_search_with_implicit_search()
 def test_search_resolve_invocation_accepts_explicit_search_alias() -> None:
     resolved = invocation.resolve_invocation(
         "search",
-        ["slack:search", "ABC", "reboot", "--workspace", "demo"],
+        ["slack:search", "ABC", "reboot"],
         content.CommonOptions(),
     )
 
     assert resolved.resolved_plugin == "slack"
-    assert resolved.resolved_argv == [
-        "search",
-        "--workspace",
-        "demo",
-        "ABC reboot",
-    ]
+    assert resolved.resolved_argv == ["search", "ABC reboot"]
+
+
+def test_search_resolve_route_rejects_unknown_flag_shaped_tokens() -> None:
+    with pytest.raises(
+        SearchRouteError,
+        match=r"top-level `gotta search` takes one provider-qualified plain-text query; quote dash-prefixed search text inside that query or use `gotta jira search \.\.\.` for provider-specific flags",
+    ):
+        resolve_search_route(["jira:retry", "--bogus", "bar"])
+
+
+def test_search_resolve_route_preserves_flag_shaped_text_inside_quoted_query() -> None:
+    route = resolve_search_route(["jira:retry --bogus bar"])
+
+    assert route.provider == "jira"
+    assert route.provider_argv == ["search", "retry --bogus bar"]
 
 
 def test_search_resolve_invocation_disables_materialization_on_invalid_target() -> None:

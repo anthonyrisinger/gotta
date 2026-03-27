@@ -362,9 +362,19 @@ of prior interactions.
 Remote discovery and evidence acquisition are the canonical front door:
 
 ```bash
-gotta jira status
+# Durable provider setup and readiness
+gotta config slack https://demo.slack.com/archives/C12345678/p1773085070240949
+gotta slack status --workspace demo
+gotta slack workspaces
+gotta slack auth --workspace demo
+
+# Plain-text remote discovery
 gotta search jira:retry budget
-gotta search github:service ownership --type code --repo org/repo
+gotta search github:service ownership
+gotta slack search "handoff failure"
+
+# Provider-exact discovery and retrieval
+gotta jira status
 gotta github https://github.com/org/repo/commits/HEAD
 gotta github https://github.com/org/repo/actions/runs/1234567890
 gotta grafana status
@@ -381,10 +391,8 @@ gotta gdocs search "incident response"
 gotta granola list --time-range last_30_days --limit 5
 gotta granola transcript 11111111-1111-1111-1111-111111111111 --query latency
 gotta granola search-transcript latency --time-range last_30_days
-gotta config slack https://demo.slack.com/archives/C12345678/p1773085070240949
-gotta slack workspaces
-gotta slack auth
-gotta slack search "handoff failure"
+
+# Canonical acquisition into the evidence web
 gotta read https://github.com/org/repo/blob/main/README.md
 gotta read https://slack.com/docs/T12345678/D12345678
 ```
@@ -432,14 +440,20 @@ happen against the same session context.
 
 ```bash
 gotta search jira:Architecture
-gotta search slack:ABC reboot --workspace demo --limit 10
-gotta search github:SomeFunction --type code --repo acme/widgets
-gotta search confluence:Architecture --title-only
+gotta search slack:ABC reboot
+gotta search github:SomeFunction ownership
+gotta search confluence:Architecture
+gotta search 'jira:retry --literal-token'
 ```
 
 The top-level verb already means search, so the routed target omits the
-subcommand by default. Explicit routed aliases like `github:search foo` still
-work, but the canonical form is `github:foo`.
+subcommand by default. Explicit aliases like `github:search foo` are still
+tolerated, but `github:foo` is canonical. Top-level `gotta search` forwards
+one plain-text query string only; it does not forward provider-specific search
+flags. Quote dash-prefixed or flag-shaped search text inside the query itself,
+and use provider-exact surfaces such as `gotta slack search ...`, `gotta
+github search ...`, or `gotta confluence search ...` when you need structured
+flags.
 
 ## Session Synthesis Surfaces
 
