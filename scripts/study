@@ -82,8 +82,8 @@ run_cmd uv run ruff format --check src tests
 
 section "Pressure Map"
 run_cmd uv run pytest --durations=15 -q
-run_cmd uv run python -m radon cc src tests -s
-run_cmd uv run lizard src tests
+advisory_cmd uv run python -m radon cc src tests -s
+advisory_cmd uv run lizard src tests
 
 section "Study Counters"
 if have_cmd cloc; then

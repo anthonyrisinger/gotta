@@ -13,13 +13,18 @@ uv sync --python 3.10 --extra dev
 
 ## Before You Open A Change
 
-Run the full local gate:
+Run the blocking local gate:
 
 ```bash
 uv run pytest -q
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run python -m vulture src tests --min-confidence 80
+```
+
+Then run the structural pressure and packaging checks:
+
+```bash
 uv run python -m radon cc src tests -s
 uv run lizard src tests
 uv build --python 3.10 --clear
@@ -36,8 +41,9 @@ For regular study and maintenance work, use the repo wrapper:
 
 `./scripts/study` runs the blocking gate, pressure tools, and local study
 binaries such as `cloc`, `ctags`, and `ast-grep` when they are installed.
-`--deep` adds `import-linter` and `semgrep`. `--types` adds a
-source-only `pyright` pass as a pressure map.
+Pressure-map tools such as `radon` and `lizard` are surfaced as advisory
+signals rather than correctness blockers. `--deep` adds `import-linter` and
+`semgrep`. `--types` adds a source-only `pyright` pass as a pressure map.
 
 If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts through the canonical release wrapper:

@@ -174,9 +174,11 @@ For one-command study and maintenance passes, use:
 ```
 
 `./scripts/study` runs the blocking gate, pressure tools, and any local study
-binaries already installed. `--deep` adds architecture and
-semantic probes through `import-linter` and `semgrep`. `--types` adds a
-source-only `pyright` pass as a pressure map rather than a release gate.
+binaries already installed. Pressure-map tools such as `radon` and `lizard`
+are surfaced as advisory signals rather than correctness blockers. `--deep`
+adds architecture and semantic probes through `import-linter` and `semgrep`.
+`--types` adds a source-only `pyright` pass as a pressure map rather than a
+release gate.
 
 ## Advanced Study Battery
 
@@ -797,10 +799,13 @@ Build and validate artifacts with `uv`:
 The script is the canonical release path. It bumps the version with `uv`,
 runs `./scripts/study`, builds the wheel and sdist, validates them with
 `twine check`, smoke-installs the wheel on Python 3.10, commits the release
-metadata, and then either stops for review or pushes and publishes. `prepare`
-creates the reviewable release commit without pushing. `publish` validates the
-current prepared version and then pushes `main`, publishes to PyPI, and waits
-for public propagation. One-shot `patch` and `minor` still do the full flow in
-one pass.
+metadata, and then either stops for review or pushes and publishes. The
+blocking correctness gate still comes from `pytest`, `ruff`, `vulture`, build,
+and packaging validation; pressure-map output from `./scripts/study` is
+surfaced for review without blocking the release candidate. `prepare` creates
+the reviewable release commit without pushing. `publish` validates the current
+prepared version and then pushes `main`, publishes to PyPI, and waits for
+public propagation. One-shot `patch` and `minor` still do the full flow in one
+pass.
 
 It reads the PyPI token from `~/.pypirc` under `[pypi].password`.
