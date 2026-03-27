@@ -1058,7 +1058,6 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
             else []
         ),
         "--no-ask-user",
-        "--no-alt-screen",
         "--stream=on",
         f"--model={model}",
         f"--resume={resume_uuid}",
