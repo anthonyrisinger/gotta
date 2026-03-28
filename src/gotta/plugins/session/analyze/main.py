@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from ..parse import explicit_session_ref, require_started_session, session_dirs_for_read
-from ..scan import scan_payload
+from ..scan.payload import scan_payload
 from .lineage import lineage_focus_payload
 from .overview import (
     analysis_overview_payload,

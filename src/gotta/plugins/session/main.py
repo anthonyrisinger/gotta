@@ -11,7 +11,7 @@ from .lead.main import cmd_leads
 from .manifest import cmd_manifest
 from .parse import build_parser
 from .root import cmd_bind, cmd_doctor, cmd_init, cmd_show
-from .scan import cmd_scan
+from .scan.main import cmd_scan
 from .timeline.main import cmd_timeline
 
 
@@ -19,8 +19,8 @@ def main(argv: list[str]) -> int:
     parser = build_parser()
     if is_long_help_request(argv):
         return print_long_help(parser)
+    args = parser.parse_args(argv)
     try:
-        args = parser.parse_args(argv)
         if (
             getattr(args, "command", None) == "analyze"
             and getattr(args, "output", None) == "mermaid"
