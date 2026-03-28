@@ -6,7 +6,7 @@ from gotta.content.model import ContentError
 from gotta.helptext import is_long_help_request, print_long_help
 
 from .analyze.main import cmd_analyze
-from .graph import cmd_graph
+from .graph.main import cmd_graph
 from .lead.main import cmd_leads
 from .manifest.main import cmd_manifest
 from .parse import build_parser

@@ -44,7 +44,7 @@ from gotta.plugins.notes import main as notes
 from gotta.plugins import actor
 import gotta.plugins.session.analyze.overview as session_analyze_overview
 import gotta.plugins.session.analyze.render as session_analyze_render
-from gotta.plugins.session import graph as session_graph
+from gotta.plugins.session.graph.payload import graph_payload as session_graph_payload
 from gotta.plugins.session import main as session_main
 from gotta.plugins.session import parse as session_parse
 from gotta.plugins import want
@@ -3164,7 +3164,7 @@ def test_session_graph_prefers_canonical_locator_for_binding(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    payload = session_graph.graph_payload(dirs)
+    payload = session_graph_payload(dirs)
 
     assert payload["sourceCount"] == 1
     assert payload["contentCount"] == 1
@@ -4109,7 +4109,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    graph_payload = session_graph.graph_payload(dirs)
+    graph_payload = session_graph_payload(dirs)
     analysis_payload = session_analyze_overview.analysis_payload(dirs)
 
     assert graph_payload["sources"][0]["collision"] is False
