@@ -136,3 +136,75 @@ def runtime_signal_payload(
             and (started_age_seconds or 0) >= ACTOR_STARTUP_GRACE_SECONDS
         ),
     }
+
+
+def runtime_next_step(actor_name: str, payload: dict[str, object]) -> str:
+    requested_status = str(payload.get("requested_status") or "")
+    requested_label = str(payload.get("requested_label") or "")
+    evidence_live = bool(payload.get("evidence_live"))
+    evidence_note = str(payload.get("evidence_note") or "")
+    request_note = str(payload.get("request_note") or "")
+    runtime_broken = bool(payload.get("runtime_broken"))
+    runtime_stop_signal_at = str(payload.get("runtime_stop_signal_at") or "")
+    runtime_stop_signal = str(payload.get("runtime_stop_signal") or "SIGTERM")
+    runtime_issue_summary = str(payload.get("runtime_issue_summary") or "")
+    voice = str(payload.get("voice") or "missing")
+    voice_missing = voice == "missing"
+
+    if runtime_broken:
+        issue_clause = (
+            runtime_issue_summary + " "
+            if runtime_issue_summary
+            else "Upstream provider failures are keeping the runtime in a retry loop. "
+        )
+        if runtime_stop_signal_at:
+            return (
+                "actor runtime is broken and still has not produced actor-authored voice, "
+                "progress, or evidence. "
+                + issue_clause
+                + f"Shutdown signal `{runtime_stop_signal or 'SIGTERM'}` was already sent at "
+                f"{runtime_stop_signal_at}. "
+                + (
+                    f"Pending `{requested_label}` disposition remains authoritative when the runtime exits."
+                    if requested_status
+                    else "Recheck actor status shortly and intervene at the OS level only if the process still refuses to exit."
+                )
+            )
+        return (
+            "actor runtime is broken and still has not produced actor-authored voice, "
+            "progress, or evidence. "
+            + issue_clause
+            + "This is not normal warmup. "
+            + (
+                f"Stop the runtime with `gotta actor stop {actor_name} --summary ...`."
+                + f" Pending `{requested_label}` disposition will remain authoritative when the runtime exits."
+                if requested_status
+                else f"Record `gotta actor fail {actor_name} --summary ...` now, "
+                + f"then stop the runtime with `gotta actor stop {actor_name} --summary ...`."
+            )
+        )
+    if str(payload.get("status") or "") == "stalled" and (
+        not voice_missing or evidence_live
+    ):
+        return (
+            "actor heartbeat is stale, but material actor state already exists in `gotta notes` or the "
+            "shared evidence web. "
+            + (evidence_note + " " if evidence_note else "")
+            + "Inspect the notes and decide whether to wait, relaunch, or disposition manually."
+            + request_note
+        )
+    return ""
+
+
+def low_signal_next_step(payload: dict[str, object]) -> str:
+    if not bool(payload.get("low_signal_progress")):
+        return ""
+    request_note = str(payload.get("request_note") or "")
+    runtime_note = str(payload.get("runtime_note") or "")
+    return (
+        "actor runtime is still live, but actor-authored progress is stale and no "
+        "actor-attributed evidence has landed yet. Treat this as a low-signal run until "
+        "fresh actor-authored progress or evidence appears."
+        + request_note
+        + runtime_note
+    )

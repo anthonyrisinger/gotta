@@ -16,7 +16,11 @@ from gotta.session.registry import (
     _actor_session_dir,
     _normalize_actor_name,
 )
-from gotta.session.status.payload.value import int_value, lifecycle_entries
+from gotta.session.status.payload.value import (
+    ACTOR_TERMINAL_STATUS,
+    int_value,
+    lifecycle_entries,
+)
 from gotta.session.status.progress import _actor_progress_summary
 
 
@@ -71,3 +75,23 @@ def activity_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         "note_check_summary": _actor_note_check_summary(work_dir, actor_name),
         "progress": _actor_progress_summary(work_dir, actor_name),
     }
+
+
+def note_check_next_step(
+    *,
+    note_checks_since_update: int,
+    last_note_at: str,
+    derived_status: str,
+) -> str:
+    if note_checks_since_update <= 0 or derived_status in ACTOR_TERMINAL_STATUS:
+        return ""
+    check_noun = "time" if note_checks_since_update == 1 else "times"
+    if last_note_at:
+        return (
+            f"Supervisor has checked this actor's notes {note_checks_since_update} {check_noun} "
+            "since the last note. Land one short note now if real progress exists."
+        )
+    return (
+        f"Supervisor has checked this actor's notes {note_checks_since_update} {check_noun} "
+        "and no first short note has landed yet. Land one short note now if real progress exists."
+    )
