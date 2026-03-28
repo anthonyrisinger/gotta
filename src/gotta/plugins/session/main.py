@@ -12,7 +12,7 @@ from .manifest import cmd_manifest
 from .parse import build_parser
 from .root import cmd_bind, cmd_doctor, cmd_init, cmd_show
 from .scan import cmd_scan
-from .timeline import cmd_timeline
+from .timeline.main import cmd_timeline
 
 
 def main(argv: list[str]) -> int:
