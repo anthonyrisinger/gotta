@@ -14,6 +14,7 @@ from gotta.actor import (
     supervisor_stop_message,
     supervisor_stop_pending,
 )
+from gotta.cli.root import ResolvedSessionTarget
 from gotta import topology
 from gotta.content.path import sh_quote
 from gotta.session.status.payload.main import _actor_status_payload
@@ -136,3 +137,43 @@ def _creation_receipt_lines(
         ]
     )
     return lines
+
+
+def emit_session_notices(
+    target: ResolvedSessionTarget,
+    *,
+    argv: list[str],
+    context_id: str,
+    context_source: str,
+    acting_actor: str,
+) -> None:
+    root = target.root
+    if root is None:
+        return
+    if target.created:
+        print(
+            "\n".join(
+                _creation_receipt_lines(
+                    root,
+                    context_id=context_id,
+                    context_source=context_source,
+                    bound=target.bound_current_context,
+                )
+            ),
+            file=sys.stderr,
+        )
+    warning = _actor_stop_warning(root)
+    if warning:
+        print(warning, file=sys.stderr)
+        return
+    if not _should_emit_actor_note_check_warning(
+        argv=argv,
+        root=root,
+        requested_root=target.requested_root,
+        acting_actor=acting_actor,
+        explicit_actor=target.explicit_actor,
+    ):
+        return
+    pulse_warning = _actor_note_check_warning(root)
+    if pulse_warning:
+        print(pulse_warning, file=sys.stderr)

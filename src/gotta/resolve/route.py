@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gotta.builtin import PluginSpec, available_plugins, get_plugin
 import shlex
 import urllib.parse
 
@@ -66,3 +67,52 @@ def query_route(
     if not query:
         return None
     return [*argv, query]
+
+
+def _routed_plugins() -> list[PluginSpec]:
+    return sorted(
+        [
+            spec
+            for spec in (get_plugin(name) for name in available_plugins())
+            if spec
+            and spec.name not in {"read", "session"}
+            and spec.route_target is not None
+        ],
+        key=lambda item: (item.route_priority, item.name),
+    )
+
+
+def discover_plugin_route(target: str) -> tuple[str, list[str]] | None:
+    for plugin in _routed_plugins():
+        try:
+            argv = plugin.route_target(target) if plugin.route_target else None
+        except ValueError:
+            argv = None
+        if argv is not None:
+            return plugin.name, argv
+    return None
+
+
+def partition_routed_target_tokens(
+    tokens: list[str],
+) -> tuple[str, str, tuple[str, ...]] | None:
+    best: tuple[int, int, str, str, tuple[str, ...]] | None = None
+    token_count = len(tokens)
+    for start in range(token_count):
+        for end in range(token_count, start, -1):
+            candidate = " ".join(
+                part.strip() for part in tokens[start:end] if part.strip()
+            ).strip()
+            if not candidate:
+                continue
+            routed = discover_plugin_route(candidate)
+            if routed is None:
+                continue
+            plugin, plugin_argv = routed
+            provider_argv = tuple(tokens[:start] + plugin_argv + tokens[end:])
+            score = (end - start, -len(tokens[:start] + tokens[end:]))
+            if best is None or score > (best[0], best[1]):
+                best = (score[0], score[1], plugin, candidate, provider_argv)
+    if best is None:
+        return None
+    return best[2], best[3], best[4]

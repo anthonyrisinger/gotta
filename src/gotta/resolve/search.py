@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import shlex
 
 from gotta.builtin import get_plugin
-from gotta.resolve.read import discover_plugin_route
+from gotta.resolve.route import discover_plugin_route
 
 
 SPECIALIZED_PROVIDER_COMMANDS: dict[tuple[str, str], str] = {

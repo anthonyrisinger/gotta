@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from gotta.actors import seed_actor_context
+from gotta.dispatch.materialize import SUPPRESS_MATERIALIZATION_ENV
 from gotta.content.env import (
     CONTENT_ENV,
     CONTEXT_ACTIVE_ENV,
@@ -18,10 +21,14 @@ from gotta.content.env import (
     SESSION_REPO_ENV,
     load_state_env_at_root,
 )
+from gotta.content.scope import session_identity
 from gotta.content.scope import session_actor_scope, session_id
 from gotta import topology
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
+
+if TYPE_CHECKING:
+    from gotta.cli.root import ResolvedSessionTarget
 
 _AMBIENT_SESSIONLESS_ENV = "GOTTA_AMBIENT_SESSIONLESS"
 
@@ -95,3 +102,32 @@ def _hydrate_shared_session_environment(
                 [str(venv_bin), current_path] if current_path else [str(venv_bin)]
             )
             os.environ["VIRTUAL_ENV"] = str(venv_bin.parent)
+
+
+def activate_session_environment(
+    target: ResolvedSessionTarget,
+    *,
+    context_id: str,
+    context_source: str,
+    acting_actor: str,
+) -> None:
+    root = target.root
+    if root is None:
+        if target.session_access == "ambient":
+            os.environ[SUPPRESS_MATERIALIZATION_ENV] = "1"
+            os.environ[_AMBIENT_SESSIONLESS_ENV] = "1"
+        return
+    if (
+        target.shared_root_command
+        and topology.parse_shared_session_root(root) is not None
+    ):
+        _hydrate_shared_session_environment(
+            root,
+            context_id=context_id,
+            context_source=context_source,
+        )
+        return
+    _hydrate_environment(root, context_id=context_id, context_source=context_source)
+    seed_actor_context(acting_actor)
+    if target.explicit_actor:
+        os.environ[SESSION_ACTOR_ENV] = session_identity(root)
