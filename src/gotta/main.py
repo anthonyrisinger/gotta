@@ -598,7 +598,7 @@ def _should_auto_bootstrap_session(
     if argv[:1] != ["read"]:
         return True
     try:
-        from gotta.target import resolve_read_target
+        from gotta.resolve.read import resolve_read_target
 
         resolved = resolve_read_target(argv[1:])
     except SystemExit:
@@ -756,7 +756,7 @@ def _looks_like_stored_read_target(argv: list[str], explicit_session: str) -> bo
     if shared_root is None:
         return False
     try:
-        from gotta.target import resolve_read_target
+        from gotta.resolve.read import resolve_read_target
 
         resolved = resolve_read_target(
             argv[1:],

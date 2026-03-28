@@ -25,7 +25,7 @@ from gotta.config import (
 )
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
-from gotta.routing import query_route, split_locator_tail, strip_http_url_fragment
+from gotta.resolve.route import query_route, split_locator_tail, strip_http_url_fragment
 from gotta.source import (
     derive_source_metadata_from_payload,
     render_source_metadata_lines,

@@ -8,9 +8,9 @@ import urllib.error
 import pytest
 
 from gotta import content
-from gotta import target
 from gotta.plugins import actor, read
 from gotta.plugins.session import main as session
+import gotta.resolve.read as resolve_read
 from gotta.session import registry as session_registry
 
 
@@ -369,7 +369,7 @@ def test_read_does_not_materialize_local_artifact_rereads(
     monkeypatch.setenv("GOTTA_SESSION_DIR", str(dirs.session_dir))
     monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(dirs.content_dir))
 
-    assert not target.should_materialize(
+    assert not resolve_read.should_materialize(
         [content.artifact_locator("slack-search-abc.md", result.digest), "--head", "2"]
     )
 
@@ -433,8 +433,8 @@ def test_read_supports_bounded_provider_views(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         read,
         "resolve_read_target",
-        lambda argv: target.ReadTarget(
-            request=target.parse_args(argv),
+        lambda argv: resolve_read.ReadTarget(
+            request=resolve_read.parse_args(argv),
             kind="routed",
             path=None,
             routed_plugin="github",
@@ -547,8 +547,8 @@ def test_read_remote_url_reports_truncation_and_still_applies_head(
     monkeypatch.setattr(
         read,
         "resolve_read_target",
-        lambda argv: target.ReadTarget(
-            request=target.parse_args(argv),
+        lambda argv: resolve_read.ReadTarget(
+            request=resolve_read.parse_args(argv),
             kind="remote_url",
             path=None,
             routed_plugin=None,
@@ -571,7 +571,7 @@ def test_read_remote_url_reports_truncation_and_still_applies_head(
 
 
 def test_read_view_shaping_makes_routed_targets_non_materializing() -> None:
-    resolved = target.resolve_read_target(
+    resolved = resolve_read.resolve_read_target(
         ["https://github.com/acme/widgets", "--head", "3"]
     )
 
@@ -580,7 +580,7 @@ def test_read_view_shaping_makes_routed_targets_non_materializing() -> None:
 
 
 def test_read_view_shaping_makes_remote_urls_non_materializing() -> None:
-    resolved = target.resolve_read_target(
+    resolved = resolve_read.resolve_read_target(
         ["https://example.com/manual.txt", "--tail", "5"]
     )
 
@@ -589,7 +589,7 @@ def test_read_view_shaping_makes_remote_urls_non_materializing() -> None:
 
 
 def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
-    resolved = target.resolve_read_target(
+    resolved = resolve_read.resolve_read_target(
         ["https://example.com/manual.txt", "--section", "   "]
     )
 
@@ -599,7 +599,7 @@ def test_read_whitespace_only_section_normalizes_to_plain_read() -> None:
 
 
 def test_read_help_text_describes_plain_vs_shaped_materialization() -> None:
-    description = target.build_parser().description or ""
+    description = resolve_read.build_parser().description or ""
 
     assert (
         "Remote/provider reads store durable evidence only when an initialized session"
@@ -609,7 +609,7 @@ def test_read_help_text_describes_plain_vs_shaped_materialization() -> None:
         "`--head`, `--tail`, and `--section` only trim what is shown to the operator"
         in read.USAGE
     )
-    assert "--actor" in target.build_parser().format_help()
+    assert "--actor" in resolve_read.build_parser().format_help()
 
 
 def test_execute_materializing_read_keeps_full_routed_bytes_under_bounded_view(
@@ -618,8 +618,8 @@ def test_execute_materializing_read_keeps_full_routed_bytes_under_bounded_view(
     monkeypatch.setattr(
         read,
         "resolve_read_target",
-        lambda argv: target.ReadTarget(
-            request=target.parse_args(argv),
+        lambda argv: resolve_read.ReadTarget(
+            request=resolve_read.parse_args(argv),
             kind="routed",
             path=None,
             routed_plugin="github",
@@ -681,7 +681,7 @@ def test_execute_materializing_read_keeps_full_remote_bytes_under_bounded_view(
 
 
 def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> None:
-    resolved = target.resolve_read_target(
+    resolved = resolve_read.resolve_read_target(
         ["--limit", "10", "https://github.com/acme/widgets/commits/main"]
     )
 
@@ -695,7 +695,7 @@ def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> N
 
 
 def test_read_passes_provider_flags_through_after_routed_target(monkeypatch) -> None:
-    resolved = target.resolve_read_target(
+    resolved = resolve_read.resolve_read_target(
         ["https://github.com/acme/widgets/commits/main", "--limit", "10"]
     )
 
@@ -709,7 +709,7 @@ def test_read_passes_provider_flags_through_after_routed_target(monkeypatch) -> 
 
 
 def test_read_uses_provider_normalized_fragmentless_url_for_routed_targets() -> None:
-    resolved = target.resolve_read_target(
+    resolved = resolve_read.resolve_read_target(
         ["https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0"]
     )
 
@@ -722,7 +722,9 @@ def test_read_uses_provider_normalized_fragmentless_url_for_routed_targets() -> 
 
 
 def test_read_preserves_github_fragment_hint_while_canonicalizing_identity() -> None:
-    resolved = target.resolve_read_target(["https://github.com/acme/widgets#readme"])
+    resolved = resolve_read.resolve_read_target(
+        ["https://github.com/acme/widgets#readme"]
+    )
 
     assert resolved.kind == "routed"
     assert resolved.routed_plugin == "github"
@@ -731,7 +733,7 @@ def test_read_preserves_github_fragment_hint_while_canonicalizing_identity() -> 
 
 
 def test_read_routes_github_actions_job_urls() -> None:
-    resolved = target.resolve_read_target(
+    resolved = resolve_read.resolve_read_target(
         ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"]
     )
 

@@ -19,7 +19,7 @@ from gotta.content import (
     resolve_dirs,
     session_is_initialized,
 )
-from gotta.invocation import ResolvedInvocation
+from gotta.resolve.invoke import ResolvedInvocation
 
 
 def system_exit_status(exc: SystemExit, *, emit: bool = True) -> int:

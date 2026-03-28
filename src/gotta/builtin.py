@@ -192,8 +192,16 @@ def _module_attr(module_name: str, attr: str):
 
 def _artifact_session_access(plugin_name: str):
     def resolve(argv: list[str]) -> SessionAccessMode:
-        module = importlib.import_module("gotta.invocation")
+        module = importlib.import_module("gotta.resolve.intent")
         return module.session_access_mode(plugin_name, argv)
+
+    return resolve
+
+
+def _artifact_should_materialize(plugin_name: str):
+    def resolve(argv: list[str]) -> bool:
+        module = importlib.import_module("gotta.resolve.invoke")
+        return bool(module.should_materialize(plugin_name, argv))
 
     return resolve
 
@@ -242,10 +250,10 @@ def read_plugin() -> PluginSpec:
         name="read",
         description="acquire one target through the right retrieval surface with session-aware storage",
         runner=_runner("gotta.plugins.read"),
-        should_materialize=_module_attr("gotta.target", "should_materialize"),
+        should_materialize=_module_attr("gotta.resolve.read", "should_materialize"),
         session_access="ambient",
-        canonical_locator=_module_attr("gotta.target", "canonical_locator"),
-        preferred_name=_module_attr("gotta.target", "preferred_name"),
+        canonical_locator=_module_attr("gotta.resolve.read", "canonical_locator"),
+        preferred_name=_module_attr("gotta.resolve.read", "preferred_name"),
         capture=_module_attr("gotta.plugins.read", "capture"),
         project=_module_attr("gotta.plugins.read", "project"),
     )
@@ -458,7 +466,7 @@ def search_plugin() -> PluginSpec:
         name="search",
         description="route plain-text remote discovery through provider-native search surfaces",
         runner=_runner("gotta.plugins.search"),
-        should_materialize=_module_attr("gotta.invocation", "should_materialize"),
+        should_materialize=_artifact_should_materialize("search"),
         session_access=_artifact_session_access("search"),
         canonical_locator=_module_attr("gotta.plugins.search", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.search", "preferred_name"),

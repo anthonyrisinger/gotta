@@ -18,9 +18,11 @@ from gotta.content import (
     session_identity,
 )
 from gotta.dispatch.metadata import _derived_source_metadata
-from gotta.invocation import (
-    ResolvedInvocation,
+from gotta.resolve.intent import (
     SUPPRESS_MATERIALIZATION_ENV as INVOCATION_SUPPRESS_MATERIALIZATION_ENV,
+)
+from gotta.resolve.invoke import (
+    ResolvedInvocation,
     invocation_locator,
     resolve_invocation,
 )

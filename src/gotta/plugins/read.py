@@ -24,14 +24,14 @@ from gotta.dispatch.main import run_plugin
 from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
 from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
-from gotta.invocation import SUPPRESS_MATERIALIZATION_ENV
+from gotta.resolve.intent import SUPPRESS_MATERIALIZATION_ENV
+from gotta.resolve.read import build_parser, parse_args, resolve_read_target
 from gotta.project import html_markdown, looks_text, pretty_json
 from gotta.stored import (
     guess_lang_from_content_type,
     guess_lang_from_path,
     stored_display as render_stored_display,
 )
-from gotta.target import build_parser, parse_args, resolve_read_target
 
 
 USAGE = """usage: gotta read [--recursive] [--max-depth N] [<target>|-]

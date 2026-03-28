@@ -20,7 +20,7 @@ from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.config import set_provider_env_values
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
-from gotta.routing import query_route, strip_http_url_fragment
+from gotta.resolve.route import query_route, strip_http_url_fragment
 from gotta.source import (
     derive_source_metadata_from_payload,
     render_source_metadata_lines,

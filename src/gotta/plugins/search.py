@@ -11,7 +11,7 @@ from gotta.dispatch.main import load_plugin_runner
 from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
 from gotta.dispatch.runtime import system_exit_status
 from gotta.helptext import is_long_help_request
-from gotta.searching import SearchRouteError, resolve_search_route
+from gotta.resolve.search import SearchRouteError, resolve_search_route
 
 
 def build_usage() -> str:

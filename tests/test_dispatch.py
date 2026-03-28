@@ -12,15 +12,15 @@ import pytest
 from gotta import builtin as plugin_api
 from gotta import main as cli
 from gotta import content
-from gotta import invocation
 import gotta.dispatch.budget as dispatch_budget
 import gotta.dispatch.main as dispatch
 import gotta.dispatch.materialize as dispatch_materialize
+import gotta.resolve.invoke as invocation
 from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
 from gotta.plugins import read as read_plugin
 from gotta.plugins.session import main as session_plugin
-from gotta.searching import SearchRouteError, resolve_search_route
+from gotta.resolve.search import SearchRouteError, resolve_search_route
 
 
 def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
@@ -87,6 +87,15 @@ def test_split_common_options_strips_shared_actor_target() -> None:
     assert options.actor == "claude"
     assert options.save_as == "x.md"
     assert cleaned == ["search", "platform"]
+
+
+def test_search_plugin_spec_exposes_unary_should_materialize_contract() -> None:
+    spec = plugin_api.get_plugin("search")
+
+    assert spec is not None
+    assert spec.should_materialize is not None
+    assert spec.should_materialize(["jira:Architecture"]) is True
+    assert spec.should_materialize(["readme.md"]) is False
 
 
 def test_emit_budgeted_output_truncates_interactive_text_with_footer(

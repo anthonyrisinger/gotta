@@ -109,7 +109,7 @@ gotta jira search "retry budget"
   ├─ main.py          resolve fingerprint, bind/discover session, detect repo
   ├─ builtin.py        discover plugin via entry points (gotta.plugins group)
   ├─ dispatch/main.py   orchestrate plugin runtime over dispatch phases
-  ├─ invocation.py      derive canonical locator, preferred name, content type
+  ├─ resolve/           resolve read/search targets and invocation metadata
   ├─ content.py         materialize captured output to content store
   └─ stdout             emit receipt with artifact and content locators
 ```
@@ -131,9 +131,12 @@ Core infrastructure:
 - **`content.py`** — Evidence store. SHA-256-keyed content directory with atomic
   writes, append-only manifest (`manifest.jsonl`), activity logging, session
   environment export/import, context binding resolution.
-- **`invocation.py`** — Invocation resolution. Routes provider-agnostic targets
-  to provider plugins, derives canonical locators per provider, determines
-  preferred output names and whether to materialize.
+- **`resolve/`** — Resolution kernel package. `read.py` owns `gotta read`
+  target parsing and routed-target detection, `search.py` owns the top-level
+  plain-text search contract, `route.py` owns provider locator tokenization,
+  `canon.py` derives canonical locators, `name.py` derives preferred names and
+  content types, `intent.py` owns artifact/session-access policy, and
+  `invoke.py` resolves a command into one canonical invocation shape.
 - **`session/`** — Session kernel package. `scope.py` resolves exact/shared/actor
   roots, `registry.py` owns actor identity and metadata, `bootstrap.py`
   scaffolds session and actor surfaces, `activity.py` records actor/session
@@ -151,6 +154,7 @@ The hottest responsibility concentrations are currently:
 - `src/gotta/plugins/github.py`
 - `src/gotta/session/`
 - `src/gotta/dispatch/`
+- `src/gotta/resolve/`
 - `src/gotta/lead/`
 - `src/gotta/main.py`
 
@@ -183,10 +187,6 @@ Session topology and identity:
 
 Evidence and synthesis:
 
-- **`target.py`** — Read target resolution. Parses `gotta read` invocations to
-  resolve local files, artifacts, URLs, and provider-routed targets.
-- **`routing.py`** — Canonical locator parsing. Converts locators to plugin argv
-  for re-invocation.
 - **`lead/`** — Lead kernel package. `model.py` owns `LeadMention` and cache
   identity, `canon.py` canonicalizes external targets, `query.py` derives
   search-seed queries, `extract.py` mines explicit and semantic leads,

@@ -1,4 +1,4 @@
-"""Shared routing helpers for top-level `gotta search`."""
+"""Top-level `gotta search` routing."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import shlex
 
 from gotta.builtin import get_plugin
-from gotta.target import discover_plugin_route
+from gotta.resolve.read import discover_plugin_route
 
 
 SPECIALIZED_PROVIDER_COMMANDS: dict[tuple[str, str], str] = {

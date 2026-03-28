@@ -40,13 +40,13 @@ from gotta.dispatch.runtime import (
     system_exit_status,
 )
 from gotta.dispatch.stream import capture_stderr, capture_stdout, _emit_captured_stderr
-from gotta.invocation import (
+from gotta.resolve.intent import session_access_mode
+from gotta.resolve.invoke import (
     canonical_locator,
     infer_content_type,
     invocation_locator,
     preferred_name as derive_preferred_name,
     resolve_invocation,
-    session_access_mode,
     should_materialize,
 )
 

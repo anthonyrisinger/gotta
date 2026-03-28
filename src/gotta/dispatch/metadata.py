@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from gotta.invocation import canonical_locator as resolve_canonical_locator
+from gotta.resolve.invoke import canonical_locator as resolve_canonical_locator
 from gotta.source import (
     classify_visibility_metadata,
     derive_source_metadata_from_payload,

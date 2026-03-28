@@ -270,7 +270,10 @@ def _explicit_session_context(options: CommonOptions | Any | None) -> tuple[str,
 
 
 def _resolve_local_target(
-    target: str, *, session_root: str = "", content_root: str = ""
+    target: str,
+    *,
+    session_root: str = "",
+    content_root: str = "",
 ) -> Path | None:
     candidate = Path(target).expanduser()
     session_root = session_root or _nearby_session_context()[0]
@@ -304,7 +307,9 @@ def _expected_local_target(target: str, *, session_root: str = "") -> Path | Non
 
 
 def _resolve_session_artifact_name(
-    target: str, *, content_root: str = ""
+    target: str,
+    *,
+    content_root: str = "",
 ) -> Path | None:
     content_root = content_root or _nearby_session_context()[1]
     if not content_root:
@@ -494,7 +499,8 @@ def resolve_read_target(
             should_materialize=False,
         )
     artifact_name_path = _resolve_session_artifact_name(
-        target, content_root=explicit_content_root
+        target,
+        content_root=explicit_content_root,
     )
     if artifact_name_path is not None:
         return ReadTarget(
@@ -509,7 +515,8 @@ def resolve_read_target(
         )
     if ":" not in target:
         expected_local = _expected_local_target(
-            target, session_root=explicit_session_root
+            target,
+            session_root=explicit_session_root,
         )
         if expected_local is not None:
             return ReadTarget(

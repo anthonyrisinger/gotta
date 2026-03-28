@@ -1,4 +1,4 @@
-"""Shared locator-routing helpers for provider-owned read delegation."""
+"""Provider-owned locator routing helpers."""
 
 from __future__ import annotations
 
