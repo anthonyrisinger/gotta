@@ -582,6 +582,17 @@ def test_read_remote_url_reports_truncation_and_still_applies_head(
     assert "truncated remote body" in captured.err
 
 
+def test_read_explicit_stdin_target_supports_bounded_view(monkeypatch, capsys) -> None:
+    stdin = io.TextIOWrapper(io.BytesIO(b"line 1\nline 2\n"), encoding="utf-8")
+    monkeypatch.setattr(read.sys, "stdin", stdin)
+
+    assert read.main(["-", "--head", "1"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "line 1\n"
+    assert captured.err == ""
+
+
 def test_read_view_shaping_makes_routed_targets_non_materializing() -> None:
     resolved = resolve_read.resolve_read_target(
         ["https://github.com/acme/widgets", "--head", "3"]

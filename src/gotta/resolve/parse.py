@@ -123,7 +123,10 @@ def parse_args(argv: list[str]) -> ReadRequest:
     if routed is not None:
         routed_plugin, target, routed_argv = routed
     elif residual:
-        flagged = next((token for token in residual if token.startswith("-")), "")
+        flagged = next(
+            (token for token in residual if token != "-" and token.startswith("-")),
+            "",
+        )
         if flagged:
             parser.error(f"unrecognized arguments: {flagged}")
         target = (

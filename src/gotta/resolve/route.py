@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from gotta.builtin import PluginSpec, available_plugins, get_plugin
+from gotta.content.model import CommonOptions
+from gotta.content.path import sanitize_name
+from gotta.resolve.model import ReadRequest, ReadTarget
 import shlex
 import urllib.parse
 
@@ -91,6 +96,68 @@ def discover_plugin_route(target: str) -> tuple[str, list[str]] | None:
         if argv is not None:
             return plugin.name, argv
     return None
+
+
+def _resolved_routed_target(
+    request: ReadRequest,
+    target: str,
+    plugin: str,
+    plugin_argv: list[str],
+    options: CommonOptions | Any,
+    *,
+    save_as: str,
+) -> ReadTarget:
+    spec = get_plugin(plugin)
+    canonical = (
+        spec.canonical_locator(plugin_argv)
+        if spec and spec.canonical_locator
+        else target
+    )
+    preferred = save_as or (
+        spec.preferred_name(plugin_argv, options)
+        if spec and spec.preferred_name
+        else f"{sanitize_name(target) or plugin}.txt"
+    )
+    return ReadTarget(
+        request=request,
+        kind="routed",
+        path=None,
+        routed_plugin=plugin,
+        routed_argv=plugin_argv,
+        canonical_locator=canonical,
+        preferred_name=preferred,
+        should_materialize=True,
+    )
+
+
+def resolve_routed_target(
+    request: ReadRequest,
+    target: str,
+    options: CommonOptions | Any,
+    *,
+    save_as: str,
+) -> ReadTarget | None:
+    if request.routed_plugin and request.routed_argv:
+        return _resolved_routed_target(
+            request,
+            target,
+            request.routed_plugin,
+            list(request.routed_argv),
+            options,
+            save_as=save_as,
+        )
+    routed = discover_plugin_route(target)
+    if routed is None:
+        return None
+    plugin, plugin_argv = routed
+    return _resolved_routed_target(
+        request,
+        target,
+        plugin,
+        plugin_argv,
+        options,
+        save_as=save_as,
+    )
 
 
 def partition_routed_target_tokens(
