@@ -16,7 +16,7 @@ from gotta.actor import (
 )
 from gotta import topology
 from gotta.content.path import sh_quote
-from gotta.session.status.payload import _actor_status_payload
+from gotta.session.status.payload.main import _actor_status_payload
 
 
 def die(message: str, code: int = 2) -> int:

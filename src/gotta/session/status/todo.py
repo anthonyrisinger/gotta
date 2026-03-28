@@ -8,7 +8,8 @@ from gotta.todo import ensure_managed_todo_item, set_todo_checked, todo_items
 from gotta.session.registry import _actor_label, _normalize_actor_name
 from gotta.session.scope import _selected_actor_ids
 from gotta.session.status.marker import FINAL_SIGNOFF_MARKER, _actor_todo_marker
-from gotta.session.status.payload import ACTOR_TERMINAL_STATUS, _actor_status_payload
+from gotta.session.status.payload.main import _actor_status_payload
+from gotta.session.status.payload.value import ACTOR_TERMINAL_STATUS
 
 
 def _ensure_actor_todo_items(work_dir: Path, actor_name: str) -> None:

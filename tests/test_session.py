@@ -37,9 +37,9 @@ from gotta.notes import (
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
-import gotta.session.status.payload as session_status_payload
+import gotta.session.status.payload.runtime as session_status_runtime
 from gotta.session.status.blocker import _actor_launch_blockers
-from gotta.session.status.payload import _actor_status_payload
+from gotta.session.status.payload.main import _actor_status_payload
 from gotta import todo as session_todo
 from gotta.plugins import goal
 from gotta.plugins import logs
@@ -1614,7 +1614,7 @@ def test_actor_status_flags_live_retry_loop_as_broken_and_teaches_shutdown(
     assert "Record `gotta actor fail" in payload["next_step"]
     assert "then stop the runtime with `gotta actor stop" in payload["next_step"]
 
-    monkeypatch.setattr(session_status_payload.os, "kill", lambda *_args: None)
+    monkeypatch.setattr(session_status_runtime.os, "kill", lambda *_args: None)
     assert actor.main(["status", claude, "--session", str(root)]) == 0
     output = capsys.readouterr().out
     assert "[runtime broken]" in output
@@ -1655,6 +1655,57 @@ def test_actor_status_does_not_flag_retry_loop_broken_while_stdout_is_live(
             "runtime_issue_count": 3,
             "runtime_stdout_at": fresh_stream,
             "runtime_stderr_at": fresh_stream,
+        },
+    )
+    append_actor_note(
+        root,
+        claude,
+        message=actor.LAUNCHER_HEARTBEAT_NOTE,
+        author=actor.LAUNCHER_AUTHOR,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = _actor_status_payload(root, claude)
+
+    assert payload["voice"] == "setup"
+    assert payload["notes_status"] == "setup"
+    assert payload["runtime_broken"] is False
+    assert "Record `gotta actor fail" not in payload["next_step"]
+    assert "then stop the runtime with `gotta actor stop" not in payload["next_step"]
+
+
+def test_actor_status_does_not_flag_retry_loop_broken_from_stale_stderr_only(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    stale_started = (datetime.now(tz=UTC) - timedelta(seconds=600)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    fresh_heartbeat = (datetime.now(tz=UTC) - timedelta(seconds=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    stale_stderr = (datetime.now(tz=UTC) - timedelta(hours=3)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    session_registry._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "pid": os.getpid(),
+            "started_at": stale_started,
+            "heartbeat_at": fresh_heartbeat,
+            "runtime_issue_kind": actor.RUNTIME_UPSTREAM_RETRY_LOOP_KIND,
+            "runtime_issue_summary": (
+                "upstream provider is still failing; the actor runtime has retried "
+                "3 times without producing actor-visible progress"
+            ),
+            "runtime_issue_count": 3,
+            "runtime_stderr_at": stale_stderr,
         },
     )
     append_actor_note(

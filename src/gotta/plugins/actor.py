@@ -51,7 +51,7 @@ from gotta.session.registry import (
 )
 from gotta.session.status.bind import _bind_actor
 from gotta.session.status.blocker import _actor_launch_blockers
-from gotta.session.status.payload import _actor_status_payload
+from gotta.session.status.payload.main import _actor_status_payload
 from gotta.session.status.todo import _sync_actor_todo_state
 
 

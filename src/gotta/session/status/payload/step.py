@@ -1,256 +1,34 @@
-"""Actor lifecycle status payload synthesis."""
+"""Next-step synthesis for actor status payloads."""
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-import time
-
-from gotta.actor import requested_disposition_label
-from gotta.compat import datetime
-from gotta.notes import actor_notes_status, actor_voice
-from gotta.session.activity.summary import (
-    _actor_evidence_note,
-    _actor_evidence_summary,
-    _actor_note_check_summary,
-    _actor_note_summary,
-    _actor_recent_activity,
-)
-from gotta.session.registry import (
-    ACTOR_STALL_SECONDS,
-    _actor_events_path,
-    _actor_label,
-    _actor_session_dir,
-    _actor_state_path,
-    _normalize_actor_name,
-    _read_actor_state,
-    _resolve_bound_actor_name,
-)
-from gotta.session.status.progress import _actor_progress_summary
+from gotta.session.registry import _normalize_actor_name
+from gotta.session.status.payload.value import ACTOR_TERMINAL_STATUS, int_value
 
 
-ACTOR_RUNNING_STATUS = {
-    "starting",
-    "active",
-    "closing",
-    "producing_evidence",
-}
-
-ACTOR_TERMINAL_STATUS = {
-    "completed",
-    "failed",
-    "incomplete",
-    "rejected",
-    "signed_off",
-}
-
-ACTOR_STARTUP_GRACE_SECONDS = 30
-
-
-def _int_value(value: object, *, default: int = 0) -> int:
-    try:
-        return int(str(value or default))
-    except ValueError:
-        return default
-
-
-def _lifecycle_entries(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, dict)]
-
-
-def _iso_age_seconds(value: object) -> float | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return time.time() - parsed.timestamp()
-
-
-def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
-    actor_name = _resolve_bound_actor_name(work_dir, actor_name)
-    state = _read_actor_state(work_dir, actor_name)
-    status = str(state.get("status") or "pending")
-    requested_status = str(state.get("requested_status") or "")
-    requested_summary = str(state.get("requested_summary") or "")
-    requested_label = requested_disposition_label(state)
-    heartbeat_at = str(state.get("heartbeat_at") or "")
-    started_at = str(state.get("started_at") or "")
-    derived_status = status
-    heartbeat_stale = False
-    runtime_live: bool | None = None
-    try:
-        pid = _int_value(state.get("pid"))
-    except (TypeError, ValueError):
-        pid = 0
-    if pid > 0:
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            runtime_live = False
-        else:
-            runtime_live = True
-    if (
-        runtime_live is None
-        and pid <= 0
-        and (
-            str(state.get("finished_at") or "").strip()
-            or state.get("exit_code") is not None
-        )
-    ):
-        runtime_live = False
-    started_age_seconds = _iso_age_seconds(started_at)
-    if status in {"starting", "active"} and heartbeat_at:
-        heartbeat_age_seconds = _iso_age_seconds(heartbeat_at)
-        if heartbeat_age_seconds is not None:
-            state["heartbeat_age_seconds"] = round(heartbeat_age_seconds, 1)
-            if heartbeat_age_seconds > ACTOR_STALL_SECONDS:
-                derived_status = "stalled"
-                heartbeat_stale = True
-    elif status in {"starting", "active"} and not heartbeat_at:
-        if (
-            started_age_seconds is not None
-            and started_age_seconds > ACTOR_STALL_SECONDS
-        ):
-            derived_status = "stalled"
-            heartbeat_stale = True
-    signoff_at = str(state.get("signoff_at") or "")
-    actor_dir = _actor_session_dir(work_dir, actor_name)
-    voice = actor_voice(work_dir, _normalize_actor_name(actor_name))
-    notes_status = actor_notes_status(work_dir, _normalize_actor_name(actor_name))
-    notes_ready = notes_status == "present"
-    evidence = _actor_evidence_summary(work_dir, actor_name)
-    evidence_note = _actor_evidence_note(evidence)
-    recent_activity = _actor_recent_activity(work_dir, actor_name)
-    note_summary = _actor_note_summary(work_dir, actor_name)
-    note_check_summary = _actor_note_check_summary(work_dir, actor_name)
-    progress = _actor_progress_summary(work_dir, actor_name)
-    lifecycle_entries = _lifecycle_entries(recent_activity.get("recent_lifecycle"))
-    if (
-        lifecycle_entries
-        and str(lifecycle_entries[0].get("event") or "") == "runtime_exit"
-    ):
-        lifecycle_detail = str(lifecycle_entries[0].get("detail") or "")
-        request_labels = {
-            "runtime_stop_requested": "runtime stop signal",
-            "failed_requested": "failure request",
-            "signoff_requested": "sign-off request",
-            "complete_requested": "completion request",
-        }
-        honored = next(
-            (
-                request_labels.get(str(item.get("event") or ""))
-                for item in lifecycle_entries[1:]
-                if str(item.get("event") or "") in request_labels
-            ),
-            "",
-        )
-        if honored and "code 0" in lifecycle_detail:
-            lifecycle_entries[0]["summary"] = (
-                f"runtime exit: actor process exited cleanly after honoring {honored}"
-            )
-    if lifecycle_entries:
-        recent_activity["recent_lifecycle"] = lifecycle_entries
-        recent_activity["last_lifecycle_at"] = str(
-            lifecycle_entries[0].get("timestamp") or ""
-        )
-        recent_activity["last_lifecycle_summary"] = str(
-            lifecycle_entries[0].get("summary") or ""
-        )
-    evidence_live = _int_value(evidence.get("artifact_count")) > 0
-    if signoff_at:
-        derived_status = "signed_off"
-    runtime_issue_kind = str(state.get("runtime_issue_kind") or "").strip()
-    runtime_issue_summary = str(state.get("runtime_issue_summary") or "").strip()
-    runtime_issue_count = _int_value(state.get("runtime_issue_count"))
-    runtime_stdout_at = str(state.get("runtime_stdout_at") or "").strip()
-    runtime_stderr_at = str(state.get("runtime_stderr_at") or "").strip()
-    runtime_stop_signal = str(state.get("runtime_stop_signal") or "").strip()
-    runtime_stop_signal_at = str(state.get("runtime_stop_signal_at") or "").strip()
-    runtime_note = ""
-    if runtime_stop_signal_at and runtime_live:
-        runtime_note = (
-            f" Shutdown signal `{runtime_stop_signal or 'SIGTERM'}` was already sent at "
-            f"{runtime_stop_signal_at}. Wait for runtime exit, then record the "
-            "authoritative disposition explicitly."
-        )
-    if status in ACTOR_RUNNING_STATUS and runtime_live is False:
-        if requested_status in {"completed", "failed", "signed_off"}:
-            derived_status = requested_status
-        else:
-            derived_status = "awaiting_disposition"
-        runtime_note = (
-            " Actor runtime is no longer live, so this is awaiting an explicit "
-            "completion, failure, or sign-off record."
-        )
-    if derived_status in {"starting", "active"} and evidence_live:
-        derived_status = "producing_evidence"
-    if requested_status and derived_status in {
-        "starting",
-        "active",
-        "producing_evidence",
-    }:
-        derived_status = "closing"
-    still_running = derived_status in ACTOR_RUNNING_STATUS and not heartbeat_stale
-    request_note = ""
-    if requested_status and derived_status not in ACTOR_TERMINAL_STATUS:
-        if derived_status == "stalled":
-            request_note = (
-                f" Operator already requested `{requested_label}`"
-                + (f" ({requested_summary})." if requested_summary else ".")
-                + " Because the heartbeat is stale, you can settle now with "
-                f"`gotta actor settle {_normalize_actor_name(actor_name)}`."
-            )
-        else:
-            request_note = (
-                f" Operator already requested `{requested_label}`"
-                + (f" ({requested_summary})." if requested_summary else ".")
-                + " That pending disposition will become authoritative automatically "
-                "when the actor runtime exits."
-            )
-    voice_missing = voice == "missing"
-    voice_setup = voice == "setup"
+def actor_next_step(actor_name: str, payload: dict[str, object]) -> str:
+    normalized_actor = _normalize_actor_name(actor_name)
+    derived_status = str(payload.get("status") or "")
+    requested_status = str(payload.get("requested_status") or "")
+    requested_label = str(payload.get("requested_label") or "")
+    notes_ready = bool(payload.get("notes_ready"))
+    evidence_live = bool(payload.get("evidence_live"))
+    evidence_note = str(payload.get("evidence_note") or "")
+    request_note = str(payload.get("request_note") or "")
+    runtime_note = str(payload.get("runtime_note") or "")
+    voice = str(payload.get("voice") or "missing")
     voice_pulse = voice == "pulse"
-    progress_stale = bool(progress.get("progress_stale"))
-    progress_kind = str(progress.get("progress_kind") or "none").strip()
-    last_note_at = str(note_summary.get("last_note_at") or "")
-    last_artifact_at = str(evidence.get("last_artifact_at") or "")
-    note_checks_since_update = _int_value(
-        note_check_summary.get("note_checks_since_update")
-    )
-    needs_note_refresh = bool(
-        evidence_live
-        and last_artifact_at
-        and (not last_note_at or last_artifact_at > last_note_at)
-    )
-    low_signal_progress = (
-        bool(runtime_live)
-        and progress_stale
-        and _int_value(evidence.get("artifact_count")) == 0
-    )
-    stdout_age_seconds = _iso_age_seconds(runtime_stdout_at)
-    stderr_age_seconds = _iso_age_seconds(runtime_stderr_at)
-    stdout_quiet = (
-        stdout_age_seconds is None or stdout_age_seconds >= ACTOR_STARTUP_GRACE_SECONDS
-    )
-    setup_only_live = (
-        bool(runtime_live)
-        and voice in {"missing", "setup"}
-        and progress_kind == "none"
-        and not evidence_live
-    )
-    runtime_broken = (
-        setup_only_live
-        and runtime_issue_kind == "upstream_retry_loop"
-        and runtime_issue_count >= 2
-        and stdout_quiet
-        and stderr_age_seconds is not None
-        and (started_age_seconds or 0) >= ACTOR_STARTUP_GRACE_SECONDS
-    )
+    voice_setup = voice == "setup"
+    voice_missing = voice == "missing"
+    needs_note_refresh = bool(payload.get("needs_note_refresh"))
+    runtime_broken = bool(payload.get("runtime_broken"))
+    runtime_stop_signal_at = str(payload.get("runtime_stop_signal_at") or "")
+    runtime_stop_signal = str(payload.get("runtime_stop_signal") or "SIGTERM")
+    runtime_issue_summary = str(payload.get("runtime_issue_summary") or "")
+    note_checks_since_update = int_value(payload.get("note_checks_since_update"))
+    last_note_at = str(payload.get("last_note_at") or "")
+    low_signal_progress = bool(payload.get("low_signal_progress"))
+
     if runtime_broken:
         issue_clause = (
             runtime_issue_summary + " "
@@ -277,11 +55,11 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 + issue_clause
                 + "This is not normal warmup. "
                 + (
-                    f"Stop the runtime with `gotta actor stop {_normalize_actor_name(actor_name)} --summary ...`."
+                    f"Stop the runtime with `gotta actor stop {normalized_actor} --summary ...`."
                     + f" Pending `{requested_label}` disposition will remain authoritative when the runtime exits."
                     if requested_status
-                    else f"Record `gotta actor fail {_normalize_actor_name(actor_name)} --summary ...` now, "
-                    + f"then stop the runtime with `gotta actor stop {_normalize_actor_name(actor_name)} --summary ...`."
+                    else f"Record `gotta actor fail {normalized_actor} --summary ...` now, "
+                    + f"then stop the runtime with `gotta actor stop {normalized_actor} --summary ...`."
                 )
             )
     elif derived_status == "closing":
@@ -340,7 +118,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 "after the last short note. "
                 + (evidence_note + " " if evidence_note else "")
                 + "Land a short note now so the latest evidence wave has durable actor narration, "
-                f"then recheck `gotta actor status {_normalize_actor_name(actor_name)}` shortly."
+                f"then recheck `gotta actor status {normalized_actor}` shortly."
                 + request_note
                 + runtime_note
             )
@@ -349,7 +127,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 "actor is still active and producing evidence artifacts. "
                 + (evidence_note + " " if evidence_note else "")
                 + "Use `gotta notes` for live actor visibility; recheck `gotta actor status "
-                f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
+                f"{normalized_actor}` shortly before closing the actor out."
                 + request_note
                 + runtime_note
             )
@@ -370,7 +148,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 "but actor voice has not landed yet. "
                 + (evidence_note + " " if evidence_note else "")
                 + "Append a short actor-authored note before requesting completion or sign-off, "
-                f"then recheck `gotta actor status {_normalize_actor_name(actor_name)}` shortly."
+                f"then recheck `gotta actor status {normalized_actor}` shortly."
                 + request_note
                 + runtime_note
             )
@@ -380,7 +158,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
                 "missing. "
                 + (evidence_note + " " if evidence_note else "")
                 + "Append a short actor-authored note before requesting completion or sign-off, "
-                f"then recheck `gotta actor status {_normalize_actor_name(actor_name)}` shortly."
+                f"then recheck `gotta actor status {normalized_actor}` shortly."
                 + request_note
                 + runtime_note
             )
@@ -399,7 +177,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         next_step = (
             "actor is still active and actor voice is present. "
             "Use `gotta notes` for live actor visibility; recheck `gotta actor status "
-            f"{_normalize_actor_name(actor_name)}` shortly before closing the actor out."
+            f"{normalized_actor}` shortly before closing the actor out."
             + request_note
             + runtime_note
         )
@@ -433,7 +211,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             "actor runtime is no longer running, but no durable terminal lifecycle was recorded yet. "
             + (evidence_note + " " if evidence_note else "")
             + "Inspect `gotta notes` plus the shared evidence web, then settle with "
-            f"`gotta actor settle {_normalize_actor_name(actor_name)}`"
+            f"`gotta actor settle {normalized_actor}`"
             + (
                 f" to honor the pending `{requested_label}` request."
                 if requested_status
@@ -459,7 +237,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             next_step = (
                 "actor run is complete; inspect `gotta notes` plus the shared evidence web, then record "
                 "durable sign-off with "
-                f"`gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
+                f"`gotta actor signoff {normalized_actor} --summary ...`."
             )
         elif voice_pulse:
             next_step = (
@@ -503,7 +281,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             + (evidence_note + " " if evidence_note else "")
             + "Keep landing notes as the session evolves; when this actor's contribution is "
             "materially complete, record the authoritative close-out intentionally with "
-            f"`gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
+            f"`gotta actor signoff {normalized_actor} --summary ...`."
         )
     elif derived_status in {"pending", "bound"} and voice_pulse:
         next_step = (
@@ -518,7 +296,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         next_step = (
             "actor already has actor-authored narration but no shared evidence artifacts yet. "
             "Continue retrieval if more evidence should land, or close out intentionally once "
-            f"the narrative is complete with `gotta actor signoff {_normalize_actor_name(actor_name)} --summary ...`."
+            f"the narrative is complete with `gotta actor signoff {normalized_actor} --summary ...`."
         )
     elif derived_status in {"pending", "bound"} and voice_setup:
         next_step = (
@@ -560,40 +338,4 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         )
     if pulse_next_step:
         next_step = f"{pulse_next_step} {next_step}".strip()
-    return {
-        **state,
-        "label": _actor_label(actor_name, work_dir=work_dir),
-        "status": derived_status,
-        "state_path": str(_actor_state_path(work_dir, actor_name)),
-        "events_path": str(_actor_events_path(work_dir, actor_name)),
-        "actor_dir": str(actor_dir),
-        "notes_status": notes_status,
-        "notes_ready": notes_ready,
-        "voice": voice,
-        "evidence_live": bool(evidence_live),
-        "evidence_note": evidence_note,
-        "requested_status": requested_status,
-        "requested_summary": requested_summary,
-        "requested_label": requested_label,
-        "requested_pending": bool(
-            requested_status and derived_status not in ACTOR_TERMINAL_STATUS
-        ),
-        "still_running": still_running,
-        "runtime_live": runtime_live,
-        "runtime_issue_kind": runtime_issue_kind,
-        "runtime_issue_summary": runtime_issue_summary,
-        "runtime_issue_count": runtime_issue_count,
-        "runtime_broken": runtime_broken,
-        "runtime_stop_signal": runtime_stop_signal,
-        "runtime_stop_signal_at": runtime_stop_signal_at,
-        "review_ready": bool(
-            derived_status in {"completed", "signed_off"}
-            and (notes_ready or evidence_live)
-        ),
-        "next_step": next_step,
-        **note_summary,
-        **note_check_summary,
-        **progress,
-        **recent_activity,
-        **evidence,
-    }
+    return next_step

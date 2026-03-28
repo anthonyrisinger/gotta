@@ -27,7 +27,7 @@ from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
-from gotta.session.status.payload import _actor_status_payload
+from gotta.session.status.payload.main import _actor_status_payload
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
