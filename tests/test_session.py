@@ -42,8 +42,8 @@ from gotta.session.status.blocker import _actor_launch_blockers
 from gotta.session.status.payload.main import _actor_status_payload
 from gotta import todo as session_todo
 from gotta.plugins import goal
-from gotta.plugins import logs
-from gotta.plugins import notes
+from gotta.plugins.logs import main as logs
+from gotta.plugins.notes import main as notes
 from gotta.plugins import actor
 import gotta.plugins.session.analyze.overview as session_analyze_overview
 import gotta.plugins.session.analyze.render as session_analyze_render
@@ -2236,7 +2236,7 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
     dirs = content_model.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
     session_registry._write_actor_state(root, actor_name, {"status": "pending"})
-    notes.append_actor_note(
+    append_actor_note(
         root,
         actor_name,
         message="Captured the first durable summary.",
@@ -2473,7 +2473,7 @@ def test_actor_status_ignores_foreign_note_for_voice(tmp_path: Path, capsys) -> 
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    notes.append_actor_note(
+    append_actor_note(
         root,
         claude,
         message="foreign pulse",
