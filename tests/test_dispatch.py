@@ -10,8 +10,10 @@ from types import SimpleNamespace
 import pytest
 
 from gotta import builtin as plugin_api
-from gotta import main as cli
 from gotta import content
+import gotta.cli.argv as cli_argv
+import gotta.cli.entry as cli
+import gotta.cli.notice as cli_notice
 import gotta.dispatch.budget as dispatch_budget
 import gotta.dispatch.main as dispatch
 import gotta.dispatch.materialize as dispatch_materialize
@@ -531,7 +533,6 @@ def test_root_help_exposes_session_aware_read_storage_contract(
     capsys, monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", tmp_path / "session")
-    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", tmp_path / "session")
 
     assert cli.main(["--help"]) == 0
 
@@ -1064,13 +1065,13 @@ def test_broken_external_ask_entry_points_do_not_break_help_all(
 def test_cli_main_exits_zero_on_broken_pipe(monkeypatch) -> None:
     calls: list[str] = []
 
-    monkeypatch.setattr(cli, "available_plugins", lambda: ["read"])
-    monkeypatch.setattr(cli, "_silence_stdout", lambda: calls.append("silenced"))
+    monkeypatch.setattr(cli_argv, "available_plugins", lambda: ["read"])
+    monkeypatch.setattr(cli_notice, "_silence_stdout", lambda: calls.append("silenced"))
 
     def raise_broken_pipe(plugin: str, argv: list[str]) -> int:
         raise BrokenPipeError()
 
-    monkeypatch.setattr(cli, "run_plugin", raise_broken_pipe)
+    monkeypatch.setattr(cli_argv, "run_plugin", raise_broken_pipe)
 
     assert cli.main(["read", "README.md"]) == 0
     assert calls == ["silenced"]

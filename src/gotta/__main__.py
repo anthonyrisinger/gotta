@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gotta.main import main
+from gotta.cli.entry import main
 
 
 if __name__ == "__main__":

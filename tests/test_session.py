@@ -11,13 +11,14 @@ import pytest
 from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
 from gotta.compat import UTC, datetime
 from gotta import content
+import gotta.cli.bind as cli_bind
+import gotta.cli.entry as cli
 import gotta.dispatch.main as dispatch
 from gotta.friction import oops_records
 import gotta.lead.cache as lead_cache
 import gotta.lead.extract as lead_extract
 import gotta.lead.model as lead_model
 from gotta.logs import append_log_record, log_records, render_logs_markdown
-from gotta import main as cli
 from gotta import stored
 from gotta import topology
 from gotta.actor import SESSION_ACTOR_ENV
@@ -46,7 +47,6 @@ from gotta.plugins import want
 def local_session_registry(tmp_path: Path, monkeypatch) -> None:
     registry = tmp_path / "sessions"
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
-    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.delenv(content.SESSION_ENV, raising=False)
     monkeypatch.delenv(content.CONTENT_ENV, raising=False)
     monkeypatch.delenv(content.SESSION_REPO_ENV, raising=False)
@@ -2284,7 +2284,6 @@ def test_session_bind_can_switch_active_session(
 ) -> None:
     registry = tmp_path / "sessions"
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
-    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["session", "bind", "legacy-mission"]) == 0
@@ -2292,9 +2291,9 @@ def test_session_bind_can_switch_active_session(
         line.split("\t", 1) for line in capsys.readouterr().out.strip().splitlines()
     )
     assert payload["session"] == "legacy-mission"
-    assert payload["actor"] == cli._session_token("thread-123")
+    assert payload["actor"] == cli_bind._session_token("thread-123")
     assert payload["root"].endswith(
-        f"/sessions/legacy-mission/actors/{cli._session_token('thread-123')}"
+        f"/sessions/legacy-mission/actors/{cli_bind._session_token('thread-123')}"
     )
 
 
@@ -2303,7 +2302,6 @@ def test_session_bind_without_id_returns_to_private_default(
 ) -> None:
     registry = tmp_path / "sessions"
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
-    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["session", "bind", "legacy-mission"]) == 0
@@ -2313,7 +2311,7 @@ def test_session_bind_without_id_returns_to_private_default(
     payload = dict(
         line.split("\t", 1) for line in capsys.readouterr().out.strip().splitlines()
     )
-    fingerprint = cli._session_token("thread-123")
+    fingerprint = cli_bind._session_token("thread-123")
     assert payload["session"] == fingerprint
     assert payload["actor"] == fingerprint
     assert payload["root"].endswith(f"/sessions/{fingerprint}/actors/{fingerprint}")
@@ -2324,7 +2322,6 @@ def test_actor_bind_uses_current_bound_shared_session(
 ) -> None:
     registry = tmp_path / "sessions"
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
-    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["session", "bind", "retry-review"]) == 0
@@ -2332,7 +2329,7 @@ def test_actor_bind_uses_current_bound_shared_session(
 
     assert cli.main(["actor", "bind", "Claude"]) == 0
     output = capsys.readouterr().out
-    fingerprint = cli._session_token("thread-123")
+    fingerprint = cli_bind._session_token("thread-123")
     active_root = registry / "retry-review" / "actors" / fingerprint
     claude = _actor_id(registry / "retry-review", "claude")
     claude_root = registry / "retry-review" / "actors" / claude
@@ -2345,7 +2342,7 @@ def test_actor_bind_uses_current_bound_shared_session(
     assert os.readlink(claude_root / "content") == "../../content"
     assert not (claude_root / "session").exists()
     assert not (
-        registry / cli._session_token("thread-123") / "actors" / claude
+        registry / cli_bind._session_token("thread-123") / "actors" / claude
     ).exists()
 
 

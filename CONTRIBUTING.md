@@ -106,7 +106,7 @@ domain-specific surfaces.
 ```
 gotta jira search "retry budget"
   │
-  ├─ main.py          resolve fingerprint, bind/discover session, detect repo
+  ├─ cli/             normalize argv, bind/discover session, hydrate context
   ├─ builtin.py        discover plugin via entry points (gotta.plugins group)
   ├─ dispatch/main.py   orchestrate plugin runtime over dispatch phases
   ├─ resolve/           resolve read/search targets and invocation metadata
@@ -118,8 +118,11 @@ gotta jira search "retry budget"
 
 Core infrastructure:
 
-- **`main.py`** — CLI entrypoint. Normalizes help aliases, resolves session
-  context, dispatches to plugin runners, shows actor stop warnings.
+- **`cli/`** — CLI kernel package. `entry.py` owns top-level orchestration,
+  `argv.py` owns help/version and plugin extraction, `bind.py` owns session
+  root creation/binding, `select.py` owns root-selection policy, `env.py`
+  owns session environment hydration, and `notice.py` owns operator-facing
+  receipts and warnings.
 - **`builtin.py`** — Plugin contract (`PluginSpec`), discovery via setuptools
   entry points, core plugin factory registrations. Plugins declare a runner,
   session access mode, and optional routing/materialization/naming callbacks.
@@ -156,7 +159,7 @@ The hottest responsibility concentrations are currently:
 - `src/gotta/dispatch/`
 - `src/gotta/resolve/`
 - `src/gotta/lead/`
-- `src/gotta/main.py`
+- `src/gotta/cli/`
 
 Treat those as supernodes. Read them by function and contract, not as flat
 files. `radon`, `lizard`, `pyan3`, and `pyright` all converge on the same

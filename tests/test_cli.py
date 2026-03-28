@@ -10,7 +10,9 @@ import pytest
 from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta import builtin
 from gotta import content
-from gotta import main as cli
+import gotta.cli.argv as cli_argv
+import gotta.cli.bind as cli_bind
+import gotta.cli.entry as cli
 from gotta.notes import append_actor_note
 from gotta.capture import Capture
 from gotta.plugins import github
@@ -27,13 +29,12 @@ def _last_stderr_json(stderr: str) -> dict[str, object]:
 
 def _set_default_session_root(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", root)
-    monkeypatch.setattr(cli, "DEFAULT_SESSION_ROOT", root)
 
 
 def _grouped_root(
     registry: Path, context_id: str, *, identity: str | None = None
 ) -> Path:
-    fingerprint = cli._session_token(context_id)
+    fingerprint = cli_bind._session_token(context_id)
     return registry / fingerprint / "actors" / (identity or fingerprint)
 
 
@@ -65,7 +66,7 @@ def test_main_version_is_top_level_and_sessionless(
     assert cli.main(argv) == 0
     captured = capsys.readouterr()
 
-    assert captured.out.strip() == f"gotta {cli._gotta_version()}"
+    assert captured.out.strip() == f"gotta {cli_argv._gotta_version()}"
     assert captured.err == ""
     assert not (tmp_path / "session").exists()
 
@@ -86,7 +87,7 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["todo", "append", "first task"]) == 0
@@ -94,9 +95,9 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
     session_root = Path(seen[-1][1])
     assert session_root.parent.name == "actors"
     assert session_root.parent.parent == (
-        tmp_path / "session" / cli._session_token("thread-123")
+        tmp_path / "session" / cli_bind._session_token("thread-123")
     )
-    assert session_root.name == cli._session_token("thread-123")
+    assert session_root.name == cli_bind._session_token("thread-123")
     assert (session_root / "state" / "env").exists()
     assert (session_root / "content").is_dir()
     assert (session_root / "content").is_symlink()
@@ -110,7 +111,7 @@ def test_main_creates_and_reuses_context_bound_session_for_write_surfaces(
         "same-context fresh-process commands should resolve here automatically"
         in first_err
     )
-    assert f"`gotta session bind {cli._session_token('thread-123')}`" in first_err
+    assert f"`gotta session bind {cli_bind._session_token('thread-123')}`" in first_err
     assert "`--session <shared-session-id>`" in first_err
 
     assert cli.main(["todo", "append", "second task"]) == 0
@@ -140,7 +141,7 @@ def test_main_non_session_provider_surfaces_do_not_create_session(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(argv) == 0
@@ -180,7 +181,7 @@ def test_main_stable_fingerprint_read_retrieval_auto_bootstraps_session(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.delenv("TERM_SESSION_ID", raising=False)
     monkeypatch.setenv(env_name, context_id)
@@ -245,7 +246,7 @@ def test_main_fallback_fingerprint_read_retrieval_remains_sessionless(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.delenv("TERM_SESSION_ID", raising=False)
     monkeypatch.setenv("SHELL", "/bin/zsh")
@@ -269,7 +270,7 @@ def test_main_stable_fingerprint_provider_search_auto_bootstraps_session(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["github", "search", "platform"]) == 0
@@ -323,7 +324,7 @@ def test_main_ambient_provider_search_materializes_discovery_in_bound_session(
     ]
     assert entries[-1]["plugin"] == "github"
     assert entries[-1]["artifact_kind"] == "discovery"
-    assert entries[-1]["actor"] == cli._session_token("thread-123")
+    assert entries[-1]["actor"] == cli_bind._session_token("thread-123")
 
 
 def test_main_read_routed_provider_search_preserves_discovery_artifact_kind(
@@ -677,7 +678,7 @@ def test_main_dispatches_direct_plugin_args_inside_bound_session(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["todo", "append", "real task"]) == 0
@@ -710,7 +711,7 @@ def test_main_read_only_session_surfaces_auto_bootstrap_for_stable_fingerprint(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(argv) == 0
@@ -746,7 +747,7 @@ def test_main_read_only_session_surfaces_stay_sessionless_for_fallback_fingerpri
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.delenv("TERM_SESSION_ID", raising=False)
     monkeypatch.setenv("SHELL", "/bin/zsh")
@@ -770,7 +771,7 @@ def test_main_stable_fingerprint_does_not_replace_explicit_session_target(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     explicit_root = tmp_path / "other-session"
@@ -848,7 +849,7 @@ def test_main_preserves_session_subcommands(tmp_path: Path, monkeypatch) -> None
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["session", "init"]) == 0
@@ -879,7 +880,7 @@ def test_main_preserves_read_option_ordering(tmp_path: Path, monkeypatch) -> Non
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["read", "--head", "120", "README.md"]) == 0
@@ -896,7 +897,7 @@ def test_main_preserves_todo_subcommands(tmp_path: Path, monkeypatch) -> None:
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["todo", "append", "real task"]) == 0
@@ -914,7 +915,7 @@ def test_main_help_paths_do_not_create_session(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
 
     assert cli.main(["--help"]) == 0
     assert cli.main(["--help-all"]) == 0
@@ -1016,7 +1017,7 @@ def test_main_cross_actor_note_append_preserves_acting_actor(
     assert cli.main(["notes", "append", "cross-actor note", "--actor", "claude"]) == 0
     capsys.readouterr()
 
-    fingerprint = cli._session_token("thread-123")
+    fingerprint = cli_bind._session_token("thread-123")
     claude = _actor_id(registry / "demo", "claude")
     claude_root = registry / "demo" / "actors" / claude
     notes_records = [
@@ -1069,7 +1070,7 @@ def test_main_explicit_session_read_only_surfaces_do_not_scaffold_missing_actor_
         assert cli.main(["actor", "bind", "Claude"]) == 0
         capsys.readouterr()
 
-    probe_fingerprint = cli._session_token("thread-probe")
+    probe_fingerprint = cli_bind._session_token("thread-probe")
     probe_root = registry / "retry-review" / "actors" / probe_fingerprint
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-probe")
 
@@ -1107,7 +1108,7 @@ def test_main_actor_status_prefers_sourced_session_env_over_implicit_context_ids
     payload = json.loads(captured.out)
     assert "created a new gotta session" not in captured.err
     assert claude in payload
-    assert not (registry / cli._session_token("conflict-thread")).exists()
+    assert not (registry / cli_bind._session_token("conflict-thread")).exists()
 
 
 def test_main_failed_session_init_seed_does_not_leave_half_session(
@@ -1153,8 +1154,8 @@ def test_main_explicit_actor_target_resolves_grouped_session(
     capsys.readouterr()
     assert cli.main(["actor", "bind", "Claude"]) == 0
     capsys.readouterr()
-    claude = _actor_id(registry / cli._session_token("thread-123"), "claude")
-    actor_root = registry / cli._session_token("thread-123") / "actors" / claude
+    claude = _actor_id(registry / cli_bind._session_token("thread-123"), "claude")
+    actor_root = registry / cli_bind._session_token("thread-123") / "actors" / claude
 
     assert cli.main(["session", "show", "--actor", "claude"]) == 0
     assert capsys.readouterr().out.strip() == str(actor_root.resolve())
@@ -1171,7 +1172,7 @@ def test_main_resolves_absolute_shared_session_root_to_active_identity(
     capsys.readouterr()
 
     shared_root = registry / "retry-review"
-    expected_root = shared_root / "actors" / cli._session_token("thread-123")
+    expected_root = shared_root / "actors" / cli_bind._session_token("thread-123")
 
     assert cli.main(["session", "show", "--session", str(shared_root)]) == 0
 
@@ -1217,7 +1218,7 @@ def test_main_read_only_explicit_session_inspection_uses_existing_actor_root(
     assert payload["sessionDir"] == str(shared_root.resolve())
     assert "created a new gotta session" not in captured.err
     assert not (
-        shared_root / "actors" / cli._session_token("thread-123") / "state" / "env"
+        shared_root / "actors" / cli_bind._session_token("thread-123") / "state" / "env"
     ).exists()
 
 
@@ -1238,7 +1239,7 @@ def test_main_uses_term_session_id_for_deterministic_binding_on_write_surfaces(
         return 0
 
     _set_default_session_root(monkeypatch, tmp_path / "session")
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.setenv("TERM_SESSION_ID", "term-session-1")
 
@@ -1247,9 +1248,9 @@ def test_main_uses_term_session_id_for_deterministic_binding_on_write_surfaces(
     session_root = Path(seen[-1][1])
     assert session_root.parent.name == "actors"
     assert session_root.parent.parent == (
-        tmp_path / "session" / cli._session_token("term-session-1")
+        tmp_path / "session" / cli_bind._session_token("term-session-1")
     )
-    assert session_root.name == cli._session_token("term-session-1")
+    assert session_root.name == cli_bind._session_token("term-session-1")
     assert seen[-1][0] == ["todo", "append", "real task"]
     assert seen[-1][2] == "term-session-1"
     assert seen[-1][3] == "terminal_session"
@@ -1332,7 +1333,7 @@ def test_main_warns_actor_when_supervisor_requested_failed_disposition(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     actor_state_path = actor_root / "state" / "actor.json"
     actor_state_path.write_text(
         json.dumps(
@@ -1379,7 +1380,7 @@ def test_main_warns_actor_when_supervisor_requested_graceful_stop(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     actor_state_path = actor_root / "state" / "actor.json"
     actor_state_path.write_text(
         json.dumps(
@@ -1427,7 +1428,7 @@ def test_main_does_not_warn_actor_for_nonfailed_pending_disposition(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     actor_state_path = actor_root / "state" / "actor.json"
     actor_state_path.write_text(
         json.dumps(
@@ -1477,7 +1478,7 @@ def test_main_warns_actor_when_supervisor_keeps_checking_notes_since_last_note(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     actor_state_path = actor_root / "state" / "actor.json"
     actor_state_path.write_text(
         json.dumps(
@@ -1529,7 +1530,7 @@ def test_main_notes_surface_warns_actor_when_note_check_pulse_is_active(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     (actor_root / "state" / "actor.json").write_text(
         json.dumps(
             {
@@ -1579,7 +1580,7 @@ def test_main_shared_session_notes_view_does_not_emit_note_check_pulse(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     (actor_root / "state" / "actor.json").write_text(
         json.dumps(
             {
@@ -1629,7 +1630,7 @@ def test_main_stop_warning_suppresses_note_check_pulse(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     actor_state_path = actor_root / "state" / "actor.json"
     actor_state_path.write_text(
         json.dumps(
@@ -1685,7 +1686,7 @@ def test_main_shared_session_inspection_does_not_emit_note_check_pulse(
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     (actor_root / "state" / "actor.json").write_text(
         json.dumps(
             {
@@ -1721,13 +1722,15 @@ def test_main_does_not_warn_nonactor_session(
 
     assert cli.main(["session", "bind", "actor-root"]) == 0
     capsys.readouterr()
-    actor_root = registry / "actor-root" / "actors" / cli._session_token("thread-123")
+    actor_root = (
+        registry / "actor-root" / "actors" / cli_bind._session_token("thread-123")
+    )
 
     def fake_gotta_main(argv: list[str] | None = None) -> int:
         seen.append(list(argv or []))
         return 0
 
-    monkeypatch.setattr(cli, "_gotta_main", fake_gotta_main)
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     for key, value in content.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
@@ -1747,16 +1750,16 @@ def test_bind_session_root_treats_raced_creation_as_reuse(
 
     @contextmanager
     def fake_lock(base_dir: Path, locked_context_id: str):
-        cli._create_session_root(
+        cli_bind._create_session_root(
             canonical,
             context_id=locked_context_id,
             context_source="env",
         )
         yield
 
-    monkeypatch.setattr(cli, "_session_creation_lock", fake_lock)
+    monkeypatch.setattr(cli_bind, "_session_creation_lock", fake_lock)
 
-    root, created = cli._bind_session_root(context_id, "env")
+    root, created = cli_bind._bind_session_root(context_id, "env")
 
     assert root == canonical
     assert created is False

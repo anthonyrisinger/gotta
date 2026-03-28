@@ -63,7 +63,7 @@ dev = [
 ]
 
 [project.scripts]
-gotta = "gotta.main:main"
+gotta = "gotta.cli.entry:main"
 
 [project.entry-points."gotta.plugins"]
 actor = "gotta.builtin:actor_plugin"
