@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import gotta.plugins.github.main as github
 import gotta.plugins.github.read as github_read
 import gotta.plugins.github.search as github_search
@@ -537,6 +539,18 @@ def test_main_rejects_limit_for_non_list_url_shapes(monkeypatch, capsys) -> None
     assert (
         github.main(["https://github.com/acme/widgets/issues/19", "--limit", "10"]) == 2
     )
+    err = capsys.readouterr().err
+    assert "`--limit` is only supported for GitHub commit-history URLs" in err
+    assert "/commits/HEAD" in err
+
+
+def test_capture_rejects_limit_for_non_list_url_shapes(capsys) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        github.capture(
+            ["https://github.com/acme/widgets/issues/19", "--limit", "10"], object()
+        )
+
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "`--limit` is only supported for GitHub commit-history URLs" in err
     assert "/commits/HEAD" in err

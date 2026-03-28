@@ -11,6 +11,8 @@ import urllib.parse
 
 from gotta.helptext import is_long_help_request
 
+from .route import COMMITS_RE, COMMITS_ROOT_RE
+
 
 USAGE = """usage: gotta github [status [--output json|summary] | search [--global] [--type repo|issue|pr|code] [--repo owner/repo] [--filename NAME] [--extension EXT] [--language LANG] [--match file|path] [--limit N] [--output json|summary|markdown] <query...> | [--output json|summary|markdown] [--limit N] <github_url>]
 
@@ -191,6 +193,11 @@ def unsupported_render_limit_error() -> int:
         "Use `/commits` or `/commits/HEAD` for the canonical branch-agnostic forms.",
         code=2,
     )
+
+
+def _supports_render_limit(url: str) -> bool:
+    target = url.split("#", 1)[0].split("?", 1)[0]
+    return bool(COMMITS_ROOT_RE.match(target) or COMMITS_RE.match(target))
 
 
 def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
@@ -382,6 +389,8 @@ def parse_args(argv: list[str], *, emit_help: bool = True) -> ParsedArgs:
         raise SystemExit(die(USAGE))
     parsed_url = urllib.parse.urlparse(url)
     fragment = parsed_url.fragment
+    if limit is not None and not _supports_render_limit(url):
+        raise SystemExit(unsupported_render_limit_error())
     return ParsedArgs(
         command="render", output=output, url=url, fragment=fragment, limit=limit
     )
