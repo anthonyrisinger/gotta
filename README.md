@@ -1,5 +1,9 @@
 # Gotta
 
+[![PyPI version](https://img.shields.io/pypi/v/gotta.svg)](https://pypi.org/project/gotta/)
+[![Python versions](https://img.shields.io/pypi/pyversions/gotta.svg)](https://pypi.org/project/gotta/)
+[![License](https://img.shields.io/pypi/l/gotta.svg)](https://github.com/anthonyrisinger/gotta/blob/main/LICENSE)
+
 `gotta` is a session-rooted CLI for remote discovery, evidence acquisition,
 durable operator memory, and actor-coordinated workflows.
 
