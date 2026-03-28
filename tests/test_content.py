@@ -6,23 +6,29 @@ import os
 from pathlib import Path
 import stat
 
-from gotta import content
+import gotta.content.activity as content_activity
+import gotta.content.context as content_context
+import gotta.content.env as content_env
+import gotta.content.file as content_file
+import gotta.content.model as content_model
+import gotta.content.scope as content_scope
+import gotta.content.store as content_store
 from gotta import topology
 
 
-def make_dirs(root: Path) -> content.ResolvedDirs:
-    dirs = content.ResolvedDirs(
+def make_dirs(root: Path) -> content_model.ResolvedDirs:
+    dirs = content_model.ResolvedDirs(
         session_dir=root,
         content_dir=root / "content",
     )
-    content.ensure_private_dir(dirs.session_dir)
-    content.ensure_private_dir(dirs.content_dir)
+    content_file.ensure_private_dir(dirs.session_dir)
+    content_file.ensure_private_dir(dirs.content_dir)
     return dirs
 
 
-def initialize_session(root: Path) -> content.ResolvedDirs:
+def initialize_session(root: Path) -> content_model.ResolvedDirs:
     dirs = make_dirs(root)
-    content.write_state_env(dirs)
+    content_env.write_state_env(dirs)
     return dirs
 
 
@@ -31,7 +37,7 @@ def test_materialize_bytes_creates_content_directory_and_manifest(
 ) -> None:
     dirs = make_dirs(tmp_path / "ws")
 
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -75,7 +81,7 @@ def test_materialize_bytes_records_projection_degradation_in_lead_cache(
 ) -> None:
     dirs = make_dirs(tmp_path / "ws")
 
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"<p>Depends on ABC-2.</p>",
         dirs=dirs,
         preferred_name="demo.html",
@@ -107,7 +113,7 @@ def test_private_state_and_content_paths_use_private_modes(tmp_path: Path) -> No
         return
 
     dirs = initialize_session(tmp_path / "ws")
-    content.append_activity_event(
+    content_activity.append_activity_event(
         dirs.session_dir,
         {
             "plugin": "logs",
@@ -120,7 +126,7 @@ def test_private_state_and_content_paths_use_private_modes(tmp_path: Path) -> No
             "time_field": "session_recorded_at",
         },
     )
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -129,33 +135,33 @@ def test_private_state_and_content_paths_use_private_modes(tmp_path: Path) -> No
     )
 
     file_paths = (
-        content.state_env_path(dirs.session_dir),
-        content.activity_log_path(dirs.session_dir),
+        content_env.state_env_path(dirs.session_dir),
+        content_activity.activity_log_path(dirs.session_dir),
         dirs.content_dir / "manifest.jsonl",
         result.data_path,
         result.meta_path,
         result.content_dir / "leads.json",
     )
     dir_paths = (
-        content.state_dir_path(dirs.session_dir),
+        content_env.state_dir_path(dirs.session_dir),
         result.content_dir,
         result.names_dir,
         result.logs_dir,
     )
 
     assert all(
-        stat.S_IMODE(path.stat().st_mode) == content.PRIVATE_FILE_MODE
+        stat.S_IMODE(path.stat().st_mode) == content_file.PRIVATE_FILE_MODE
         for path in file_paths
     )
     assert all(
-        stat.S_IMODE(path.stat().st_mode) == content.PRIVATE_DIR_MODE
+        stat.S_IMODE(path.stat().st_mode) == content_file.PRIVATE_DIR_MODE
         for path in dir_paths
     )
 
 
 def test_scan_content_store_reads_directory_layout(tmp_path: Path) -> None:
     dirs = make_dirs(tmp_path / "ws")
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -163,7 +169,7 @@ def test_scan_content_store_reads_directory_layout(tmp_path: Path) -> None:
         timestamp="2026-03-11T00:00:00.000001Z",
     )
 
-    snapshots = content.scan_content_store(dirs.content_dir)
+    snapshots = content_store.scan_content_store(dirs.content_dir)
 
     assert len(snapshots) == 1
     snapshot = snapshots[0]
@@ -182,7 +188,7 @@ def test_scan_content_store_handles_missing_names_directory(tmp_path: Path) -> N
     content_dir.mkdir(parents=True, exist_ok=True)
     (content_dir / "data").write_bytes(b"hello world")
 
-    snapshots = content.scan_content_store(dirs.content_dir)
+    snapshots = content_store.scan_content_store(dirs.content_dir)
 
     assert len(snapshots) == 1
     assert snapshots[0].digest == digest
@@ -193,7 +199,7 @@ def test_activity_events_round_trip(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     initialize_session(root)
 
-    content.append_activity_event(
+    content_activity.append_activity_event(
         root,
         {
             "timestamp": "2026-03-14T10:00:00Z",
@@ -208,7 +214,7 @@ def test_activity_events_round_trip(tmp_path: Path) -> None:
         },
     )
 
-    records = content.activity_events(root)
+    records = content_activity.activity_events(root)
 
     assert records == [
         {
@@ -224,7 +230,7 @@ def test_activity_events_round_trip(tmp_path: Path) -> None:
             "timestamp": "2026-03-14T10:00:00Z",
         }
     ]
-    assert content.activity_log_path(root).is_file()
+    assert content_activity.activity_log_path(root).is_file()
 
 
 def test_resolve_dirs_prefers_local_state_over_default_root(
@@ -235,10 +241,10 @@ def test_resolve_dirs_prefers_local_state_over_default_root(
     initialize_session(default_root)
     initialize_session(local_root)
 
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", default_root)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", default_root)
     monkeypatch.chdir(local_root)
 
-    resolved = content.resolve_dirs(content.CommonOptions(), create=False)
+    resolved = content_scope.resolve_dirs(content_model.CommonOptions(), create=False)
     assert resolved.session_dir == local_root.resolve()
     assert resolved.content_dir == (local_root / "content").resolve()
 
@@ -247,18 +253,18 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
     tmp_path: Path, monkeypatch
 ) -> None:
     default_root = tmp_path / "default"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", default_root)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", default_root)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
-    fingerprint = content.session_token("thread-123")
+    fingerprint = content_context.session_token("thread-123")
     bound_root = default_root / fingerprint / "actors" / fingerprint
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=bound_root,
         content_dir=default_root / fingerprint / "content",
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
+    content_env.write_state_env(dirs)
     topology.write_binding(
         fingerprint,
         bound_root,
@@ -270,7 +276,7 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
         updated_at="2026-03-22T00:00:00Z",
     )
 
-    resolved = content.resolve_dirs(content.CommonOptions(), create=False)
+    resolved = content_scope.resolve_dirs(content_model.CommonOptions(), create=False)
     assert resolved.session_dir == bound_root.resolve()
     assert resolved.content_dir == (default_root / fingerprint / "content").resolve()
 
@@ -278,7 +284,7 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
 def test_current_context_binding_uses_term_session_as_first_class_identity(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.delenv(content.CONTEXT_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.CONTEXT_ID_ENV, raising=False)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.setenv("TERM_SESSION_ID", "term-session-1")
     monkeypatch.setenv("TTY", "/dev/ttys001")
@@ -293,9 +299,9 @@ def test_current_context_binding_uses_term_session_as_first_class_identity(
     second.mkdir()
 
     monkeypatch.chdir(first)
-    left = content.current_context_binding()
+    left = content_context.current_context_binding()
     monkeypatch.chdir(second)
-    right = content.current_context_binding()
+    right = content_context.current_context_binding()
 
     assert left.context_source == "terminal_session"
     assert right.context_source == "terminal_session"
@@ -307,11 +313,11 @@ def test_current_context_binding_uses_term_session_as_first_class_identity(
 def test_current_context_binding_prefers_codex_thread_over_term_session(
     monkeypatch,
 ) -> None:
-    monkeypatch.delenv(content.CONTEXT_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.CONTEXT_ID_ENV, raising=False)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
     monkeypatch.setenv("TERM_SESSION_ID", "term-session-1")
 
-    binding = content.current_context_binding()
+    binding = content_context.current_context_binding()
 
     assert binding.context_source == "codex_thread"
     assert binding.context_id == "thread-123"
@@ -320,7 +326,7 @@ def test_current_context_binding_prefers_codex_thread_over_term_session(
 def test_current_context_binding_uses_cwd_only_as_last_resort_fallback(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.delenv(content.CONTEXT_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.CONTEXT_ID_ENV, raising=False)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.delenv("TERM_SESSION_ID", raising=False)
     monkeypatch.delenv("TTY", raising=False)
@@ -335,9 +341,9 @@ def test_current_context_binding_uses_cwd_only_as_last_resort_fallback(
     second.mkdir()
 
     monkeypatch.chdir(first)
-    left = content.current_context_binding()
+    left = content_context.current_context_binding()
     monkeypatch.chdir(second)
-    right = content.current_context_binding()
+    right = content_context.current_context_binding()
 
     assert left.context_source == "terminal_fingerprint"
     assert right.context_source == "terminal_fingerprint"
@@ -348,30 +354,30 @@ def test_session_is_initialized_depends_on_state_env_only(tmp_path: Path) -> Non
     root = tmp_path / "ws"
     dirs = make_dirs(root)
 
-    assert content.session_is_initialized(root) is False
+    assert content_scope.session_is_initialized(root) is False
 
-    content.write_state_env(dirs)
-    assert content.session_is_initialized(root) is True
+    content_env.write_state_env(dirs)
+    assert content_scope.session_is_initialized(root) is True
 
 
 def test_session_surface_initialized_requires_authored_charters(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     initialize_session(root)
 
-    assert content.session_surface_initialized(root) is False
+    assert content_scope.session_surface_initialized(root) is False
 
     (root / "WANT.md").write_text("", encoding="utf-8")
-    assert content.session_surface_initialized(root) is False
+    assert content_scope.session_surface_initialized(root) is False
 
     (root / "GOAL.md").write_text("", encoding="utf-8")
-    assert content.session_surface_initialized(root) is True
+    assert content_scope.session_surface_initialized(root) is True
 
 
 def test_stdin_has_readable_text_rejects_empty_stringio(monkeypatch) -> None:
-    monkeypatch.setattr(content.sys, "stdin", io.StringIO(""))
-    assert content.stdin_has_readable_text() is False
+    monkeypatch.setattr(content_context.sys, "stdin", io.StringIO(""))
+    assert content_context.stdin_has_readable_text() is False
 
 
 def test_stdin_has_readable_text_accepts_populated_stringio(monkeypatch) -> None:
-    monkeypatch.setattr(content.sys, "stdin", io.StringIO("payload\n"))
-    assert content.stdin_has_readable_text() is True
+    monkeypatch.setattr(content_context.sys, "stdin", io.StringIO("payload\n"))
+    assert content_context.stdin_has_readable_text() is True

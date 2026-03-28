@@ -9,21 +9,23 @@ from pathlib import Path
 from gotta.compat import UTC, datetime
 from gotta import binding as binding_helpers
 from gotta import topology
-from gotta.content import (
+from gotta.content.context import current_context_binding
+from gotta.content.env import (
     CONTENT_ENV,
     SESSION_ACTIVATION_ENV,
     SESSION_CREATED_ENV,
     SESSION_ENV,
-    current_context_binding,
     env_mapping,
     load_state_env_at_root,
+    write_session_state,
+)
+from gotta.content.path import sh_quote
+from gotta.content.scope import (
     resolve_dirs,
     session_identity,
     session_is_initialized,
     session_shared_id,
     shared_session_root,
-    sh_quote,
-    write_session_state,
 )
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import registry as session_registry

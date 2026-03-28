@@ -8,7 +8,8 @@ import shlex
 import sys
 from typing import Any
 
-from gotta.content import Materialization, artifact_locator, content_locator
+from gotta.content.model import Materialization
+from gotta.content.path import artifact_locator, content_locator
 from gotta.dispatch.budget import EmittedOutput, _output_budget_descriptor
 
 

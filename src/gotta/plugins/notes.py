@@ -6,7 +6,7 @@ import argparse
 import json
 
 from gotta.actor import require_writer, session_actor, writer_name
-from gotta.content import current_actor
+from gotta.content.context import current_actor
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.notes import (
     append_actor_note,

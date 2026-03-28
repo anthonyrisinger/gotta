@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from gotta.content import ContentSnapshot, content_locator
+from gotta.content.model import ContentSnapshot
+from gotta.content.path import content_locator
 from gotta.source import best_visibility_metadata, classify_visibility_metadata
 
 from .cache import lead_mentions_for_snapshot

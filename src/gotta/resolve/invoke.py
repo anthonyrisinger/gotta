@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from gotta.content import CommonOptions
+from gotta.content.model import CommonOptions
 from gotta.resolve.canon import canonical_locator as derive_canonical_locator
 from gotta.resolve.canon import invocation_locator as derive_invocation_locator
 from gotta.resolve.intent import (

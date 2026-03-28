@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from gotta.content import content_locator
+from gotta.content.path import content_locator
 from gotta.source import best_visibility_metadata
 
 from .core import (

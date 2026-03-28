@@ -11,9 +11,25 @@ import subprocess
 import time
 
 from gotta.compat import UTC, datetime
-from gotta import content
 from gotta import topology
-from gotta.content import CommonOptions
+from gotta.content.context import default_session_id
+from gotta.content.env import (
+    SESSION_ACTOR_ENV,
+    SESSION_CREATED_ENV,
+    SESSION_ID_ENV,
+    SESSION_INITIALIZED_ENV,
+    SESSION_REPO_ENV,
+    load_state_env_at_root,
+    write_session_state,
+)
+from gotta.content.file import ensure_private_dir, write_text_atomic
+from gotta.content.model import CommonOptions
+from gotta.content.scope import (
+    DEFAULT_SESSION_ROOT,
+    resolve_dirs,
+    session_identity,
+    session_is_initialized,
+)
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import registry as session_registry
 
@@ -22,12 +38,12 @@ _SESSION_LOCK_SLEEP_SECONDS = 0.05
 
 
 def _session_token(context_id: str) -> str:
-    return content.default_session_id(context_id)
+    return default_session_id(context_id)
 
 
 @contextmanager
 def _session_creation_lock(base_dir: Path, context_id: str):
-    content.ensure_private_dir(base_dir)
+    ensure_private_dir(base_dir)
     lock_path = base_dir / f".{_session_token(context_id)}.lock"
     deadline = time.monotonic() + _SESSION_LOCK_TIMEOUT_SECONDS
     fd: int | None = None
@@ -78,16 +94,16 @@ def _create_session_root(
     del context_source
     resolved_root = root.expanduser().resolve()
     current_session_id = topology.shared_session_id(resolved_root)
-    actor = content.session_identity(resolved_root)
+    actor = session_identity(resolved_root)
     actor_branch = (
         resolved_root.parent.name == "actors"
         or topology.parse_grouped_session_root(resolved_root) is not None
     )
     session_dir = session_registry._group_session_root(resolved_root)
     content_dir = session_dir / "content"
-    content.ensure_private_dir(session_dir)
-    content.ensure_private_dir(content_dir)
-    dirs = content.resolve_dirs(
+    ensure_private_dir(session_dir)
+    ensure_private_dir(content_dir)
+    dirs = resolve_dirs(
         CommonOptions(
             session_dir=str(resolved_root),
             content_dir=str(content_dir),
@@ -96,16 +112,16 @@ def _create_session_root(
         create=True,
     )
     repo_root = _discover_repo_root()
-    content.write_session_state(
+    write_session_state(
         dirs,
         {
-            content.SESSION_CREATED_ENV: content.load_state_env_at_root(root).get(
-                content.SESSION_CREATED_ENV, ""
+            SESSION_CREATED_ENV: load_state_env_at_root(root).get(
+                SESSION_CREATED_ENV, ""
             )
             or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            content.SESSION_REPO_ENV: str(repo_root) if repo_root is not None else "",
-            content.SESSION_ID_ENV: current_session_id,
-            content.SESSION_ACTOR_ENV: actor,
+            SESSION_REPO_ENV: str(repo_root) if repo_root is not None else "",
+            SESSION_ID_ENV: current_session_id,
+            SESSION_ACTOR_ENV: actor,
         },
     )
     content_link = dirs.session_dir / "content"
@@ -156,7 +172,7 @@ def _create_session_root(
     payload["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload["members"] = sorted(dict.fromkeys(normalized_members))
     payload["actors"] = actors
-    content.write_text_atomic(
+    write_text_atomic(
         metadata_path,
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
     )
@@ -167,24 +183,24 @@ def _bind_session_root(context_id: str, context_source: str) -> tuple[Path, bool
     fingerprint = _session_token(context_id)
     current_session_id = fingerprint
     root = topology.session_root_for(current_session_id, fingerprint)
-    content.ensure_private_dir(topology.shared_session_root_for(current_session_id))
+    ensure_private_dir(topology.shared_session_root_for(current_session_id))
     created = False
     with _session_creation_lock(
-        content.DEFAULT_SESSION_ROOT.expanduser().resolve(), context_id
+        DEFAULT_SESSION_ROOT.expanduser().resolve(), context_id
     ):
-        if not content.session_is_initialized(root):
+        if not session_is_initialized(root):
             root, _created = _create_session_root(
                 root,
                 context_id=context_id,
                 context_source=context_source,
             )
             created = True
-        dirs = content.resolve_dirs(CommonOptions(session_dir=str(root)), create=False)
-        content.write_session_state(
+        dirs = resolve_dirs(CommonOptions(session_dir=str(root)), create=False)
+        write_session_state(
             dirs,
             {
-                content.SESSION_ID_ENV: current_session_id,
-                content.SESSION_ACTOR_ENV: fingerprint,
+                SESSION_ID_ENV: current_session_id,
+                SESSION_ACTOR_ENV: fingerprint,
             },
         )
         now = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -204,7 +220,7 @@ def _bind_session_root(context_id: str, context_source: str) -> tuple[Path, bool
 
 def _resolve_existing_session_root(context_id: str) -> Path | None:
     binding = topology.resolve_binding(_session_token(context_id))
-    if binding is not None and content.session_is_initialized(binding):
+    if binding is not None and session_is_initialized(binding):
         return binding
     return None
 
@@ -219,13 +235,13 @@ def _ensure_scaffolded_session(
     if shared_session is not None:
         raise RuntimeError(f"shared session roots require an actor: {root}")
     created = False
-    if not content.session_is_initialized(root):
+    if not session_is_initialized(root):
         root, created = _create_session_root(
             root,
             context_id=context_id,
             context_source=context_source,
         )
-    state = content.load_state_env_at_root(root)
-    if state.get(content.SESSION_INITIALIZED_ENV, "").strip() != "1":
+    state = load_state_env_at_root(root)
+    if state.get(SESSION_INITIALIZED_ENV, "").strip() != "1":
         session_bootstrap.scaffold_session(root)
     return root, created

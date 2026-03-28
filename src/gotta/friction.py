@@ -8,7 +8,9 @@ from pathlib import Path
 
 from gotta.actor import session_actor, writer_role
 from gotta.compat import UTC, datetime
-from gotta.content import append_activity_event, current_actor, session_identity
+from gotta.content.activity import append_activity_event
+from gotta.content.context import current_actor
+from gotta.content.scope import session_identity
 from gotta.projection import append_jsonl, read_jsonl_records
 
 

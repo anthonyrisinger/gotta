@@ -19,7 +19,7 @@ import urllib.request
 
 from gotta.builtin import get_plugin
 from gotta.capture import Capture
-from gotta.content import CommonOptions
+from gotta.content.model import CommonOptions
 from gotta.dispatch.main import run_plugin
 from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
 from gotta.dispatch.stream import capture_stdout

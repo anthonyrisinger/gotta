@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gotta.content import ContentError
+from gotta.content.model import ContentError
 from gotta.helptext import is_long_help_request, print_long_help
 
 from .analyze import cmd_analyze

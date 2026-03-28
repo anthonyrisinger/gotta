@@ -6,7 +6,7 @@ import os
 from typing import Literal
 
 from gotta.builtin import get_plugin
-from gotta.content import CommonOptions
+from gotta.content.model import CommonOptions
 from gotta.resolve.read import resolve_read_target
 from gotta.resolve.search import SearchRouteError, resolve_search_route
 

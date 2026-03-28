@@ -41,9 +41,9 @@ def normalize_session_id(value: str) -> str:
 
 def sessions_root() -> Path:
     try:
-        from gotta import content as content_module
+        from gotta.content.scope import DEFAULT_SESSION_ROOT
 
-        return Path(content_module.DEFAULT_SESSION_ROOT).expanduser().resolve()
+        return Path(DEFAULT_SESSION_ROOT).expanduser().resolve()
     except Exception:
         return DEFAULT_SESSIONS_ROOT.expanduser().resolve()
 
@@ -247,7 +247,7 @@ def write_binding(
     created_at: str,
     updated_at: str,
 ) -> Path:
-    from gotta.content import ensure_private_dir, write_text_atomic
+    from gotta.content.file import ensure_private_dir, write_text_atomic
 
     path = binding_path_for(binding_id)
     resolved_root = session_root.expanduser().resolve()

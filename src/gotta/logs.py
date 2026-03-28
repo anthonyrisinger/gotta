@@ -6,11 +6,8 @@ from pathlib import Path
 
 from gotta.actor import session_actor, writer_role
 from gotta.compat import UTC, datetime
-from gotta.content import (
-    SESSION_REPO_ENV,
-    load_state_env_at_root,
-    session_identity,
-)
+from gotta.content.env import SESSION_REPO_ENV, load_state_env_at_root
+from gotta.content.scope import session_identity
 from gotta.projection import append_jsonl, read_jsonl_records
 
 

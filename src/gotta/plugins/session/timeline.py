@@ -10,13 +10,10 @@ import shlex
 
 from gotta.compat import UTC, datetime
 from gotta.actor import session_actor
-from gotta.content import (
-    ContentSnapshot,
-    activity_events,
-    activity_log_path,
-    content_locator,
-    scan_content_store,
-)
+from gotta.content.activity import activity_events, activity_log_path
+from gotta.content.model import ContentSnapshot
+from gotta.content.path import content_locator
+from gotta.content.store import scan_content_store
 from gotta.source import classify_visibility_metadata
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope

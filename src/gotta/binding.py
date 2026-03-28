@@ -6,25 +6,25 @@ import json
 import os
 from pathlib import Path
 
-from gotta.content import (
+from gotta.content.context import current_context_binding, session_token
+from gotta.content.env import (
     CONTENT_ENV,
-    SESSION_CREATED_ENV,
     SESSION_ACTOR_ENV,
+    SESSION_CREATED_ENV,
     SESSION_ID_ENV,
-    CommonOptions,
-    current_context_binding,
-    ensure_private_dir,
-    iso_utc,
     load_state_env_at_root,
+    write_session_state,
+)
+from gotta.content.file import ensure_private_dir, write_text_atomic
+from gotta.content.model import CommonOptions
+from gotta.content.scope import (
     resolve_dirs,
     resolve_session_reference,
     session_actor_scope,
     session_id,
-    session_token,
     session_surface_initialized,
-    write_text_atomic,
-    write_session_state,
 )
+from gotta.content.stamp import iso_utc
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import registry as session_registry
 from gotta import topology

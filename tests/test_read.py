@@ -7,7 +7,10 @@ import urllib.error
 
 import pytest
 
-from gotta import content
+import gotta.content.env as content_env
+import gotta.content.model as content_model
+import gotta.content.path as content_path
+import gotta.content.store as content_store
 from gotta.plugins import actor, read
 from gotta.plugins.session import main as session
 import gotta.resolve.read as resolve_read
@@ -76,12 +79,12 @@ def test_read_can_follow_stored_content_digest(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"# Stored body\n\nline two\n",
         dirs=dirs,
         preferred_name="stored.md",
@@ -100,12 +103,12 @@ def test_read_can_follow_explicit_content_locator(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"# Stored body\n\nline two\n",
         dirs=dirs,
         preferred_name="stored.md",
@@ -124,13 +127,13 @@ def test_read_can_follow_explicit_content_locator_with_explicit_session(
     tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
-    result = content.materialize_bytes(
+    content_env.write_state_env(dirs)
+    result = content_store.materialize_bytes(
         b"# Stored body\n\nline two\n",
         dirs=dirs,
         preferred_name="stored.md",
@@ -148,12 +151,12 @@ def test_read_can_follow_unique_session_artifact_name(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -172,12 +175,12 @@ def test_read_can_follow_explicit_artifact_locator(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -188,7 +191,8 @@ def test_read_can_follow_explicit_artifact_locator(
     monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(dirs.content_dir))
 
     assert (
-        read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+        read.main([content_path.artifact_locator("slack-search-abc.md", result.digest)])
+        == 0
     )
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
@@ -198,13 +202,13 @@ def test_read_can_follow_explicit_artifact_locator_with_explicit_session(
     tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
-    result = content.materialize_bytes(
+    content_env.write_state_env(dirs)
+    result = content_store.materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -216,7 +220,7 @@ def test_read_can_follow_explicit_artifact_locator_with_explicit_session(
             [
                 "--session",
                 str(dirs.session_dir),
-                content.artifact_locator("slack-search-abc.md", result.digest),
+                content_path.artifact_locator("slack-search-abc.md", result.digest),
             ]
         )
         == 0
@@ -229,13 +233,13 @@ def test_read_can_follow_artifact_locator_from_session_root_state_env(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
-    result = content.materialize_bytes(
+    content_env.write_state_env(dirs)
+    result = content_store.materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -247,7 +251,8 @@ def test_read_can_follow_artifact_locator_from_session_root_state_env(
     monkeypatch.chdir(dirs.session_dir)
 
     assert (
-        read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+        read.main([content_path.artifact_locator("slack-search-abc.md", result.digest)])
+        == 0
     )
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
@@ -257,13 +262,13 @@ def test_read_can_follow_artifact_locator_from_actor_root_state_env(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
-    result = content.materialize_bytes(
+    content_env.write_state_env(dirs)
+    result = content_store.materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -288,7 +293,8 @@ def test_read_can_follow_artifact_locator_from_actor_root_state_env(
     monkeypatch.chdir(actor_root)
 
     assert (
-        read.main([content.artifact_locator("slack-search-abc.md", result.digest)]) == 0
+        read.main([content_path.artifact_locator("slack-search-abc.md", result.digest)])
+        == 0
     )
     output = capsys.readouterr().out
     assert "# Search Artifact" in output
@@ -354,12 +360,12 @@ def test_read_does_not_materialize_local_artifact_rereads(
     monkeypatch, tmp_path: Path
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -370,7 +376,11 @@ def test_read_does_not_materialize_local_artifact_rereads(
     monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(dirs.content_dir))
 
     assert not resolve_read.should_materialize(
-        [content.artifact_locator("slack-search-abc.md", result.digest), "--head", "2"]
+        [
+            content_path.artifact_locator("slack-search-abc.md", result.digest),
+            "--head",
+            "2",
+        ]
     )
 
 
@@ -378,12 +388,12 @@ def test_read_ambiguous_session_artifact_name_suggests_explicit_artifact_locator
     monkeypatch, tmp_path: Path
 ) -> None:
     session_root = tmp_path / "session"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=session_root, content_dir=session_root / "content"
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    first = content.materialize_bytes(
+    first = content_store.materialize_bytes(
         b"# Search Artifact A\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -393,7 +403,7 @@ def test_read_ambiguous_session_artifact_name_suggests_explicit_artifact_locator
             "canonical_locator": "demo-a",
         },
     )
-    second = content.materialize_bytes(
+    second = content_store.materialize_bytes(
         b"# Search Artifact B\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -411,8 +421,10 @@ def test_read_ambiguous_session_artifact_name_suggests_explicit_artifact_locator
         read.main(["slack-search-abc.md"])
     message = str(excinfo.value)
     assert "artifact:slack-search-abc.md@" in message
-    assert content.artifact_locator("slack-search-abc.md", first.digest) in message
-    assert content.artifact_locator("slack-search-abc.md", second.digest) in message
+    assert content_path.artifact_locator("slack-search-abc.md", first.digest) in message
+    assert (
+        content_path.artifact_locator("slack-search-abc.md", second.digest) in message
+    )
 
 
 def test_read_supports_bounded_local_views(tmp_path: Path, capsys) -> None:

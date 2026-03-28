@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gotta.content import CommonOptions, ContentError
+from gotta.content.model import CommonOptions, ContentError
 
 
 def split_common_options(

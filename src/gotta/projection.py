@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from gotta.content import PRIVATE_FILE_MODE, ensure_private_dir, write_text_atomic
+from gotta.content.file import PRIVATE_FILE_MODE, ensure_private_dir, write_text_atomic
 
 
 def append_chunk(path: Path, chunk: str) -> None:

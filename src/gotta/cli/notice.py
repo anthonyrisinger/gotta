@@ -15,7 +15,7 @@ from gotta.actor import (
     supervisor_stop_pending,
 )
 from gotta import topology
-from gotta.content import sh_quote
+from gotta.content.path import sh_quote
 from gotta.session import status as session_status
 
 

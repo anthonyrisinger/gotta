@@ -9,15 +9,13 @@ import re
 import urllib.parse
 import uuid
 
-from gotta.content import (
-    ContentSnapshot,
-    artifact_locator,
-    content_locator,
+from gotta.content.model import ContentSnapshot
+from gotta.content.path import artifact_locator, content_locator, sh_quote
+from gotta.content.scope import (
     resolve_session_reference,
     session_identity,
     session_shared_id,
     shared_session_root,
-    sh_quote,
 )
 from gotta.source import (
     best_visibility_metadata,

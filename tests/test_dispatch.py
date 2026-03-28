@@ -10,7 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from gotta import builtin as plugin_api
-from gotta import content
+import gotta.content.context as content_context
+import gotta.content.env as content_env
+import gotta.content.model as content_model
+import gotta.content.scope as content_scope
+import gotta.content.store as content_store
 import gotta.cli.argv as cli_argv
 import gotta.cli.entry as cli
 import gotta.cli.notice as cli_notice
@@ -206,7 +210,7 @@ def test_run_plugin_actor_launch_streams_live_without_buffered_capture(
         return 0
 
     def fake_resolve_invocation(
-        _plugin: str, _argv: list[str], _options: content.CommonOptions
+        _plugin: str, _argv: list[str], _options: content_model.CommonOptions
     ):
         return SimpleNamespace(should_materialize=False, artifact_intent="none")
 
@@ -247,7 +251,7 @@ def test_search_resolve_invocation_routes_provider_search_with_implicit_search()
     None
 ):
     resolved = invocation.resolve_invocation(
-        "search", ["jira:Architecture"], content.CommonOptions()
+        "search", ["jira:Architecture"], content_model.CommonOptions()
     )
 
     assert resolved.entry_plugin == "search"
@@ -261,7 +265,7 @@ def test_search_resolve_invocation_accepts_explicit_search_alias() -> None:
     resolved = invocation.resolve_invocation(
         "search",
         ["slack:search ABC reboot"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
     )
 
     assert resolved.resolved_plugin == "slack"
@@ -293,7 +297,7 @@ def test_search_resolve_route_preserves_flag_shaped_text_inside_quoted_query() -
 
 def test_search_resolve_invocation_disables_materialization_on_invalid_target() -> None:
     resolved = invocation.resolve_invocation(
-        "search", ["jira:jql project = OPS"], content.CommonOptions()
+        "search", ["jira:jql project = OPS"], content_model.CommonOptions()
     )
 
     assert resolved.should_materialize is False
@@ -352,7 +356,7 @@ def test_read_resolve_invocation_preserves_routed_provider_artifact_intent(
     expected_kind: str,
     expected_materialize: bool,
 ) -> None:
-    resolved = dispatch.resolve_invocation("read", argv, content.CommonOptions())
+    resolved = dispatch.resolve_invocation("read", argv, content_model.CommonOptions())
 
     assert resolved.resolved_plugin == expected_plugin
     assert resolved.resolved_argv == expected_args
@@ -362,7 +366,7 @@ def test_read_resolve_invocation_preserves_routed_provider_artifact_intent(
 
 
 def test_derive_preferred_name_for_delegated_read_targets() -> None:
-    options = content.CommonOptions()
+    options = content_model.CommonOptions()
     cases = {
         "https://github.com/acme/widgets#readme": "widgets.json",
         "https://github.com/acme/widgets/commits/main": "widgets-commits-main.json",
@@ -385,7 +389,7 @@ def test_derive_preferred_name_for_delegated_read_targets() -> None:
 
 
 def test_derive_preferred_name_for_provider_search_artifacts() -> None:
-    options = content.CommonOptions()
+    options = content_model.CommonOptions()
 
     assert (
         dispatch.derive_preferred_name("confluence", ["search", "ABC"], options)
@@ -473,7 +477,7 @@ def test_derive_preferred_name_for_provider_search_artifacts() -> None:
 
 
 def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
-    options = content.CommonOptions()
+    options = content_model.CommonOptions()
 
     assert (
         dispatch.derive_preferred_name(
@@ -532,7 +536,7 @@ def test_derive_preferred_name_for_provider_get_artifacts_with_flags() -> None:
 def test_root_help_exposes_session_aware_read_storage_contract(
     capsys, monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", tmp_path / "session")
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", tmp_path / "session")
 
     assert cli.main(["--help"]) == 0
 
@@ -546,25 +550,25 @@ def test_root_help_exposes_session_aware_read_storage_contract(
 def test_require_operational_session_accepts_initialized_session(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path,
         content_dir=tmp_path / "content",
     )
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
+    content_env.write_state_env(dirs)
     dispatch.require_operational_session(dirs)
 
 
 def test_require_operational_session_requires_initialized_session(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path,
         content_dir=tmp_path / "content",
     )
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
 
-    with pytest.raises(content.ContentError, match="gotta"):
+    with pytest.raises(content_model.ContentError, match="gotta"):
         dispatch.require_operational_session(dirs)
 
 
@@ -845,20 +849,22 @@ def test_canonical_locator_normalizes_reordered_read_search_locators() -> None:
 def test_materialize_invocation_attributes_delegated_read_to_provider(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(session_dir=tmp_path, content_dir=tmp_path / "content")
+    dirs = content_model.ResolvedDirs(
+        session_dir=tmp_path, content_dir=tmp_path / "content"
+    )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
 
     result = dispatch._materialize_invocation(
         "read",
         ["jira:PROJ-1"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         b"# PROJ-1\n\n- Created: 2026-03-10T12:00:00Z\n",
         dirs=dirs,
     )
 
     assert result is not None
-    snapshot = next(item for item in content.scan_content_store(dirs.content_dir))
+    snapshot = next(item for item in content_store.scan_content_store(dirs.content_dir))
     assert snapshot.metadata["plugin"] == "jira"
     assert snapshot.metadata["entrypoint"] == "read"
     assert snapshot.metadata["provider"] == "jira"
@@ -1121,13 +1127,13 @@ def test_cli_plugin_help_all_works_from_top_level_dispatch(plugin: str, capsys) 
 
 def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> None:
     root = tmp_path / "session-root"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=root,
         content_dir=root / "content",
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
+    content_env.write_state_env(dirs)
 
     large_file = tmp_path / "large.txt"
     large_file.write_text(
@@ -1138,7 +1144,7 @@ def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> No
     )
 
     env = os.environ.copy()
-    env[content.SESSION_ENV] = str(dirs.session_dir)
+    env[content_env.SESSION_ENV] = str(dirs.session_dir)
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "gotta", "read", str(large_file)],
@@ -1160,7 +1166,7 @@ def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> No
     assert returncode == 0
     assert "BrokenPipeError" not in stderr
 
-    snapshots = content.scan_content_store(dirs.content_dir)
+    snapshots = content_store.scan_content_store(dirs.content_dir)
     assert snapshots == []
 
 
@@ -1168,18 +1174,18 @@ def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session-root"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=root,
         content_dir=root / "content",
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
+    content_env.write_state_env(dirs)
 
     sample = tmp_path / "sample.txt"
     sample.write_text("hello\n", encoding="utf-8")
 
-    monkeypatch.setenv(content.SESSION_ENV, str(dirs.session_dir))
+    monkeypatch.setenv(content_env.SESSION_ENV, str(dirs.session_dir))
 
     assert dispatch.run_plugin("read", [str(sample)]) == 0
     captured = capsys.readouterr()
@@ -1253,7 +1259,7 @@ def test_run_plugin_materializing_read_section_miss_returns_clean_error(
     assert captured.out == ""
     assert "no section heading matched: Missing" in captured.err
     assert "Traceback" not in captured.err
-    assert content.scan_content_store(local_root / "content") == []
+    assert content_store.scan_content_store(local_root / "content") == []
 
 
 def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty(
@@ -1293,7 +1299,7 @@ def test_run_plugin_read_invalid_confluence_shortlink_returns_clean_error(
 def test_materialize_invocation_carries_slack_thread_source_timestamps(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1303,7 +1309,7 @@ def test_materialize_invocation_carries_slack_thread_source_timestamps(
     result = dispatch._materialize_invocation(
         "read",
         ["https://example.slack.com/archives/C12345678/p1773085070240949"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         b"thread body\n",
         dirs=dirs,
     )
@@ -1319,7 +1325,7 @@ def test_materialize_invocation_carries_slack_thread_source_timestamps(
 def test_materialize_invocation_carries_slack_channel_source_window(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1329,7 +1335,7 @@ def test_materialize_invocation_carries_slack_channel_source_window(
     result = dispatch._materialize_invocation(
         "slack",
         ["get", "https://example.slack.com/archives/C12345678", "--output", "meta"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         json.dumps(
             {
                 "firstTs": "1770935417.208289",
@@ -1350,7 +1356,7 @@ def test_materialize_invocation_carries_slack_channel_source_window(
 def test_materialize_invocation_extracts_slack_markdown_source_times(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1365,7 +1371,7 @@ def test_materialize_invocation_extracts_slack_markdown_source_times(
             "--output",
             "markdown",
         ],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         (
             b"### Example thread\n\n"
             b"- _Channel_: `#ops`\n"
@@ -1388,7 +1394,7 @@ def test_materialize_invocation_extracts_slack_markdown_source_times(
 def test_materialize_invocation_extracts_markdown_source_times(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1398,7 +1404,7 @@ def test_materialize_invocation_extracts_markdown_source_times(
     result = dispatch._materialize_invocation(
         "jira",
         ["get", "PROJ-1", "--output", "markdown"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         (
             b"# PROJ-1: Example\n\n"
             b"- Created: 2026-03-10T12:00:00Z\n"
@@ -1418,7 +1424,7 @@ def test_materialize_invocation_extracts_markdown_source_times(
 def test_materialize_invocation_extracts_json_source_times(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1428,7 +1434,7 @@ def test_materialize_invocation_extracts_json_source_times(
     result = dispatch._materialize_invocation(
         "github",
         ["https://github.com/example/repo/pull/1", "--output", "json"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         json.dumps(
             {
                 "createdAt": "2026-02-01T10:00:00Z",
@@ -1449,7 +1455,7 @@ def test_materialize_invocation_extracts_json_source_times(
 def test_materialize_invocation_persists_visibility_metadata(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1459,7 +1465,7 @@ def test_materialize_invocation_persists_visibility_metadata(
     result = dispatch._materialize_invocation(
         "github",
         ["https://github.com/example/repo", "--output", "json"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         json.dumps(
             {
                 "name": "repo",
@@ -1498,7 +1504,7 @@ def test_materialize_invocation_persists_visibility_metadata(
 def test_materialize_invocation_extracts_visibility_from_markdown(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1513,7 +1519,7 @@ def test_materialize_invocation_extracts_visibility_from_markdown(
             "--output",
             "markdown",
         ],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         (
             b"### Slack Thread: Example\n\n"
             b"- _Channel_: `#ops`\n"
@@ -1536,7 +1542,7 @@ def test_materialize_invocation_extracts_visibility_from_markdown(
 def test_materialize_invocation_derives_nested_search_source_times_from_json(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1546,7 +1552,7 @@ def test_materialize_invocation_derives_nested_search_source_times_from_json(
     result = dispatch._materialize_invocation(
         "gdocs",
         ["search", "ABC", "--output", "json"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         json.dumps(
             {
                 "query": "ABC",
@@ -1578,7 +1584,7 @@ def test_materialize_invocation_derives_nested_search_source_times_from_json(
 def test_materialize_invocation_extracts_github_commit_history_markdown_source_range(
     tmp_path: Path,
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1588,7 +1594,7 @@ def test_materialize_invocation_extracts_github_commit_history_markdown_source_r
     result = dispatch._materialize_invocation(
         "github",
         ["https://github.com/example/repo/commits/main", "--output", "summary"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         (
             b"# example/repo commit history for `main`\n\n"
             b"- **Created:** 2026-03-09T17:32:25Z\n"
@@ -1610,7 +1616,7 @@ def test_materialize_invocation_extracts_github_commit_history_markdown_source_r
 def test_materialize_invocation_captures_actor_actor_metadata(
     tmp_path: Path, monkeypatch
 ) -> None:
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=tmp_path / "session-root",
         content_dir=tmp_path / "session-root" / "content",
     )
@@ -1623,7 +1629,7 @@ def test_materialize_invocation_captures_actor_actor_metadata(
     result = dispatch._materialize_invocation(
         "read",
         ["README.md"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         b"hello\n",
         dirs=dirs,
     )
@@ -1640,27 +1646,27 @@ def test_materialize_invocation_rejects_unbound_actor_shell(
     tmp_path: Path, monkeypatch
 ) -> None:
     shared_root = tmp_path / "session-root"
-    dirs = content.ResolvedDirs(
+    dirs = content_model.ResolvedDirs(
         session_dir=shared_root / "actors" / "claude",
         content_dir=shared_root / "content",
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_state_env(dirs)
+    content_env.write_state_env(dirs)
     monkeypatch.delenv(ACTOR_ID_ENV, raising=False)
-    monkeypatch.delenv(content.SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(content_env.SESSION_ACTOR_ENV, raising=False)
     monkeypatch.delenv("GOTTA_ACTOR_SPEAKER", raising=False)
     monkeypatch.setattr(
-        content,
+        content_context,
         "current_context_binding",
         lambda: type("Binding", (), {"binding_id": ""})(),
     )
 
-    with pytest.raises(content.ContentError) as excinfo:
+    with pytest.raises(content_model.ContentError) as excinfo:
         dispatch._materialize_invocation(
             "read",
             ["README.md"],
-            content.CommonOptions(),
+            content_model.CommonOptions(),
             b"hello\n",
             dirs=dirs,
         )
@@ -1715,7 +1721,7 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
     captured = capsys.readouterr()
     assert captured.out == "# Title\n\nline 1\n"
 
-    snapshots = content.scan_content_store(local_root / "content")
+    snapshots = content_store.scan_content_store(local_root / "content")
     assert len(snapshots) == 1
     snapshot = snapshots[0]
     assert snapshot.metadata["canonical_locator"] == "https://github.com/acme/widgets"
@@ -1775,7 +1781,7 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
     )
     capsys.readouterr()
 
-    snapshots = content.scan_content_store(local_root / "content")
+    snapshots = content_store.scan_content_store(local_root / "content")
     assert len(snapshots) == 1
     assert (
         snapshots[0].metadata["canonical_locator"] == "https://github.com/acme/widgets"

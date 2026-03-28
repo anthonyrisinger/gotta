@@ -7,13 +7,19 @@ import os
 from pathlib import Path
 
 from gotta.actors import resolve_actor_context
-from gotta import content
+from gotta.content.context import current_context_binding
+from gotta.content.env import ACTOR_ID_ENV, ACTOR_LABEL_ENV as CONTENT_ACTOR_LABEL_ENV
+from gotta.content.path import sanitize_name
+from gotta.content.scope import (
+    session_actor_scope,
+    session_is_initialized,
+    session_shared_id,
+)
 from gotta import topology
 
 
 SESSION_ACTOR_ENV = "GOTTA_SESSION_ACTOR"
-ACTOR_ID_ENV = content.ACTOR_ID_ENV
-ACTOR_LABEL_ENV = content.ACTOR_LABEL_ENV
+ACTOR_LABEL_ENV = CONTENT_ACTOR_LABEL_ENV
 SUPERVISOR_STOP_STATUS = "failed"
 SUPERVISOR_GRACEFUL_STOP_MODE = "stop"
 SUPERVISOR_GRACEFUL_STOP_STATUS = "signed_off"
@@ -21,7 +27,7 @@ SUPERVISOR_STOP_FALLBACK_STATUSES = {"starting", "active", "stalled"}
 
 
 def normalize_actor_name(value: str) -> str:
-    return content.sanitize_name(value.strip().lower())
+    return sanitize_name(value.strip().lower())
 
 
 def _shared_root(parent_root: Path) -> Path:
@@ -34,7 +40,7 @@ def _shared_root(parent_root: Path) -> Path:
 
 
 def session_actor(root: Path) -> str:
-    return normalize_actor_name(content.session_actor_scope(root))
+    return normalize_actor_name(session_actor_scope(root))
 
 
 def resolve_actor_identity(parent_root: Path, actor_name: str) -> str:
@@ -72,7 +78,7 @@ def resolve_actor_identity(parent_root: Path, actor_name: str) -> str:
 
 def actor_session_id(parent_root: Path, actor_name: str) -> str:
     return topology.default_actor_session_id(
-        content.session_shared_id(parent_root),
+        session_shared_id(parent_root),
         resolve_actor_identity(parent_root, actor_name),
     )
 
@@ -108,7 +114,7 @@ def bound_actors(parent_root: Path) -> tuple[str, ...]:
             if not actor_dir.is_dir():
                 continue
             resolved = actor_dir.resolve()
-            if not content.session_is_initialized(resolved):
+            if not session_is_initialized(resolved):
                 continue
             identity = topology.session_identity(resolved)
             if not identity or topology.is_placeholder_identity(identity):
@@ -122,7 +128,7 @@ def writer_name() -> str:
         str(resolve_actor_context(default_speaker="").speaker or "").strip(),
         os.environ.get(ACTOR_ID_ENV, "").strip(),
         os.environ.get(SESSION_ACTOR_ENV, "").strip(),
-        str(content.current_context_binding().binding_id or "").strip(),
+        str(current_context_binding().binding_id or "").strip(),
     )
     for candidate in candidates:
         normalized = topology.normalize_identity(candidate)

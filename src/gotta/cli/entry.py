@@ -15,7 +15,12 @@ import gotta.cli.notice as cli_notice
 import gotta.cli.select as cli_select
 from gotta.dispatch.materialize import SUPPRESS_MATERIALIZATION_ENV
 from gotta import binding as binding_helpers
-from gotta import content
+from gotta.content.context import current_context_binding
+from gotta.content.scope import (
+    resolve_session_reference,
+    session_identity,
+    session_is_initialized,
+)
 from gotta import topology
 from gotta.session import registry as session_registry
 
@@ -30,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         ):
             return cli_argv._gotta_main(normalized)
         plugin_name = effective[0] if effective else ""
-        context = content.current_context_binding()
+        context = current_context_binding()
         context_id = context.context_id
         context_source = context.context_source
         explicit_session = cli_argv._explicit_session_arg(effective)
@@ -67,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_identity = topology.normalize_identity(
                     cli_select._active_identity(context_id)
                 )
-                root = content.resolve_session_reference(
+                root = resolve_session_reference(
                     explicit_session,
                     identity=target_identity,
                     allow_missing=True,
@@ -98,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_identity = topology.normalize_identity(
                     explicit_actor or cli_select._active_identity(context_id)
                 )
-                explicit_root = content.resolve_session_reference(
+                explicit_root = resolve_session_reference(
                     explicit_session,
                     identity=target_identity,
                     allow_missing=False,
@@ -118,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
                         return cli_notice.die(
                             "explicit actor targeting requires an existing shared session and a bound actor"
                         )
-                    root = content.resolve_session_reference(
+                    root = resolve_session_reference(
                         explicit_session,
                         identity=target_identity,
                         allow_missing=True,
@@ -158,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             session_access == "ambient"
             and root is not None
-            and not content.session_is_initialized(root)
+            and not session_is_initialized(root)
             and not shared_root_command
         ):
             if explicit_target:
@@ -181,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             session_access == "read"
             and root is not None
-            and not content.session_is_initialized(root)
+            and not session_is_initialized(root)
         ):
             if not shared_root_command:
                 existing = cli_select._existing_actor_root_for_session(
@@ -199,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
                     "explicit session inspection requires an initialized actor root in the "
                     "target shared session; bind an actor there first or pass --actor"
                 )
-            if not content.session_is_initialized(root) and not shared_root_command:
+            if not session_is_initialized(root) and not shared_root_command:
                 if explicit_session and not cli_select._is_shared_session_root(root):
                     return cli_notice.die(
                         "explicit session inspection requires an existing initialized session "
@@ -244,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     seed_actor_context(acting_actor)
                     if explicit_actor:
-                        os.environ[SESSION_ACTOR_ENV] = content.session_identity(root)
+                        os.environ[SESSION_ACTOR_ENV] = session_identity(root)
                 if created:
                     print(
                         "\n".join(

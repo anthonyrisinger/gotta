@@ -8,13 +8,10 @@ from pathlib import Path
 import time
 
 from gotta.compat import UTC, datetime
-from gotta.content import (
-    append_activity_event,
-    current_actor,
-    ensure_private_dir,
-    PRIVATE_FILE_MODE,
-    session_identity,
-)
+from gotta.content.activity import append_activity_event
+from gotta.content.context import current_actor
+from gotta.content.file import PRIVATE_FILE_MODE, ensure_private_dir
+from gotta.content.scope import session_identity
 from gotta.friction import oops_log_path
 from gotta.logs import append_log_record, logs_state_path
 from gotta.notes import visible_actor_notes_records

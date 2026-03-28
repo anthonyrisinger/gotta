@@ -8,15 +8,15 @@ from typing import Any
 from gotta.actor import require_writer, session_actor, writer_name
 from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta.capture import Capture
-from gotta.content import (
-    ACTOR_ID_ENV,
+from gotta.content.env import ACTOR_ID_ENV
+from gotta.content.model import (
     CommonOptions,
     ContentError,
     Materialization,
     ResolvedDirs,
-    materialize_bytes,
-    session_identity,
 )
+from gotta.content.scope import session_identity
+from gotta.content.store import materialize_bytes
 from gotta.dispatch.metadata import _derived_source_metadata
 from gotta.resolve.intent import (
     SUPPRESS_MATERIALIZATION_ENV as INVOCATION_SUPPRESS_MATERIALIZATION_ENV,

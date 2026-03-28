@@ -4,14 +4,9 @@ from __future__ import annotations
 
 import argparse
 
-from gotta.content import (
-    CommonOptions,
-    ContentError,
-    ResolvedDirs,
-    resolve_dirs,
-    session_is_initialized,
-    state_env_path,
-)
+from gotta.content.env import state_env_path
+from gotta.content.model import CommonOptions, ContentError, ResolvedDirs
+from gotta.content.scope import resolve_dirs, session_is_initialized
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope

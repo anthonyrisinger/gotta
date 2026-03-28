@@ -8,9 +8,7 @@ from pathlib import Path
 import time
 
 from gotta.compat import datetime
-from gotta.content import (
-    sh_quote,
-)
+from gotta.content.path import sh_quote
 from gotta.friction import OOPS_CHANNEL, visible_channel_records
 from gotta.notes import actor_notes_ready, actor_voice, visible_actor_notes_records
 from gotta.actor import (

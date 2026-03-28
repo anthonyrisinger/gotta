@@ -14,11 +14,8 @@ from typing import TextIO
 
 from gotta.compat import UTC, datetime
 from gotta.actors import ACTOR_SPEAKER_ENV, resolve_actor_context
-from gotta.content import (
-    SESSION_REPO_ENV,
-    load_state_env_at_root,
-    session_is_initialized,
-)
+from gotta.content.env import SESSION_REPO_ENV, load_state_env_at_root
+from gotta.content.scope import session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.friction import append_oops_record
 from gotta.notes import (

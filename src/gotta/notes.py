@@ -15,7 +15,8 @@ from gotta.actor import (
     supervisor_stop_pending,
     writer_role,
 )
-from gotta.content import SESSION_ACTOR_ENV, current_actor
+from gotta.content.context import current_actor
+from gotta.content.env import SESSION_ACTOR_ENV
 from gotta.friction import OOPS_CHANNEL, visible_channel_records
 from gotta.projection import append_jsonl, read_jsonl_records
 

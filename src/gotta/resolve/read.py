@@ -10,16 +10,10 @@ from typing import Any
 import urllib.parse
 
 from gotta.builtin import PluginSpec, available_plugins, get_plugin
-from gotta.content import (
-    CONTENT_ENV,
-    SESSION_ENV,
-    CommonOptions,
-    artifact_locator,
-    is_sha256_digest,
-    load_state_env_at_root,
-    sanitize_name,
-    scan_content_store,
-)
+from gotta.content.env import CONTENT_ENV, SESSION_ENV, load_state_env_at_root
+from gotta.content.model import CommonOptions
+from gotta.content.path import artifact_locator, is_sha256_digest, sanitize_name
+from gotta.content.store import scan_content_store
 from gotta import topology
 
 

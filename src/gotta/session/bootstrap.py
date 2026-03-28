@@ -9,24 +9,22 @@ import subprocess
 from textwrap import dedent
 
 from gotta.compat import UTC, datetime
-from gotta.content import (
+from gotta.content.env import (
     CONTENT_ENV,
-    SESSION_ENV,
-    SESSION_CREATED_ENV,
-    SESSION_REPO_ENV,
     SESSION_ACTOR_ENV,
+    SESSION_CREATED_ENV,
+    SESSION_ENV,
     SESSION_INITIALIZED_ENV,
-    CommonOptions,
-    ensure_private_dir,
+    SESSION_REPO_ENV,
     env_mapping,
     load_state_env_at_root,
-    resolve_dirs,
-    sh_quote,
     state_env_path,
-    session_surface_initialized,
-    write_text_atomic,
     write_session_state,
 )
+from gotta.content.file import ensure_private_dir, write_text_atomic
+from gotta.content.model import CommonOptions
+from gotta.content.path import sh_quote
+from gotta.content.scope import resolve_dirs, session_surface_initialized
 from gotta.logs import append_log_record, logs_state_path
 from gotta.actor import (
     actor_session_root,

@@ -8,14 +8,10 @@ import sys
 from pathlib import Path
 
 from gotta.actor import require_writer, session_actor, writer_name, writer_role
-from gotta.content import (
-    ContentError,
-    CommonOptions,
-    resolve_dirs,
-    session_is_initialized,
-    session_relative_path,
-    stdin_has_meaningful_text,
-)
+from gotta.content.context import stdin_has_meaningful_text
+from gotta.content.model import CommonOptions, ContentError
+from gotta.content.path import session_relative_path
+from gotta.content.scope import resolve_dirs, session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta import topology
 from gotta.friction import (

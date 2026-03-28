@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from gotta.content import ContentSnapshot, artifact_locator
+from gotta.content.model import ContentSnapshot
+from gotta.content.path import artifact_locator
 
 from .canon import provider_for_locator
 

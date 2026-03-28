@@ -6,13 +6,11 @@ import argparse
 from pathlib import Path
 import sys
 
-from gotta.content import (
-    append_activity_event,
-    session_identity,
-    session_relative_path,
-    stdin_has_meaningful_text,
-    write_text_atomic,
-)
+from gotta.content.activity import append_activity_event
+from gotta.content.context import stdin_has_meaningful_text
+from gotta.content.file import write_text_atomic
+from gotta.content.path import session_relative_path
+from gotta.content.scope import session_identity
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta import topology
 

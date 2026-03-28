@@ -8,15 +8,13 @@ from pathlib import Path
 import uuid
 
 from gotta.compat import UTC, datetime
-from gotta.content import (
-    ensure_private_dir,
-    load_state_env_at_root,
+from gotta.content.context import session_token
+from gotta.content.env import load_state_env_at_root, state_dir_path
+from gotta.content.file import ensure_private_dir, write_text_atomic
+from gotta.content.scope import (
     session_identity,
     session_is_initialized,
     session_shared_id,
-    session_token,
-    state_dir_path,
-    write_text_atomic,
 )
 from gotta import topology
 from gotta.actor import (

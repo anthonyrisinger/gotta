@@ -5,13 +5,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from gotta.content import (
-    SESSION_ENV,
-    SESSION_ACTOR_ENV,
-    CommonOptions,
-    discover_state_env,
-    resolve_session_reference,
+from gotta.content.env import SESSION_ACTOR_ENV, SESSION_ENV, discover_state_env
+from gotta.content.model import CommonOptions
+from gotta.content.scope import (
     resolve_dirs,
+    resolve_session_reference,
     session_identity,
     session_is_initialized,
     session_shared_id,

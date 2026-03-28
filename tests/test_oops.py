@@ -10,7 +10,10 @@ import threading
 import pytest
 
 from gotta.actors import ACTOR_SPEAKER_ENV
-from gotta import content
+import gotta.content.activity as content_activity
+import gotta.content.context as content_context
+import gotta.content.env as content_env
+import gotta.content.scope as content_scope
 from gotta import friction
 from gotta.plugins import actor
 from gotta.plugins import oops
@@ -22,10 +25,10 @@ from gotta.session import scope as session_scope
 @pytest.fixture(autouse=True)
 def local_session_registry(tmp_path: Path, monkeypatch) -> None:
     registry = tmp_path / "sessions"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
-    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
-    monkeypatch.delenv(content.SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(content_env.ACTOR_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.SESSION_ACTOR_ENV, raising=False)
 
 
 def initialize_session(root: Path) -> None:
@@ -101,7 +104,7 @@ def test_oops_is_session_rooted_and_canonical(tmp_path: Path, capsys) -> None:
     assert payload["kind_counts"]["routing"] == 1
     assert payload["surface_counts"]["read"] == 1
     assert (root / "state" / "oops.jsonl").exists()
-    activity = content.activity_events(root)
+    activity = content_activity.activity_events(root)
     assert activity[-1]["locator"] == "oops:session"
     assert activity[-1]["preferred_name"] == "oops:session"
     assert activity[-1]["follow_command"] == "gotta oops"
@@ -707,10 +710,10 @@ def test_unbound_shell_cannot_append_actor_oops(
     capsys.readouterr()
     claude = session_registry._resolve_bound_actor_name(root, "claude")
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
-    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
-    monkeypatch.delenv(content.SESSION_ACTOR_ENV, raising=False)
+    monkeypatch.delenv(content_env.ACTOR_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.SESSION_ACTOR_ENV, raising=False)
     monkeypatch.setattr(
-        content,
+        content_context,
         "current_context_binding",
         lambda: type("Binding", (), {"binding_id": ""})(),
     )

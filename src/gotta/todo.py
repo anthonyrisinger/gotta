@@ -8,7 +8,7 @@ from pathlib import Path
 import uuid
 
 from gotta.compat import UTC, datetime
-from gotta.content import SESSION_REPO_ENV, load_state_env_at_root
+from gotta.content.env import SESSION_REPO_ENV, load_state_env_at_root
 from gotta.actor import SESSION_ACTOR_ENV
 from gotta.projection import append_jsonl, read_jsonl_records
 

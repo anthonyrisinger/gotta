@@ -10,7 +10,7 @@ from gotta.builtin import (
     available_plugins as discovered_plugin_names,
     get_plugin,
 )
-from gotta.content import CommonOptions, ContentError, ResolvedDirs
+from gotta.content.model import CommonOptions, ContentError, ResolvedDirs
 from gotta.dispatch.budget import (
     emit_budgeted_output,
     requested_output_format,

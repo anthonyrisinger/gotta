@@ -7,7 +7,7 @@ import re
 import urllib.parse
 
 from gotta.builtin import get_plugin
-from gotta.content import CommonOptions
+from gotta.content.model import CommonOptions
 from gotta.providers import atlassian as atl
 
 

@@ -10,15 +10,9 @@ from typing import Any
 
 from gotta.builtin import get_plugin
 from gotta.capture import Capture
-from gotta.content import (
-    CONTENT_ENV,
-    SESSION_ENV,
-    CommonOptions,
-    ContentError,
-    ResolvedDirs,
-    resolve_dirs,
-    session_is_initialized,
-)
+from gotta.content.env import CONTENT_ENV, SESSION_ENV
+from gotta.content.model import CommonOptions, ContentError, ResolvedDirs
+from gotta.content.scope import resolve_dirs, session_is_initialized
 from gotta.resolve.invoke import ResolvedInvocation
 
 

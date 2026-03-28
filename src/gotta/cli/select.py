@@ -8,7 +8,10 @@ from pathlib import Path
 
 from gotta.builtin import SessionAccessMode
 import gotta.cli.env as cli_env
-from gotta import content
+from gotta.content.context import current_context_binding, default_session_id
+from gotta.content.env import SESSION_ACTOR_ENV, SESSION_ENV
+from gotta.content.model import CommonOptions
+from gotta.content.scope import resolve_session_reference, session_is_initialized
 from gotta import topology
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
@@ -31,7 +34,7 @@ def _resolve_shared_explicit_session(raw: str) -> Path | None:
             return resolved
         return None
     if "/" in normalized:
-        root = content.resolve_session_reference(normalized, allow_missing=False)
+        root = resolve_session_reference(normalized, allow_missing=False)
         if root is None:
             return None
         return root
@@ -42,13 +45,13 @@ def _resolve_shared_explicit_session(raw: str) -> Path | None:
 
 
 def _prefer_bound_session_root() -> Path | None:
-    explicit = os.environ.get(content.SESSION_ENV, "").strip()
+    explicit = os.environ.get(SESSION_ENV, "").strip()
     if explicit:
-        root = content.resolve_session_reference(explicit, allow_missing=False)
-        if root is not None and content.session_is_initialized(root):
+        root = resolve_session_reference(explicit, allow_missing=False)
+        if root is not None and session_is_initialized(root):
             return root
-    root = topology.resolve_binding(content.current_context_binding().binding_id)
-    if root is not None and content.session_is_initialized(root):
+    root = topology.resolve_binding(current_context_binding().binding_id)
+    if root is not None and session_is_initialized(root):
         return root
     return None
 
@@ -59,10 +62,10 @@ def _active_identity(context_id: str) -> str:
         current_identity = topology.session_identity(current)
         if current_identity and not topology.is_placeholder_identity(current_identity):
             return current_identity
-    explicit = os.environ.get(content.SESSION_ACTOR_ENV, "").strip()
+    explicit = os.environ.get(SESSION_ACTOR_ENV, "").strip()
     if explicit and not topology.is_placeholder_identity(explicit):
         return topology.normalize_identity(explicit)
-    return content.default_session_id(context_id)
+    return default_session_id(context_id)
 
 
 def _should_auto_bootstrap_session(
@@ -102,7 +105,7 @@ def _existing_actor_root_for_session(
         if not actor_dir.is_dir():
             continue
         resolved = actor_dir.resolve()
-        if not content.session_is_initialized(resolved):
+        if not session_is_initialized(resolved):
             continue
         identity = topology.session_identity(resolved)
         if not identity or topology.is_placeholder_identity(identity):
@@ -153,7 +156,7 @@ def _looks_like_stored_read_target(argv: list[str], explicit_session: str) -> bo
 
         resolved = resolve_read_target(
             argv[1:],
-            content.CommonOptions(
+            CommonOptions(
                 session_dir=str(shared_root),
                 content_dir=str(cli_env._explicit_session_content_root(shared_root)),
             ),

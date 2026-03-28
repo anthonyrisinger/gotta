@@ -10,7 +10,14 @@ import pytest
 
 from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
 from gotta.compat import UTC, datetime
-from gotta import content
+import gotta.content.activity as content_activity
+import gotta.content.context as content_context
+import gotta.content.env as content_env
+import gotta.content.file as content_file
+import gotta.content.model as content_model
+import gotta.content.path as content_path
+import gotta.content.scope as content_scope
+import gotta.content.store as content_store
 import gotta.cli.bind as cli_bind
 import gotta.cli.entry as cli
 import gotta.dispatch.main as dispatch
@@ -46,29 +53,29 @@ from gotta.plugins import want
 @pytest.fixture(autouse=True)
 def local_session_registry(tmp_path: Path, monkeypatch) -> None:
     registry = tmp_path / "sessions"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
-    monkeypatch.delenv(content.SESSION_ENV, raising=False)
-    monkeypatch.delenv(content.CONTENT_ENV, raising=False)
-    monkeypatch.delenv(content.SESSION_REPO_ENV, raising=False)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.delenv(content_env.SESSION_ENV, raising=False)
+    monkeypatch.delenv(content_env.CONTENT_ENV, raising=False)
+    monkeypatch.delenv(content_env.SESSION_REPO_ENV, raising=False)
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
     monkeypatch.delenv(ACTOR_CALLEE_ENV, raising=False)
     monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
-    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.ACTOR_ID_ENV, raising=False)
 
 
-def make_dirs(root: Path) -> content.ResolvedDirs:
-    dirs = content.ResolvedDirs(
+def make_dirs(root: Path) -> content_model.ResolvedDirs:
+    dirs = content_model.ResolvedDirs(
         session_dir=root,
         content_dir=root / "content",
     )
-    content.ensure_private_dir(dirs.session_dir)
-    content.ensure_private_dir(dirs.content_dir)
+    content_file.ensure_private_dir(dirs.session_dir)
+    content_file.ensure_private_dir(dirs.content_dir)
     return dirs
 
 
-def initialize_session(root: Path) -> content.ResolvedDirs:
+def initialize_session(root: Path) -> content_model.ResolvedDirs:
     dirs = make_dirs(root)
-    content.write_state_env(dirs)
+    content_env.write_state_env(dirs)
     return dirs
 
 
@@ -92,8 +99,8 @@ def _actor_root(root: Path, actor_ref: str) -> Path:
 
 def _session_follow(session_root: Path, target: str) -> str:
     return (
-        f"gotta read --session {content.sh_quote(str(session_root))} "
-        f"{content.sh_quote(target)}"
+        f"gotta read --session {content_path.sh_quote(str(session_root))} "
+        f"{content_path.sh_quote(target)}"
     )
 
 
@@ -102,7 +109,7 @@ def test_session_commands_require_bootstrap(
     tmp_path: Path, monkeypatch, capsys, command: str
 ) -> None:
     default_root = tmp_path / "default"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", default_root)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", default_root)
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(SystemExit) as excinfo:
@@ -129,22 +136,22 @@ def test_session_init_scaffolds_surface_and_drops_ephemeral_context_state(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
-    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    dirs = content_model.ResolvedDirs(session_dir=root, content_dir=root / "content")
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_session_state(
+    content_env.write_session_state(
         dirs,
         {
-            content.CONTEXT_ID_ENV: "ctx-123",
-            content.CONTEXT_SOURCE_ENV: "test",
+            content_env.CONTEXT_ID_ENV: "ctx-123",
+            content_env.CONTEXT_SOURCE_ENV: "test",
         },
     )
 
     _init_session(root, capsys)
 
-    state = content.load_state_env_at_root(root)
-    assert content.CONTEXT_ID_ENV not in state
-    assert content.CONTEXT_SOURCE_ENV not in state
-    assert state[content.SESSION_INITIALIZED_ENV] == "1"
+    state = content_env.load_state_env_at_root(root)
+    assert content_env.CONTEXT_ID_ENV not in state
+    assert content_env.CONTEXT_SOURCE_ENV not in state
+    assert state[content_env.SESSION_INITIALIZED_ENV] == "1"
     for name in ("WANT.md", "GOAL.md"):
         assert (root / name).exists()
     assert "_empty_" in (root / "WANT.md").read_text(encoding="utf-8")
@@ -155,19 +162,19 @@ def test_exact_root_scaffolds_local_metadata_content_and_actor_surfaces(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "workspace"
-    shared_root = content.shared_session_root(root.name)
+    shared_root = content_scope.shared_session_root(root.name)
 
     _init_session(root, capsys)
 
     assert session_main.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload[content.SESSION_ENV] == str(root.resolve())
-    assert payload[content.CONTENT_ENV] == str((root / "content").resolve())
-    assert payload[content.SESSION_ACTOR_ENV] == ""
-    assert payload[content.STATE_DIR_ENV] == str((root / "state").resolve())
-    state = content.load_state_env_at_root(root)
-    assert state.get(content.SESSION_ACTOR_ENV, "") == ""
+    assert payload[content_env.SESSION_ENV] == str(root.resolve())
+    assert payload[content_env.CONTENT_ENV] == str((root / "content").resolve())
+    assert payload[content_env.SESSION_ACTOR_ENV] == ""
+    assert payload[content_env.STATE_DIR_ENV] == str((root / "state").resolve())
+    state = content_env.load_state_env_at_root(root)
+    assert state.get(content_env.SESSION_ACTOR_ENV, "") == ""
     assert (root / "content").is_dir()
     assert not (root / "content").is_symlink()
     assert not (root / "session.json").exists()
@@ -184,11 +191,11 @@ def test_exact_root_scaffolds_local_metadata_content_and_actor_surfaces(
 
     assert session_main.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload[content.SESSION_ENV] == str(root.resolve())
-    assert payload[content.SESSION_ACTOR_ENV] == ""
-    assert payload[content.STATE_DIR_ENV] == str((root / "state").resolve())
-    state = content.load_state_env_at_root(root)
-    assert state.get(content.SESSION_ACTOR_ENV, "") == ""
+    assert payload[content_env.SESSION_ENV] == str(root.resolve())
+    assert payload[content_env.SESSION_ACTOR_ENV] == ""
+    assert payload[content_env.STATE_DIR_ENV] == str((root / "state").resolve())
+    state = content_env.load_state_env_at_root(root)
+    assert state.get(content_env.SESSION_ACTOR_ENV, "") == ""
 
     assert want.main(["--session", str(root)]) == 0
     actorless_output = capsys.readouterr().out
@@ -214,7 +221,7 @@ def test_exact_root_bind_payload_and_binding_record_stay_actorless(
 
     assert session_main.main(["bind", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    binding_id = content.session_token("thread-123")
+    binding_id = content_context.session_token("thread-123")
     record = topology.load_binding_record(binding_id)
 
     assert payload["sessionRoot"] == str(root.resolve())
@@ -333,8 +340,8 @@ def test_want_and_goal_can_target_actor_sessions_by_identity(
 
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
-    monkeypatch.setenv(content.SESSION_ENV, str(root))
-    monkeypatch.setenv(content.CONTENT_ENV, str(root / "content"))
+    monkeypatch.setenv(content_env.SESSION_ENV, str(root))
+    monkeypatch.setenv(content_env.CONTENT_ENV, str(root / "content"))
     actor_root = _actor_root(root, "claude")
     charter_dir = actor_root / "charters"
     charter_dir.mkdir(parents=True, exist_ok=True)
@@ -640,7 +647,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
     assert actor.main(["launch", claude, "--session", str(root)]) == 0
     captured = capsys.readouterr()
     status = session_status._actor_status_payload(actor_root, claude)
-    activity = content.activity_events(actor_root)
+    activity = content_activity.activity_events(actor_root)
 
     assert "ordinary stdout" in captured.out
     assert "ordinary stderr" in captured.err
@@ -808,7 +815,7 @@ def test_actor_bind_output_json_returns_structured_bindings(
     assert binding["goalCommand"] == f"gotta goal --actor {binding['actor']} --stdin"
     assert binding["todoCommand"] == f"gotta todo --actor {binding['actor']}"
     assert binding["launchCommand"] == (
-        f"gotta actor launch {binding['actor']} --session {content.sh_quote(str(root))}"
+        f"gotta actor launch {binding['actor']} --session {content_path.sh_quote(str(root))}"
     )
     assert binding["message"].startswith(f"bound {binding['actor']} (Scout) session")
 
@@ -821,16 +828,16 @@ def test_actor_status_discovers_initialized_fingerprint_actors_missing_from_meta
     _init_session(root, capsys)
     discovered = "aaaaaaaaaaaa"
     actor_root = root / "actors" / discovered
-    actor_dirs = content.ResolvedDirs(
+    actor_dirs = content_model.ResolvedDirs(
         session_dir=actor_root,
         content_dir=root / "content",
     )
     actor_dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content.write_session_state(
+    content_env.write_session_state(
         actor_dirs,
         {
-            content.SESSION_ID_ENV: root.name,
-            content.SESSION_ACTOR_ENV: discovered,
+            content_env.SESSION_ID_ENV: root.name,
+            content_env.SESSION_ACTOR_ENV: discovered,
         },
     )
     session_bootstrap.scaffold_session(actor_root)
@@ -954,7 +961,7 @@ def test_notes_append_infers_ambient_bound_actor_without_flag(
     _bind_actors(root, capsys, "Claude", "Codex")
     claude = _actor_id(root, "Claude")
 
-    monkeypatch.setenv(content.SESSION_ENV, str(root))
+    monkeypatch.setenv(content_env.SESSION_ENV, str(root))
     monkeypatch.setenv(SESSION_ACTOR_ENV, claude)
 
     assert notes.main(["append", "ambient shared-root note"]) == 0
@@ -1219,17 +1226,17 @@ def test_bound_session_root_prefers_explicit_identity_over_hyphen_split(
     tmp_path: Path, monkeypatch
 ) -> None:
     registry = tmp_path / "sessions"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", registry)
 
     foo_root = registry / "foo" / "actors" / "bar"
     foo_content = registry / "foo" / "content"
     foo_root.mkdir(parents=True, exist_ok=True)
     foo_content.mkdir(parents=True, exist_ok=True)
-    content.write_session_state(
-        content.ResolvedDirs(session_dir=foo_root, content_dir=foo_content),
+    content_env.write_session_state(
+        content_model.ResolvedDirs(session_dir=foo_root, content_dir=foo_content),
         {
-            content.SESSION_ID_ENV: "foo",
-            content.SESSION_ACTOR_ENV: "bar",
+            content_env.SESSION_ID_ENV: "foo",
+            content_env.SESSION_ACTOR_ENV: "bar",
         },
     )
 
@@ -1237,20 +1244,22 @@ def test_bound_session_root_prefers_explicit_identity_over_hyphen_split(
     foo_bar_content = registry / "foo-bar" / "content"
     foo_bar_root.mkdir(parents=True, exist_ok=True)
     foo_bar_content.mkdir(parents=True, exist_ok=True)
-    content.write_session_state(
-        content.ResolvedDirs(session_dir=foo_bar_root, content_dir=foo_bar_content),
+    content_env.write_session_state(
+        content_model.ResolvedDirs(
+            session_dir=foo_bar_root, content_dir=foo_bar_content
+        ),
         {
-            content.SESSION_ID_ENV: "foo-bar",
-            content.SESSION_ACTOR_ENV: "baz",
+            content_env.SESSION_ID_ENV: "foo-bar",
+            content_env.SESSION_ACTOR_ENV: "baz",
         },
     )
 
-    monkeypatch.delenv(content.SESSION_ENV, raising=False)
-    monkeypatch.setenv(content.SESSION_ID_ENV, "foo-bar")
-    monkeypatch.setenv(content.SESSION_ACTOR_ENV, "baz")
+    monkeypatch.delenv(content_env.SESSION_ENV, raising=False)
+    monkeypatch.setenv(content_env.SESSION_ID_ENV, "foo-bar")
+    monkeypatch.setenv(content_env.SESSION_ACTOR_ENV, "baz")
 
     assert (
-        content.bound_session_root(include_context_session=False)
+        content_scope.bound_session_root(include_context_session=False)
         == foo_bar_root.resolve()
     )
 
@@ -1578,7 +1587,7 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
         author=claude,
         timestamp="2026-03-17T00:03:00Z",
     )
-    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    dirs = content_model.ResolvedDirs(session_dir=root, content_dir=root / "content")
     for index, locator in enumerate(
         [
             "jira:DEMO-6292",
@@ -1588,7 +1597,7 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
         ],
         start=1,
     ):
-        content.materialize_bytes(
+        content_store.materialize_bytes(
             f"artifact {index}".encode("utf-8"),
             dirs=dirs,
             preferred_name=f"artifact-{index}.md",
@@ -1847,7 +1856,7 @@ def test_actor_status_reports_pulse_after_actor_evidence_before_note(
 
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
-    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    dirs = content_model.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
     session_registry._write_actor_state(
         root,
@@ -1857,7 +1866,7 @@ def test_actor_status_reports_pulse_after_actor_evidence_before_note(
             "started_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Evidence\n\nSomething landed.\n",
         dirs=dirs,
         preferred_name="evidence.md",
@@ -1887,10 +1896,10 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
 
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
-    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    dirs = content_model.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
     session_registry._write_actor_state(root, actor_name, {"status": "pending"})
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Evidence\n\nSomething landed.\n",
         dirs=dirs,
         preferred_name="evidence.md",
@@ -1919,7 +1928,7 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
 
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
-    dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
+    dirs = content_model.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
     session_registry._write_actor_state(root, actor_name, {"status": "pending"})
     notes.append_actor_note(
@@ -1929,7 +1938,7 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
         author=actor_name,
         timestamp="2026-03-21T00:00:00Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Evidence\n\nSomething landed.\n",
         dirs=dirs,
         preferred_name="evidence.md",
@@ -1994,7 +2003,7 @@ def test_explicit_actor_notes_show_counts_cold_start_supervisor_read(
     scout = _actor_id(root, "scout")
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
     monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
-    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.ACTOR_ID_ENV, raising=False)
 
     assert notes.main(["--session", str(root), "--actor", scout]) == 0
     capsys.readouterr()
@@ -2205,9 +2214,9 @@ def test_unbound_shell_cannot_append_actor_note(
     claude = _actor_id(root, "claude")
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
     monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
-    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.ACTOR_ID_ENV, raising=False)
     monkeypatch.setattr(
-        content,
+        content_context,
         "current_context_binding",
         lambda: type("Binding", (), {"binding_id": ""})(),
     )
@@ -2245,9 +2254,9 @@ def test_unbound_shell_cannot_append_actor_log(
     claude = _actor_id(root, "claude")
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
     monkeypatch.delenv(SESSION_ACTOR_ENV, raising=False)
-    monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
+    monkeypatch.delenv(content_env.ACTOR_ID_ENV, raising=False)
     monkeypatch.setattr(
-        content,
+        content_context,
         "current_context_binding",
         lambda: type("Binding", (), {"binding_id": ""})(),
     )
@@ -2283,7 +2292,7 @@ def test_session_bind_can_switch_active_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     registry = tmp_path / "sessions"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["session", "bind", "legacy-mission"]) == 0
@@ -2301,7 +2310,7 @@ def test_session_bind_without_id_returns_to_private_default(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     registry = tmp_path / "sessions"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["session", "bind", "legacy-mission"]) == 0
@@ -2321,7 +2330,7 @@ def test_actor_bind_uses_current_bound_shared_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     registry = tmp_path / "sessions"
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", registry)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", registry)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
     assert cli.main(["session", "bind", "retry-review"]) == 0
@@ -2390,7 +2399,7 @@ def test_session_show_reports_local_state_over_default(
     initialize_session(default_root)
     initialize_session(local_root)
 
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", default_root)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", default_root)
     monkeypatch.chdir(local_root)
 
     assert session_main.main([]) == 0
@@ -2403,14 +2412,14 @@ def test_session_doctor_reports_live_codex_runtime_and_matching_binding(
     local_root = tmp_path / "local"
     initialize_session(local_root)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
-    binding_id = content.session_token("thread-123")
+    binding_id = content_context.session_token("thread-123")
     topology.write_binding(
         binding_id,
         local_root,
         context_id="thread-123",
         context_source="codex_thread",
-        session_id=content.session_id(local_root),
-        actor=content.session_identity(local_root),
+        session_id=content_scope.session_id(local_root),
+        actor=content_scope.session_identity(local_root),
         created_at="2026-03-22T00:00:00Z",
         updated_at="2026-03-22T00:00:00Z",
     )
@@ -2437,12 +2446,12 @@ def test_session_doctor_reports_historical_binding_when_runtime_points_elsewhere
     initialize_session(local_root)
     monkeypatch.setenv("CODEX_THREAD_ID", "other-thread")
     topology.write_binding(
-        content.session_token("historic-thread"),
+        content_context.session_token("historic-thread"),
         local_root,
         context_id="historic-thread",
         context_source="codex_thread",
-        session_id=content.session_id(local_root),
-        actor=content.session_identity(local_root),
+        session_id=content_scope.session_id(local_root),
+        actor=content_scope.session_identity(local_root),
         created_at="2026-03-22T00:00:00Z",
         updated_at="2026-03-22T00:00:00Z",
     )
@@ -2465,7 +2474,7 @@ def test_session_doctor_ignores_invalid_binding_record_instead_of_crashing(
     local_root = tmp_path / "local"
     initialize_session(local_root)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
-    binding_id = content.session_token("thread-123")
+    binding_id = content_context.session_token("thread-123")
     binding_dir = topology.binding_path_for(binding_id)
     binding_dir.mkdir(parents=True, exist_ok=True)
     topology.binding_root_path_for(binding_id).symlink_to(
@@ -2492,14 +2501,14 @@ def test_session_doctor_matches_durable_bindings_at_shared_session_boundary(
     _bind_actors(local_root, capsys, "Claude")
     claude_root = _actor_root(local_root, "claude")
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
-    binding_id = content.session_token("thread-123")
+    binding_id = content_context.session_token("thread-123")
     topology.write_binding(
         binding_id,
         local_root,
         context_id="thread-123",
         context_source="codex_thread",
-        session_id=content.session_id(local_root),
-        actor=content.session_identity(local_root),
+        session_id=content_scope.session_id(local_root),
+        actor=content_scope.session_identity(local_root),
         created_at="2026-03-22T00:00:00Z",
         updated_at="2026-03-22T00:00:00Z",
     )
@@ -2528,8 +2537,8 @@ def test_session_doctor_does_not_merge_unrelated_local_sessions_with_same_name(
         left_root,
         context_id="ctx-left",
         context_source="codex_thread",
-        session_id=content.session_id(left_root),
-        actor=content.session_identity(left_root),
+        session_id=content_scope.session_id(left_root),
+        actor=content_scope.session_identity(left_root),
         created_at="2026-03-22T00:00:00Z",
         updated_at="2026-03-22T00:00:00Z",
     )
@@ -2550,14 +2559,14 @@ def test_session_doctor_ignores_binding_with_missing_root_target(
     local_root = tmp_path / "local"
     initialize_session(local_root)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
-    binding_id = content.session_token("thread-123")
+    binding_id = content_context.session_token("thread-123")
     topology.write_binding(
         binding_id,
         local_root,
         context_id="thread-123",
         context_source="codex_thread",
-        session_id=content.session_id(local_root),
-        actor=content.session_identity(local_root),
+        session_id=content_scope.session_id(local_root),
+        actor=content_scope.session_identity(local_root),
         created_at="2026-03-22T00:00:00Z",
         updated_at="2026-03-22T00:00:00Z",
     )
@@ -2608,7 +2617,7 @@ def test_session_analyze_writes_summary_and_graph(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -2620,7 +2629,7 @@ def test_session_analyze_writes_summary_and_graph(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"hello again",
         dirs=dirs,
         preferred_name="demo.md",
@@ -2653,7 +2662,7 @@ def test_session_analyze_output_json_returns_combined_payload_by_default(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -2700,7 +2709,7 @@ def test_session_analyze_output_mermaid_prints_raw_lineage_mermaid(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -2739,7 +2748,7 @@ def test_session_analyze_output_markdown_bundles_lineage_and_semantic_for_all_mo
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -2780,7 +2789,7 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -2924,7 +2933,7 @@ def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"See also https://kubernetes.io/docs/reference/networking/virtual-ips/\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -2967,7 +2976,7 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Generic Item\n\nReference.\n",
         dirs=dirs,
         preferred_name="generic-item.md",
@@ -2981,7 +2990,7 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Generic Page\n\nReference.\n",
         dirs=dirs,
         preferred_name="generic-page.md",
@@ -3044,7 +3053,7 @@ def test_session_manifest_and_timeline_text_surface_hotspots_first(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# GEN-1\n\nReference.\n",
         dirs=dirs,
         preferred_name="GEN-1.md",
@@ -3058,7 +3067,7 @@ def test_session_manifest_and_timeline_text_surface_hotspots_first(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# GEN-2\n\nReference.\n",
         dirs=dirs,
         preferred_name="GEN-2.md",
@@ -3072,7 +3081,7 @@ def test_session_manifest_and_timeline_text_surface_hotspots_first(
         },
         timestamp="2026-03-11T00:00:01.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Generic Page\n\nReference.\n",
         dirs=dirs,
         preferred_name="generic-page.md",
@@ -3108,7 +3117,7 @@ def test_session_analyze_defaults_to_text_overview_with_middle_sections(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "# ABC-1\n\n"
             "Depends on ABC-2.\n"
@@ -3126,7 +3135,7 @@ def test_session_analyze_defaults_to_text_overview_with_middle_sections(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Search\n\nSee also jira:ABC-1\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -3157,7 +3166,7 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    issue = content.materialize_bytes(
+    issue = content_store.materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3172,7 +3181,7 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3225,7 +3234,7 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
     assert payload["root"]["kind"] == "content"
     assert payload["root"]["materialized"] is True
     assert payload["root"]["followCommand"].startswith(
-        f"gotta read --session {content.sh_quote(str(local_root))} 'artifact:ABC-1.md@"
+        f"gotta read --session {content_path.sh_quote(str(local_root))} 'artifact:ABC-1.md@"
     )
 
 
@@ -3234,7 +3243,7 @@ def test_session_analyze_focus_respects_lineage_mode(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3249,7 +3258,7 @@ def test_session_analyze_focus_respects_lineage_mode(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3297,7 +3306,7 @@ def test_session_analyze_focus_can_match_projected_corpus_without_label_hits(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"Generic synthetic body describing example connector worker behavior.\n",
         dirs=dirs,
         preferred_name="artifact-a.md",
@@ -3310,7 +3319,7 @@ def test_session_analyze_focus_can_match_projected_corpus_without_label_hits(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"Generic synthetic body describing example connector importer behavior.\n",
         dirs=dirs,
         preferred_name="artifact-b.md",
@@ -3359,7 +3368,7 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "- [acme/relevant:infra/syntheticconcept.tf]"
             "(https://github.com/acme/relevant/blob/main/infra/syntheticconcept.tf)\n"
@@ -3377,7 +3386,7 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b'resource "demo" "syntheticconcept" {}\n',
         dirs=dirs,
         preferred_name="syntheticconcept.tf",
@@ -3390,7 +3399,7 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
         },
         timestamp="2026-03-11T00:00:01.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b'resource "demo" "plain" {}\n',
         dirs=dirs,
         preferred_name="plain.tf",
@@ -3443,7 +3452,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    issue = content.materialize_bytes(
+    issue = content_store.materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3458,7 +3467,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3549,7 +3558,7 @@ def test_session_analyze_mode_markdown_stays_dossier_not_mermaid(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3615,7 +3624,7 @@ def test_session_scan_searches_projected_materialized_corpus(
         "html_markdown",
         lambda _data: b"# Example Heading\n\nGeneric synthetic body.\n",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"<h1>Example Heading</h1><p>Generic synthetic body.</p>",
         dirs=dirs,
         preferred_name="3925246070.html",
@@ -3629,7 +3638,7 @@ def test_session_scan_searches_projected_materialized_corpus(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b'{"title":"Other branch"}',
         dirs=dirs,
         preferred_name="DO-1.json",
@@ -3674,7 +3683,7 @@ def test_session_scan_searches_projected_materialized_corpus(
         local_root, "confluence:3925246070"
     )
     assert entry["artifactFollowCommand"].startswith(
-        f"gotta read --session {content.sh_quote(str(local_root))} 'artifact:3925246070.html@"
+        f"gotta read --session {content_path.sh_quote(str(local_root))} 'artifact:3925246070.html@"
     )
     assert any(
         line["text"] == "# Example Heading" for line in entry["snippets"][0]["lines"]
@@ -3734,7 +3743,7 @@ def test_session_manifest_falls_back_to_jira_visibility_when_snapshot_metadata_i
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# OPS-1\n\nBody.\n",
         dirs=dirs,
         preferred_name="OPS-1.md",
@@ -3773,7 +3782,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
     url = "https://github.com/acme/widgets"
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"summary view",
         dirs=dirs,
         preferred_name="widgets.summary",
@@ -3788,7 +3797,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"markdown view",
         dirs=dirs,
         preferred_name="widgets.md",
@@ -3825,7 +3834,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
     url = "confluence:4373708801"
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"primary body",
         dirs=dirs,
         preferred_name="4373708801.md",
@@ -3839,7 +3848,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"actor body",
         dirs=dirs,
         preferred_name="4373708801.md",
@@ -3871,7 +3880,7 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
     tmp_path: Path,
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "# ABC-1\n\n"
             "Depends on ABC-2.\n"
@@ -3892,7 +3901,7 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3954,7 +3963,7 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    source = content.materialize_bytes(
+    source = content_store.materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3972,7 +3981,7 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3984,7 +3993,7 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
         },
         timestamp="2026-03-11T00:00:01.000001Z",
     )
-    artifact = content.artifact_locator("ABC-1.md", source.digest)
+    artifact = content_path.artifact_locator("ABC-1.md", source.digest)
 
     monkeypatch.chdir(local_root)
 
@@ -4017,7 +4026,7 @@ def test_session_leads_orders_best_first_without_quality_thresholds(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -4029,7 +4038,7 @@ def test_session_leads_orders_best_first_without_quality_thresholds(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Search Results\n\nhttps://kubernetes.io/docs/reference/networking/virtual-ips/\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -4095,7 +4104,7 @@ def test_session_leads_filter_filters_surviving_leads_without_reordering_them(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "# GEN-1\n\nDepends on GEN-2.\nRunbook: https://docs.example.test/runbook\n"
         ).encode("utf-8"),
@@ -4142,7 +4151,7 @@ def test_session_leads_filter_no_match_guides_toward_corpus_search(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"Runbook: https://docs.example.test/runbook\n",
         dirs=dirs,
         preferred_name="GEN-1.md",
@@ -4185,7 +4194,7 @@ def test_session_leads_shows_low_signal_only_case_without_hiding_it(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"See also https://kubernetes.io/docs/reference/networking/virtual-ips/\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -4233,7 +4242,7 @@ def test_session_leads_demote_low_signal_service_urls_but_keep_them_visible(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "Service root: https://admin.demo.internal\n"
             "Auth: https://login.demo.internal/.well-known/jwks.json\n"
@@ -4271,7 +4280,7 @@ def test_session_leads_support_offset_and_all_paging(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "https://docs.demo.internal/runbook\n"
             "https://admin.demo.internal\n"
@@ -4343,7 +4352,7 @@ def test_session_leads_preserve_search_result_order_within_search_artifacts(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "1. https://kubernetes.io/docs/reference/networking/virtual-ips/\n"
             "2. https://docs.python.org/3/library/pathlib.html\n"
@@ -4383,7 +4392,7 @@ def test_session_leads_falls_back_to_same_provider_search_for_prose_heavy_conflu
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "# Network configuration for debugging devices remotely\n\n"
             "- URL: https://example.atlassian.net/wiki/pages/viewpage.action?pageId=4456054785\n\n"
@@ -4426,7 +4435,7 @@ def test_session_leads_falls_back_to_workspace_scoped_slack_search_for_semantic_
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         (
             "### Slack Thread: connector retrospective\n\n"
             "- _Source_: https://demo.slack.com/archives/C12345678/p1773085070240949\n\n"
@@ -4566,7 +4575,7 @@ def test_materialize_bytes_eagerly_writes_lead_cache(
     tmp_path: Path, monkeypatch
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"Depends on ABC-2.\nDesign doc: confluence:12345\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -4588,7 +4597,7 @@ def test_materialize_bytes_eagerly_writes_lead_cache(
         "confluence:12345",
     }
 
-    snapshot = content.scan_content_store(dirs.content_dir)[0]
+    snapshot = content_store.scan_content_store(dirs.content_dir)[0]
 
     def fail_extract(_text: str) -> list[lead_model.LeadMention]:
         raise AssertionError("lead extraction should reuse the eager cache")
@@ -4612,7 +4621,7 @@ def test_materialize_bytes_eagerly_mines_projected_display_for_leads(
         lambda _data: b"Design doc: https://docs.google.com/document/d/doc-123/edit\n",
     )
 
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b'<h1>Example Heading</h1><p><a href="https://www.google.com/url?q=https://docs.google.com/document/d/doc-123/edit&amp;ust=1&amp;usg=2">Design</a></p>',
         dirs=dirs,
         preferred_name="40404.html",
@@ -4640,7 +4649,7 @@ def test_materialize_bytes_records_explicit_projection_degradation(
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
 
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"<p>Design doc: confluence:12345</p>",
         dirs=dirs,
         preferred_name="artifact.html",
@@ -4688,7 +4697,7 @@ def test_materialize_bytes_eagerly_drops_structural_github_repo_navigation_leads
         ),
     )
 
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b'{"synthetic": true}',
         dirs=dirs,
         preferred_name="acme-widgets.json",
@@ -4711,7 +4720,7 @@ def test_materialize_bytes_eagerly_drops_structural_github_repo_navigation_leads
 
 def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None:
     dirs = initialize_session(tmp_path / "local")
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"Depends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -4729,7 +4738,7 @@ def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    snapshot = content.scan_content_store(dirs.content_dir)[0]
+    snapshot = content_store.scan_content_store(dirs.content_dir)[0]
     mentions = lead_cache.lead_mentions_for_snapshot(snapshot)
 
     assert [mention.canonical_locator for mention in mentions] == ["jira:ABC-2"]
@@ -4743,7 +4752,7 @@ def test_session_manifest_has_native_summary_surface(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -4787,10 +4796,10 @@ def test_session_manifest_has_native_summary_surface(
     assert payload["entries"][0]["content_locator"].startswith("content:")
     assert payload["entries"][0]["artifact_locator"].startswith("artifact:demo.md@")
     assert payload["entries"][0]["content_follow_command"].startswith(
-        f"gotta read --session {content.sh_quote(str(local_root))} 'content:"
+        f"gotta read --session {content_path.sh_quote(str(local_root))} 'content:"
     )
     assert payload["entries"][0]["artifact_follow_command"].startswith(
-        f"gotta read --session {content.sh_quote(str(local_root))} 'artifact:demo.md@"
+        f"gotta read --session {content_path.sh_quote(str(local_root))} 'artifact:demo.md@"
     )
     assert payload["entries"][0]["visibility_level"] == "personal"
     assert payload["entries"][0]["visibility_boundary"] == "same_user"
@@ -4801,7 +4810,7 @@ def test_session_manifest_accepts_stdout_flag_for_uniformity(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -4828,7 +4837,7 @@ def test_session_manifest_filter_filters_rows_before_paging(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"north",
         dirs=dirs,
         preferred_name="north-ledger.md",
@@ -4841,7 +4850,7 @@ def test_session_manifest_filter_filters_rows_before_paging(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"south",
         dirs=dirs,
         preferred_name="south-runbook.md",
@@ -4881,7 +4890,7 @@ def test_session_manifest_falls_back_to_content_locator_when_canonical_missing(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    result = content.materialize_bytes(
+    result = content_store.materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -4914,7 +4923,7 @@ def test_session_manifest_falls_back_to_content_locator_when_canonical_missing(
         f"content:{result.digest}",
     )
     assert payload["entries"][0]["content_locator"] == f"content:{result.digest}"
-    assert payload["entries"][0]["artifact_locator"] == content.artifact_locator(
+    assert payload["entries"][0]["artifact_locator"] == content_path.artifact_locator(
         "demo.md", result.digest
     )
 
@@ -4924,7 +4933,7 @@ def test_session_timeline_has_native_continuity_surface(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"first",
         dirs=dirs,
         preferred_name="first.md",
@@ -4941,7 +4950,7 @@ def test_session_timeline_has_native_continuity_surface(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"second",
         dirs=dirs,
         preferred_name="second.md",
@@ -4985,7 +4994,7 @@ def test_session_timeline_accepts_stdout_flag_for_uniformity(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"first",
         dirs=dirs,
         preferred_name="first.md",
@@ -5012,7 +5021,7 @@ def test_session_timeline_filter_filters_events_before_paging(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"north",
         dirs=dirs,
         preferred_name="north.md",
@@ -5025,7 +5034,7 @@ def test_session_timeline_filter_filters_events_before_paging(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"south",
         dirs=dirs,
         preferred_name="south.md",
@@ -5065,7 +5074,7 @@ def test_session_timeline_filter_filters_coverage_gaps_in_source_modes(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"north content",
         dirs=dirs,
         preferred_name="north-gap.md",
@@ -5077,7 +5086,7 @@ def test_session_timeline_filter_filters_coverage_gaps_in_source_modes(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"south content",
         dirs=dirs,
         preferred_name="south-gap.md",
@@ -5118,7 +5127,7 @@ def test_session_timeline_default_limit_keeps_latest_window(
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
     for index in range(3):
-        content.materialize_bytes(
+        content_store.materialize_bytes(
             f"artifact-{index}".encode("utf-8"),
             dirs=dirs,
             preferred_name=f"artifact-{index}.md",
@@ -5158,7 +5167,7 @@ def test_session_timeline_acquired_includes_native_local_activity(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="PROJ-1.md",
@@ -5170,7 +5179,7 @@ def test_session_timeline_acquired_includes_native_local_activity(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.append_activity_event(
+    content_activity.append_activity_event(
         local_root,
         {
             "timestamp": "2026-03-11T00:00:01Z",
@@ -5212,7 +5221,7 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
     claude_root = _actor_root(root, "Claude")
     codex_root = _actor_root(root, "Codex")
 
-    content.append_activity_event(
+    content_activity.append_activity_event(
         claude_root,
         {
             "timestamp": "2026-03-11T00:00:01Z",
@@ -5227,7 +5236,7 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
             "time_field": "session_recorded_at",
         },
     )
-    content.append_activity_event(
+    content_activity.append_activity_event(
         codex_root,
         {
             "timestamp": "2026-03-11T00:00:02Z",
@@ -5242,7 +5251,7 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
             "time_field": "session_recorded_at",
         },
     )
-    content.append_activity_event(
+    content_activity.append_activity_event(
         codex_root,
         {
             "timestamp": "2026-03-11T00:00:03Z",
@@ -5308,7 +5317,7 @@ def test_session_timeline_best_effort_mode_prefers_created_and_surfaces_gaps(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5322,7 +5331,7 @@ def test_session_timeline_best_effort_mode_prefers_created_and_surfaces_gaps(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"readme body",
         dirs=dirs,
         preferred_name="README.md",
@@ -5363,7 +5372,7 @@ def test_session_timeline_best_effort_includes_local_activity_with_explicit_prov
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5377,7 +5386,7 @@ def test_session_timeline_best_effort_includes_local_activity_with_explicit_prov
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.append_activity_event(
+    content_activity.append_activity_event(
         local_root,
         {
             "timestamp": "2026-03-11T00:00:01Z",
@@ -5421,7 +5430,7 @@ def test_session_timeline_created_and_updated_modes_split_cleanly(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5481,7 +5490,7 @@ def test_session_timeline_source_mode_ignores_local_reads_and_schema_probes(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5495,7 +5504,7 @@ def test_session_timeline_source_mode_ignores_local_reads_and_schema_probes(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"goal body",
         dirs=dirs,
         preferred_name="GOAL.md",
@@ -5507,7 +5516,7 @@ def test_session_timeline_source_mode_ignores_local_reads_and_schema_probes(
         },
         timestamp="2026-03-11T00:00:01.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"schema body",
         dirs=dirs,
         preferred_name="workspace.tsv",
@@ -5544,7 +5553,7 @@ def test_session_timeline_best_effort_ignores_local_artifact_rereads(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    source = content.materialize_bytes(
+    source = content_store.materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5558,7 +5567,7 @@ def test_session_timeline_best_effort_ignores_local_artifact_rereads(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Jira\n\nsnippet\n",
         dirs=dirs,
         preferred_name="jira-head.md",
@@ -5595,7 +5604,7 @@ def test_session_timeline_best_effort_ignores_aggregate_search_artifact_dates(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Search Results\n\n- hit\n",
         dirs=dirs,
         preferred_name="gdocs-search-abc.md",
@@ -5653,7 +5662,7 @@ def test_session_timeline_supports_offset_and_reports_exhausted_pages(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"first",
         dirs=dirs,
         preferred_name="first.md",
@@ -5665,7 +5674,7 @@ def test_session_timeline_supports_offset_and_reports_exhausted_pages(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"second",
         dirs=dirs,
         preferred_name="second.md",
@@ -5730,7 +5739,7 @@ def test_session_manifest_plugin_filter_sees_provider_attributed_read_artifacts(
     dispatch._materialize_invocation(
         "read",
         ["jira:PROJ-1"],
-        content.CommonOptions(),
+        content_model.CommonOptions(),
         b"# PROJ-1\n\n- Created: 2026-03-10T12:00:00Z\n",
         dirs=dirs,
     )
@@ -5758,7 +5767,7 @@ def test_session_manifest_supports_offset_and_all_paging(
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
     for index in range(3):
-        content.materialize_bytes(
+        content_store.materialize_bytes(
             f"artifact-{index}".encode("utf-8"),
             dirs=dirs,
             preferred_name=f"artifact-{index}.md",
@@ -5827,7 +5836,7 @@ def test_session_manifest_collapses_repeated_fetches_into_one_canonical_entry(
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
     for index in range(2):
-        content.materialize_bytes(
+        content_store.materialize_bytes(
             b"same body",
             dirs=dirs,
             preferred_name="demo.md",
@@ -5863,7 +5872,7 @@ def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
     tmp_path: Path,
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="ABC.md",
@@ -5875,7 +5884,7 @@ def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"confluence body",
         dirs=dirs,
         preferred_name="ABC.md",
@@ -5900,7 +5909,7 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
     tmp_path: Path,
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"thread one",
         dirs=dirs,
         preferred_name="shared-thread.md",
@@ -5912,7 +5921,7 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"thread two",
         dirs=dirs,
         preferred_name="shared-thread.md",

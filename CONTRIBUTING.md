@@ -110,7 +110,7 @@ gotta jira search "retry budget"
   ├─ builtin.py        discover plugin via entry points (gotta.plugins group)
   ├─ dispatch/main.py   orchestrate plugin runtime over dispatch phases
   ├─ resolve/           resolve read/search targets and invocation metadata
-  ├─ content.py         materialize captured output to content store
+  ├─ content/           materialize captured output to content store
   └─ stdout             emit receipt with artifact and content locators
 ```
 
@@ -131,9 +131,13 @@ Core infrastructure:
   stdout/stderr, `budget.py` owns interactive output truncation, `metadata.py`
   derives source metadata, `materialize.py` writes artifacts, `receipt.py`
   emits receipts, and `runtime.py` owns session/runtime scoping.
-- **`content.py`** — Evidence store. SHA-256-keyed content directory with atomic
-  writes, append-only manifest (`manifest.jsonl`), activity logging, session
-  environment export/import, context binding resolution.
+- **`content/`** — Evidence-store kernel package. `model.py` owns content
+  dataclasses and errors, `path.py` owns locators and path normalization,
+  `file.py` owns atomic/private file operations, `context.py` owns context and
+  stdin probes, `env.py` owns session environment export/import, `scope.py`
+  owns shared content/session resolution, `activity.py` owns append-only
+  activity logging, `store.py` owns artifact materialization and content-store
+  scans, and `stamp.py` owns UTC timestamp helpers.
 - **`resolve/`** — Resolution kernel package. `read.py` owns `gotta read`
   target parsing and routed-target detection, `search.py` owns the top-level
   plain-text search contract, `route.py` owns provider locator tokenization,

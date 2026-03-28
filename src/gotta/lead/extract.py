@@ -6,7 +6,7 @@ from functools import cache
 import re
 import urllib.parse
 
-from gotta.content import sh_quote
+from gotta.content.path import sh_quote
 
 from .canon import canonicalize_url, github_repo_reference, provider_for_locator
 from .model import LeadMention

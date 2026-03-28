@@ -6,7 +6,7 @@ import argparse
 import json
 
 from gotta.actor import require_writer, session_actor, writer_name, writer_role
-from gotta.content import session_is_initialized
+from gotta.content.scope import session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.logs import append_log_record, log_records, logs_state_path
 from gotta.session import activity as session_activity

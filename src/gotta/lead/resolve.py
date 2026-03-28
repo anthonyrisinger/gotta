@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from gotta.content import ContentError, ContentSnapshot, content_locator
+from gotta.content.model import ContentError, ContentSnapshot
+from gotta.content.path import content_locator
 
 from .snapshot import (
     snapshot_artifact_locator,

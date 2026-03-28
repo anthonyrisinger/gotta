@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from gotta.content import scan_content_store
+from gotta.content.store import scan_content_store
 
 from .core import (
     GRAPH_TEXT_PREVIEW_LIMIT,

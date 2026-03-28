@@ -7,7 +7,8 @@ import json
 import re
 
 from gotta import stored
-from gotta.content import content_locator, scan_content_store
+from gotta.content.path import content_locator
+from gotta.content.store import scan_content_store
 
 from .core import (
     artifact_human_locator,

@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from gotta import stored
-from gotta.content import ContentSnapshot, write_text_atomic
+from gotta.content.file import write_text_atomic
+from gotta.content.model import ContentSnapshot
 
 from .canon import provider_for_locator
 from .extract import (

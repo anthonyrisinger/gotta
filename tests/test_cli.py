@@ -9,7 +9,10 @@ import pytest
 
 from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta import builtin
-from gotta import content
+import gotta.content.env as content_env
+import gotta.content.model as content_model
+import gotta.content.scope as content_scope
+import gotta.content.store as content_store
 import gotta.cli.argv as cli_argv
 import gotta.cli.bind as cli_bind
 import gotta.cli.entry as cli
@@ -28,7 +31,7 @@ def _last_stderr_json(stderr: str) -> dict[str, object]:
 
 
 def _set_default_session_root(monkeypatch, root: Path) -> None:
-    monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", root)
+    monkeypatch.setattr(content_scope, "DEFAULT_SESSION_ROOT", root)
 
 
 def _grouped_root(
@@ -531,11 +534,11 @@ def test_main_session_analyze_emits_no_side_effect_receipt(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session-root"
-    dirs = content.resolve_dirs(
-        content.CommonOptions(session_dir=str(root)), create=True
+    dirs = content_scope.resolve_dirs(
+        content_model.CommonOptions(session_dir=str(root)), create=True
     )
     session_bootstrap.scaffold_session(root)
-    content.materialize_bytes(
+    content_store.materialize_bytes(
         b"# Example\n\nhello world\n",
         dirs=dirs,
         preferred_name="example.md",
@@ -1096,7 +1099,7 @@ def test_main_actor_status_prefers_sourced_session_env_over_implicit_context_ids
     shared_root = registry / "demo"
     claude = _actor_id(shared_root, "claude")
     actor_root = shared_root / "actors" / claude
-    state = content.load_state_env_at_root(actor_root)
+    state = content_env.load_state_env_at_root(actor_root)
     for key, value in state.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("CODEX_THREAD_ID", "conflict-thread")
@@ -1189,19 +1192,19 @@ def test_main_read_only_explicit_session_inspection_uses_existing_actor_root(
 
     shared_root = registry / "retry-review"
     actor_root = shared_root / "actors" / "claude"
-    dirs = content.resolve_dirs(
-        content.CommonOptions(
+    dirs = content_scope.resolve_dirs(
+        content_model.CommonOptions(
             session_dir=str(actor_root),
             content_dir=str(shared_root / "content"),
             actor="claude",
         ),
         create=True,
     )
-    content.write_session_state(
+    content_env.write_session_state(
         dirs,
         {
-            content.SESSION_ID_ENV: "retry-review",
-            content.SESSION_ACTOR_ENV: "claude",
+            content_env.SESSION_ID_ENV: "retry-review",
+            content_env.SESSION_ACTOR_ENV: "claude",
         },
     )
     shared_root.joinpath("session.json").write_text("{}\n", encoding="utf-8")
@@ -1306,7 +1309,7 @@ def test_session_bind_accepts_exact_session_root_reference(
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["sessionRoot"] == str(session_root.resolve())
-    assert payload["sessionId"] == content.session_id(session_root)
+    assert payload["sessionId"] == content_scope.session_id(session_root)
     assert payload["actor"] == ""
 
     assert cli.main(["session", "doctor", "--output", "json"]) == 0
@@ -1347,7 +1350,7 @@ def test_main_warns_actor_when_supervisor_requested_failed_disposition(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["logs"]) == 0
@@ -1395,7 +1398,7 @@ def test_main_warns_actor_when_supervisor_requested_graceful_stop(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["logs"]) == 0
@@ -1442,7 +1445,7 @@ def test_main_does_not_warn_actor_for_nonfailed_pending_disposition(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["logs"]) == 0
@@ -1493,7 +1496,7 @@ def test_main_warns_actor_when_supervisor_keeps_checking_notes_since_last_note(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["logs"]) == 0
@@ -1544,7 +1547,7 @@ def test_main_notes_surface_warns_actor_when_note_check_pulse_is_active(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["notes"]) == 0
@@ -1594,7 +1597,7 @@ def test_main_shared_session_notes_view_does_not_emit_note_check_pulse(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["notes", "--session", str(registry / "actor-root")]) == 0
@@ -1647,7 +1650,7 @@ def test_main_stop_warning_suppresses_note_check_pulse(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["logs"]) == 0
@@ -1700,7 +1703,7 @@ def test_main_shared_session_inspection_does_not_emit_note_check_pulse(
         ),
         encoding="utf-8",
     )
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert (
@@ -1731,7 +1734,7 @@ def test_main_does_not_warn_nonactor_session(
         return 0
 
     monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
-    for key, value in content.load_state_env_at_root(actor_root).items():
+    for key, value in content_env.load_state_env_at_root(actor_root).items():
         monkeypatch.setenv(key, value)
 
     assert cli.main(["logs"]) == 0

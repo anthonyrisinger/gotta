@@ -6,7 +6,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from gotta import content
+from gotta.content.env import (
+    CONTENT_ENV,
+    CONTEXT_ACTIVE_ENV,
+    CONTEXT_ID_ENV,
+    CONTEXT_SOURCE_ENV,
+    SESSION_ACTIVATION_ENV,
+    SESSION_ACTOR_ENV,
+    SESSION_ENV,
+    SESSION_ID_ENV,
+    SESSION_REPO_ENV,
+    load_state_env_at_root,
+)
+from gotta.content.scope import session_actor_scope, session_id
 from gotta import topology
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
@@ -19,30 +31,24 @@ def _explicit_session_content_root(root: Path) -> Path:
 
 
 def _hydrate_environment(root: Path, *, context_id: str, context_source: str) -> None:
-    state = content.load_state_env_at_root(root)
+    state = load_state_env_at_root(root)
     for key, value in state.items():
         os.environ[key] = value
-    os.environ[content.SESSION_ENV] = str(root)
-    os.environ[content.SESSION_ID_ENV] = str(
-        state.get(content.SESSION_ID_ENV) or content.session_id(root)
-    )
-    os.environ[content.CONTENT_ENV] = str(
-        state.get(content.CONTENT_ENV) or (root / "content")
-    )
-    actor_scope = str(
-        state.get(content.SESSION_ACTOR_ENV) or content.session_actor_scope(root)
-    )
+    os.environ[SESSION_ENV] = str(root)
+    os.environ[SESSION_ID_ENV] = str(state.get(SESSION_ID_ENV) or session_id(root))
+    os.environ[CONTENT_ENV] = str(state.get(CONTENT_ENV) or (root / "content"))
+    actor_scope = str(state.get(SESSION_ACTOR_ENV) or session_actor_scope(root))
     if actor_scope:
-        os.environ[content.SESSION_ACTOR_ENV] = actor_scope
+        os.environ[SESSION_ACTOR_ENV] = actor_scope
     else:
-        os.environ.pop(content.SESSION_ACTOR_ENV, None)
-    os.environ[content.CONTEXT_ACTIVE_ENV] = "1"
-    os.environ[content.CONTEXT_ID_ENV] = context_id
-    os.environ[content.CONTEXT_SOURCE_ENV] = context_source
-    os.environ[content.SESSION_ACTIVATION_ENV] = "gotta"
-    repo_root = state.get(content.SESSION_REPO_ENV, "").strip()
+        os.environ.pop(SESSION_ACTOR_ENV, None)
+    os.environ[CONTEXT_ACTIVE_ENV] = "1"
+    os.environ[CONTEXT_ID_ENV] = context_id
+    os.environ[CONTEXT_SOURCE_ENV] = context_source
+    os.environ[SESSION_ACTIVATION_ENV] = "gotta"
+    repo_root = state.get(SESSION_REPO_ENV, "").strip()
     if repo_root:
-        os.environ[content.SESSION_REPO_ENV] = repo_root
+        os.environ[SESSION_REPO_ENV] = repo_root
         venv = Path(repo_root) / ".venv"
         venv_bin = venv / "bin"
         if venv_bin.is_dir():
@@ -65,23 +71,23 @@ def _hydrate_shared_session_environment(
     primary = session_scope._primary_actor_name(session_root) or ""
     if primary:
         primary_root = session_registry._actor_session_dir(session_root, primary)
-        state = content.load_state_env_at_root(primary_root)
+        state = load_state_env_at_root(primary_root)
     for key, value in state.items():
         os.environ[key] = value
-    os.environ[content.SESSION_ENV] = str(session_root)
-    os.environ[content.SESSION_ID_ENV] = topology.shared_session_id(session_root)
-    os.environ[content.CONTENT_ENV] = str(_explicit_session_content_root(session_root))
+    os.environ[SESSION_ENV] = str(session_root)
+    os.environ[SESSION_ID_ENV] = topology.shared_session_id(session_root)
+    os.environ[CONTENT_ENV] = str(_explicit_session_content_root(session_root))
     if primary:
-        os.environ[content.SESSION_ACTOR_ENV] = primary
+        os.environ[SESSION_ACTOR_ENV] = primary
     else:
-        os.environ.pop(content.SESSION_ACTOR_ENV, None)
-    os.environ[content.CONTEXT_ACTIVE_ENV] = "1"
-    os.environ[content.CONTEXT_ID_ENV] = context_id
-    os.environ[content.CONTEXT_SOURCE_ENV] = context_source
-    os.environ[content.SESSION_ACTIVATION_ENV] = "gotta"
-    repo_root = str(state.get(content.SESSION_REPO_ENV) or "").strip()
+        os.environ.pop(SESSION_ACTOR_ENV, None)
+    os.environ[CONTEXT_ACTIVE_ENV] = "1"
+    os.environ[CONTEXT_ID_ENV] = context_id
+    os.environ[CONTEXT_SOURCE_ENV] = context_source
+    os.environ[SESSION_ACTIVATION_ENV] = "gotta"
+    repo_root = str(state.get(SESSION_REPO_ENV) or "").strip()
     if repo_root:
-        os.environ[content.SESSION_REPO_ENV] = repo_root
+        os.environ[SESSION_REPO_ENV] = repo_root
         venv_bin = Path(repo_root) / ".venv" / "bin"
         if venv_bin.is_dir():
             current_path = os.environ.get("PATH", "")
