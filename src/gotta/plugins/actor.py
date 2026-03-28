@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import threading
@@ -25,8 +26,6 @@ from gotta.notes import (
 from gotta.actor import (
     ACTOR_ID_ENV,
     ACTOR_LABEL_ENV,
-    SUPERVISOR_GRACEFUL_STOP_MODE,
-    SUPERVISOR_GRACEFUL_STOP_STATUS,
     actor_session_root,
     require_writer,
     writer_name,
@@ -66,6 +65,9 @@ LAUNCHER_HEARTBEAT_NOTE = (
     "launcher pulse: actor runtime spawned successfully; wait for actor voice and do "
     "not pair another agent into this actor."
 )
+RUNTIME_UPSTREAM_RETRY_LOOP_KIND = "upstream_retry_loop"
+RUNTIME_STDOUT_STREAM = "stdout"
+RUNTIME_STDERR_STREAM = "stderr"
 
 
 def _normalize_args(argv: list[str]) -> list[str]:
@@ -183,8 +185,8 @@ def _actor_prompt(*, work_root: Path, actor_name: str) -> str:
         - append a first substantive short note immediately after the first strong anchor or branch; do not wait for a full evidence wave
         - append another short note after each material evidence wave or when the plan changes
         - if you materially expanded the evidence web since your last note, append a new short note before requesting completion or sign-off
-        - if the supervisor records a pending graceful stop or `failed` disposition, treat that as a stopping signal: stop new retrieval, append one final short note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
-        - session-rooted `gotta ...` commands will repeat that stopping warning while the supervisor stop request is still pending
+        - if the supervisor records a pending `failed`, `completed`, or `signed_off` disposition, treat that as a stopping signal: stop new retrieval, append one final short note, and run `gotta actor signoff {actor_name} --summary "<one-line sign-off>"` promptly
+        - session-rooted `gotta ...` commands will repeat the failed-run stopping warning while the pending `failed` request is still authoritative
         - if actor-local `gotta ...` commands warn that the supervisor has checked your notes repeatedly, treat that as live pulse feedback and answer it with one short note if real progress exists
         - do not author the final dossier, final brief, or top-level synthesis from this actor session
         - do not rewrite another linked session's local surfaces unless you intentionally mean to change shared team state
@@ -376,9 +378,146 @@ def _record_launcher_heartbeat(work_root: Path, actor_name: str) -> None:
     )
 
 
+def _runtime_issue_kind(raw_line: str, *, stream_name: str) -> str:
+    if stream_name != RUNTIME_STDERR_STREAM:
+        return ""
+    normalized = " ".join(raw_line.strip().split()).lower()
+    if "transient api error" in normalized and "retry" in normalized:
+        return RUNTIME_UPSTREAM_RETRY_LOOP_KIND
+    return ""
+
+
+def _runtime_issue_summary(kind: str, *, count: int) -> str:
+    if kind != RUNTIME_UPSTREAM_RETRY_LOOP_KIND:
+        return ""
+    if count <= 1:
+        return (
+            "upstream provider returned a transient API error and the actor runtime "
+            "started retrying instead of producing actor-visible progress"
+        )
+    return (
+        "upstream provider is still failing; the actor runtime has retried "
+        f"{count} times without producing actor-visible progress"
+    )
+
+
+def _record_runtime_stream_activity(
+    work_root: Path,
+    actor_name: str,
+    *,
+    stream_name: str,
+    raw_line: str,
+) -> None:
+    if not raw_line.strip():
+        return
+    current = _read_actor_state(work_root, actor_name)
+    field = f"runtime_{stream_name}_at"
+    count_field = f"runtime_{stream_name}_count"
+    previous_at = str(current.get(field) or "").strip()
+    try:
+        previous_count = int(str(current.get(count_field) or 0))
+    except ValueError:
+        previous_count = 0
+    updates: dict[str, object] = {field: _timestamp()}
+    updates[count_field] = previous_count + 1
+    if not previous_at:
+        updates[f"runtime_first_{stream_name}_at"] = updates[field]
+    _write_actor_state(work_root, actor_name, updates)
+
+
+def _record_runtime_issue(
+    work_root: Path, actor_name: str, raw_line: str, *, stream_name: str
+) -> None:
+    kind = _runtime_issue_kind(raw_line, stream_name=stream_name)
+    if not kind:
+        return
+    current = _read_actor_state(work_root, actor_name)
+    previous_kind = str(current.get("runtime_issue_kind") or "").strip()
+    try:
+        previous_count = int(str(current.get("runtime_issue_count") or 0))
+    except ValueError:
+        previous_count = 0
+    count = previous_count + 1 if previous_kind == kind else 1
+    summary = _runtime_issue_summary(kind, count=count)
+    _write_actor_state(
+        work_root,
+        actor_name,
+        {
+            "runtime_issue_kind": kind,
+            "runtime_issue_summary": summary,
+            "runtime_issue_count": count,
+            "runtime_issue_at": _timestamp(),
+        },
+    )
+    if previous_kind != kind or (
+        kind == RUNTIME_UPSTREAM_RETRY_LOOP_KIND and count == 2
+    ):
+        _append_actor_event(
+            work_root,
+            actor_name,
+            event="runtime_issue",
+            detail=summary,
+            extra={"kind": kind, "count": count},
+            author=LAUNCHER_AUTHOR,
+        )
+        _actor_log_line(
+            work_root,
+            actor_name,
+            f"runtime issue: {summary}",
+            author=LAUNCHER_AUTHOR,
+        )
+
+
+def _live_runtime_pid(current: dict[str, object]) -> int:
+    try:
+        pid = int(str(current.get("pid") or 0))
+    except ValueError:
+        return 0
+    if pid <= 0 or not bool(current.get("runtime_live")):
+        return 0
+    return pid
+
+
+def _signal_actor_runtime(
+    work_root: Path,
+    actor_name: str,
+    *,
+    pid: int,
+    summary: str,
+) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        raise SystemExit(
+            f"failed to stop live runtime for {actor_name} (pid {pid}): {exc}"
+        ) from exc
+    timestamp = _timestamp()
+    detail = f"sent SIGTERM to pid {pid}"
+    if summary:
+        detail += f": {summary}"
+    _write_actor_state(
+        work_root,
+        actor_name,
+        {
+            "runtime_stop_signal": "SIGTERM",
+            "runtime_stop_signal_at": timestamp,
+        },
+    )
+    _append_actor_event(
+        work_root,
+        actor_name,
+        event="runtime_stop_requested",
+        detail=detail,
+    )
+    _actor_log_line(work_root, actor_name, detail)
+    _sync_actor_outputs(work_root, actor_name)
+    print(f"sent SIGTERM to live runtime for {actor_name} (pid {pid})")
+
+
 def _forward_actor_stream(
     stream: TextIO | None,
     *,
+    stream_name: str,
     target: TextIO,
     work_root: Path,
     actor_name: str,
@@ -407,6 +546,18 @@ def _forward_actor_stream(
                     sys.stderr.flush()
             continue
         with lock:
+            _record_runtime_stream_activity(
+                work_root,
+                actor_name,
+                stream_name=stream_name,
+                raw_line=raw_line,
+            )
+            _record_runtime_issue(
+                work_root,
+                actor_name,
+                raw_line,
+                stream_name=stream_name,
+            )
             target.write(raw_line)
             target.flush()
     try:
@@ -427,10 +578,13 @@ def _finalize_actor_runtime_exit(
     requested_status = str(current.get("requested_status") or "")
     requested_summary = str(current.get("requested_summary") or "")
     requested_at = str(current.get("requested_at") or "")
+    runtime_stop_signal_at = str(current.get("runtime_stop_signal_at") or "")
     updates: dict[str, object] = {
         "finished_at": finished_at,
         "exit_code": returncode,
         "pid": None,
+        "runtime_stop_signal": None,
+        "runtime_stop_signal_at": None,
     }
     final_status = current_status
     if final_status not in {
@@ -446,6 +600,14 @@ def _finalize_actor_runtime_exit(
             "signed_off",
         }:
             final_status = requested_status
+        elif runtime_stop_signal_at and requested_status in {
+            "completed",
+            "failed",
+            "signed_off",
+        }:
+            final_status = requested_status
+        elif runtime_stop_signal_at:
+            final_status = current_status
         elif returncode == 0:
             final_status = "completed"
         else:
@@ -643,6 +805,8 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
         )
         if state.get("still_running"):
             line += " [still running]"
+        if state.get("runtime_broken"):
+            line += " [runtime broken]"
         if (
             state.get("still_running")
             and state.get("progress_stale")
@@ -650,6 +814,9 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
         ):
             line += " [low signal]"
         print(line)
+        runtime_issue_summary = str(state.get("runtime_issue_summary") or "").strip()
+        if runtime_issue_summary:
+            print(f"  runtime_issue: {runtime_issue_summary}")
         if state.get("evidence_live"):
             print("  evidence: live")
         if state.get("progress_stale") and state.get("progress_kind") != "none":
@@ -683,6 +850,12 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
             print(f"  recent_artifacts: {rendered}")
         if state.get("still_running"):
             print("  still_running: true")
+        runtime_stop_signal_at = str(state.get("runtime_stop_signal_at") or "").strip()
+        if runtime_stop_signal_at:
+            runtime_stop_signal = str(state.get("runtime_stop_signal") or "SIGTERM")
+            print(
+                f"  shutdown_signal: {runtime_stop_signal} at {runtime_stop_signal_at}"
+            )
         if state.get("requested_pending"):
             print(
                 f"  pending_disposition: {state.get('requested_label') or state['requested_status']}"
@@ -901,26 +1074,42 @@ def _cmd_stop(args: argparse.Namespace, work_root: Path, actor_name: str) -> int
     current = _actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
     if live_closeout:
-        return _record_requested_disposition(
+        pid = _live_runtime_pid(current)
+        if pid <= 0:
+            raise SystemExit(
+                f"{actor_name} runtime is not live; `gotta actor stop` only shuts down a "
+                "live runtime. Record the authoritative outcome with "
+                f"`gotta actor fail {actor_name} --summary ...`, "
+                f"`gotta actor complete {actor_name} --summary ...`, "
+                f"`gotta actor signoff {actor_name} --summary ...`, or "
+                f"`gotta actor settle {actor_name}` instead."
+            )
+        existing_requested_status = str(current.get("requested_status") or "").strip()
+        if not existing_requested_status:
+            print(
+                f"runtime stop requested for {actor_name}; no terminal disposition "
+                "recorded yet"
+            )
+        else:
+            requested_label = str(current.get("requested_label") or "").strip()
+            print(
+                f"runtime stop requested for {actor_name}; pending `{requested_label}` "
+                "disposition remains authoritative when the runtime exits"
+            )
+        _signal_actor_runtime(
             work_root,
             actor_name,
-            requested_status=SUPERVISOR_GRACEFUL_STOP_STATUS,
-            requested_mode=SUPERVISOR_GRACEFUL_STOP_MODE,
-            summary=args.summary,
-            event="stop_requested",
-            log_message=f"requested graceful stop{': ' + args.summary if args.summary else ''}",
-            current_status=str(current.get("status") or ""),
-            action_label="stop",
+            pid=pid,
+            summary=str(args.summary or "").strip(),
         )
-    return _write_terminal_disposition(
-        work_root,
-        actor_name,
-        status="signed_off",
-        summary=args.summary,
-        event="stopped",
-        log_message=f"stopped{': ' + args.summary if args.summary else ''}",
-        signoff_at=_timestamp(),
-        detail=args.summary,
+        return 0
+    raise SystemExit(
+        f"{actor_name} runtime is not live; `gotta actor stop` only shuts down a live "
+        "runtime. Record the authoritative outcome with "
+        f"`gotta actor fail {actor_name} --summary ...`, "
+        f"`gotta actor complete {actor_name} --summary ...`, "
+        f"`gotta actor signoff {actor_name} --summary ...`, or "
+        f"`gotta actor settle {actor_name}` instead."
     )
 
 
@@ -1108,6 +1297,18 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
             "requested_status": None,
             "requested_summary": None,
             "requested_at": None,
+            "runtime_issue_kind": None,
+            "runtime_issue_summary": None,
+            "runtime_issue_count": None,
+            "runtime_issue_at": None,
+            "runtime_stdout_at": None,
+            "runtime_stdout_count": None,
+            "runtime_first_stdout_at": None,
+            "runtime_stderr_at": None,
+            "runtime_stderr_count": None,
+            "runtime_first_stderr_at": None,
+            "runtime_stop_signal": None,
+            "runtime_stop_signal_at": None,
         },
     )
     _append_actor_event(work_root, actor_name, event="starting", detail=str(goal_path))
@@ -1128,6 +1329,7 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
         target=_forward_actor_stream,
         kwargs={
             "stream": getattr(proc, "stdout", None),
+            "stream_name": RUNTIME_STDOUT_STREAM,
             "target": sys.stdout,
             "work_root": work_root,
             "actor_name": actor_name,
@@ -1139,6 +1341,7 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
         target=_forward_actor_stream,
         kwargs={
             "stream": getattr(proc, "stderr", None),
+            "stream_name": RUNTIME_STDERR_STREAM,
             "target": sys.stderr,
             "work_root": work_root,
             "actor_name": actor_name,

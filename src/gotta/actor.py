@@ -21,8 +21,6 @@ from gotta import topology
 SESSION_ACTOR_ENV = "GOTTA_SESSION_ACTOR"
 ACTOR_LABEL_ENV = CONTENT_ACTOR_LABEL_ENV
 SUPERVISOR_STOP_STATUS = "failed"
-SUPERVISOR_GRACEFUL_STOP_MODE = "stop"
-SUPERVISOR_GRACEFUL_STOP_STATUS = "signed_off"
 SUPERVISOR_STOP_FALLBACK_STATUSES = {"starting", "active", "stalled"}
 
 
@@ -177,11 +175,7 @@ def require_writer(
 
 def supervisor_stop_pending(status_payload: dict[str, object]) -> bool:
     requested_status = str(status_payload.get("requested_status") or "").strip()
-    requested_mode = str(status_payload.get("requested_mode") or "").strip()
-    if requested_status != SUPERVISOR_STOP_STATUS and not (
-        requested_mode == SUPERVISOR_GRACEFUL_STOP_MODE
-        and requested_status == SUPERVISOR_GRACEFUL_STOP_STATUS
-    ):
+    if requested_status != SUPERVISOR_STOP_STATUS:
         return False
     explicit_pending = status_payload.get("requested_pending")
     if explicit_pending is not None:
@@ -194,12 +188,6 @@ def supervisor_stop_pending(status_payload: dict[str, object]) -> bool:
 
 def requested_disposition_label(status_payload: dict[str, object]) -> str:
     requested_status = str(status_payload.get("requested_status") or "").strip()
-    requested_mode = str(status_payload.get("requested_mode") or "").strip()
-    if (
-        requested_mode == SUPERVISOR_GRACEFUL_STOP_MODE
-        and requested_status == SUPERVISOR_GRACEFUL_STOP_STATUS
-    ):
-        return "stop"
     return requested_status.replace("_", " ")
 
 
@@ -210,33 +198,16 @@ def supervisor_stop_message(
     summary: str = "",
 ) -> str:
     payload = status_payload or {}
-    requested_status = str(payload.get("requested_status") or "").strip()
-    requested_mode = str(payload.get("requested_mode") or "").strip()
-    message = (
-        "Supervisor requested a graceful stop"
-        if (
-            requested_mode == SUPERVISOR_GRACEFUL_STOP_MODE
-            and requested_status == SUPERVISOR_GRACEFUL_STOP_STATUS
-        )
-        else "Supervisor requested `failed`"
-    )
+    message = "Supervisor requested `failed`"
     cleaned_summary = (
         summary.strip() or str(payload.get("requested_summary") or "").strip()
     )
     if cleaned_summary:
         message += f" ({cleaned_summary})"
-    suffix = (
-        ". Stop new retrieval, append one final short note, and sign off ASAP with "
-        if (
-            requested_mode == SUPERVISOR_GRACEFUL_STOP_MODE
-            and requested_status == SUPERVISOR_GRACEFUL_STOP_STATUS
-        )
-        else ". Any further activity may be discarded. Stop new retrieval, append one "
-        + "final short note, and sign off ASAP with "
-    )
     return (
         message
-        + suffix
+        + ". Any further activity may be discarded. Stop new retrieval, append one "
+        + "final short note, and sign off ASAP with "
         + f"`gotta actor signoff {normalize_actor_name(actor_name)} --summary ...`."
     )
 

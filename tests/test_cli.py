@@ -1364,7 +1364,7 @@ def test_main_warns_actor_when_supervisor_requested_failed_disposition(
     assert f"gotta actor signoff {claude} --summary ..." in err
 
 
-def test_main_warns_actor_when_supervisor_requested_graceful_stop(
+def test_main_does_not_warn_actor_for_runtime_stop_signal_alone(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     seen: list[list[str]] = []
@@ -1391,9 +1391,8 @@ def test_main_warns_actor_when_supervisor_requested_graceful_stop(
                 "actor": claude,
                 "label": "Claude",
                 "status": "active",
-                "requested_mode": "stop",
-                "requested_status": "signed_off",
-                "requested_summary": "finish the current wave and close out",
+                "runtime_stop_signal": "SIGTERM",
+                "runtime_stop_signal_at": "2026-03-17T00:01:00Z",
             }
         ),
         encoding="utf-8",
@@ -1405,11 +1404,7 @@ def test_main_warns_actor_when_supervisor_requested_graceful_stop(
     err = capsys.readouterr().err
 
     assert seen == [["logs"]]
-    assert (
-        "Supervisor requested a graceful stop (finish the current wave and close out)."
-        in err
-    )
-    assert f"gotta actor signoff {claude} --summary ..." in err
+    assert err == ""
 
 
 def test_main_does_not_warn_actor_for_nonfailed_pending_disposition(

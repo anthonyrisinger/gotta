@@ -237,7 +237,7 @@ def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
                 "- Use `gotta todo`, `gotta notes`, `gotta logs`, and `gotta oops` as the live readable surfaces.",
                 "- Append running notes with `gotta notes append ...` from this actor root; add `--actor <actor>` only when targeting another bound actor intentionally.",
                 "- Append at least one short note before requesting completion or sign-off so shared actor visibility lands before closure.",
-                f"- When materially done, record actor completion through `gotta actor complete {actor_actor}`; use `gotta actor stop {actor_actor}` for a graceful operator-directed wind-down, `gotta actor fail {actor_actor}` for actual failure, and finish durable review with `gotta actor signoff {actor_actor} --summary ...`.",
+                f"- When materially done, record actor completion through `gotta actor complete {actor_actor}`; use `gotta actor fail {actor_actor}` for actual failure, `gotta actor signoff {actor_actor} --summary ...` for durable acceptance, and `gotta actor stop {actor_actor}` only to terminate a live runtime that needs shutdown.",
             ]
         )
     else:

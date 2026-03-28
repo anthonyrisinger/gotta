@@ -37,6 +37,7 @@ from gotta.notes import (
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
+import gotta.session.status.payload as session_status_payload
 from gotta.session.status.blocker import _actor_launch_blockers
 from gotta.session.status.payload import _actor_status_payload
 from gotta import todo as session_todo
@@ -533,7 +534,7 @@ def test_actor_launch_records_immediate_launcher_heartbeat(
     assert records[-1]["author"] == actor.LAUNCHER_AUTHOR
     assert records[-1]["message"] == actor.LAUNCHER_HEARTBEAT_NOTE
     payload = _actor_status_payload(actor_root, claude)
-    assert payload["notes_status"] == "present"
+    assert payload["notes_status"] == "setup"
     assert payload["voice"] == "setup"
     assert payload["launched_at"]
     assert payload.get("launched_by", "") == ""
@@ -1447,15 +1448,27 @@ def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
     assert "pending_disposition: failed: operator stopped this run" in notes_text
 
 
-def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
-    tmp_path: Path, capsys
+def test_actor_stop_signals_live_runtime_without_recording_terminal_disposition(
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session"
 
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    session_registry._write_actor_state(root, claude, {"status": "active"})
+    kill_calls: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        if sig == 0:
+            return None
+        kill_calls.append((pid, sig))
+
+    monkeypatch.setattr(actor.os, "kill", fake_kill)
+    session_registry._write_actor_state(
+        root,
+        claude,
+        {"status": "active", "pid": os.getpid()},
+    )
 
     assert (
         actor.main(
@@ -1473,25 +1486,267 @@ def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
     output = capsys.readouterr().out
     payload = _actor_status_payload(root, claude)
 
-    assert f"recorded stop request for {claude}" in output
-    assert payload["status"] == "closing"
-    assert payload["requested_pending"] is True
-    assert payload["requested_status"] == "signed_off"
-    assert payload["requested_mode"] == "stop"
-    assert payload["requested_label"] == "stop"
+    assert (
+        f"runtime stop requested for {claude}; no terminal disposition recorded yet"
+        in output
+    )
+    assert f"sent SIGTERM to live runtime for {claude}" in output
+    assert payload["status"] == "active"
+    assert payload["requested_pending"] is False
+    assert payload["requested_status"] == ""
+    assert payload["runtime_stop_signal"] == "SIGTERM"
+    assert payload["runtime_stop_signal_at"]
+    assert kill_calls == [(os.getpid(), actor.signal.SIGTERM)]
     notes_text = render_actor_notes_markdown(
         root,
         claude,
         label=session_registry._actor_label(claude, work_dir=root),
         status_payload=payload,
     )
-    assert (
-        "Supervisor requested a graceful stop (finish the current wave and close out)."
-        in notes_text
+    assert "Supervisor requested" not in notes_text
+    assert "pending_disposition:" not in notes_text
+
+
+def test_actor_stop_preserves_pending_failure_while_signaling_live_runtime(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    kill_calls: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        if sig == 0:
+            return None
+        kill_calls.append((pid, sig))
+
+    monkeypatch.setattr(actor.os, "kill", fake_kill)
+    session_registry._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "pid": os.getpid(),
+            "requested_status": "failed",
+            "requested_summary": "operator stopped this run",
+            "requested_at": "2026-03-17T00:01:00Z",
+        },
     )
+
     assert (
-        "pending_disposition: stop: finish the current wave and close out" in notes_text
+        actor.main(
+            [
+                "stop",
+                claude,
+                "--session",
+                str(root),
+                "--summary",
+                "terminate broken retry loop",
+            ]
+        )
+        == 0
     )
+    output = capsys.readouterr().out
+    payload = _actor_status_payload(root, claude)
+
+    assert "pending `failed` disposition remains authoritative" in output
+    assert f"sent SIGTERM to live runtime for {claude}" in output
+    assert payload["requested_status"] == "failed"
+    assert payload["requested_label"] == "failed"
+    assert payload["requested_summary"] == "operator stopped this run"
+    assert payload["runtime_stop_signal"] == "SIGTERM"
+    assert payload["runtime_stop_signal_at"]
+    assert kill_calls == [(os.getpid(), actor.signal.SIGTERM)]
+
+
+def test_actor_status_flags_live_retry_loop_as_broken_and_teaches_shutdown(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    stale_started = (datetime.now(tz=UTC) - timedelta(seconds=60)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    fresh_heartbeat = (datetime.now(tz=UTC) - timedelta(seconds=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    fresh_stderr = (datetime.now(tz=UTC) - timedelta(seconds=3)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    session_registry._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "pid": os.getpid(),
+            "started_at": stale_started,
+            "heartbeat_at": fresh_heartbeat,
+            "runtime_issue_kind": actor.RUNTIME_UPSTREAM_RETRY_LOOP_KIND,
+            "runtime_issue_summary": (
+                "upstream provider is still failing; the actor runtime has retried "
+                "3 times without producing actor-visible progress"
+            ),
+            "runtime_issue_count": 3,
+            "runtime_stderr_at": fresh_stderr,
+        },
+    )
+    append_actor_note(
+        root,
+        claude,
+        message=actor.LAUNCHER_HEARTBEAT_NOTE,
+        author=actor.LAUNCHER_AUTHOR,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = _actor_status_payload(root, claude)
+
+    assert payload["voice"] == "setup"
+    assert payload["notes_status"] == "setup"
+    assert payload["progress_kind"] == "none"
+    assert payload["artifact_count"] == 0
+    assert payload["still_running"] is True
+    assert payload["runtime_broken"] is True
+    assert "Record `gotta actor fail" in payload["next_step"]
+    assert "then stop the runtime with `gotta actor stop" in payload["next_step"]
+
+    monkeypatch.setattr(session_status_payload.os, "kill", lambda *_args: None)
+    assert actor.main(["status", claude, "--session", str(root)]) == 0
+    output = capsys.readouterr().out
+    assert "[runtime broken]" in output
+    assert "notes: setup" in output
+    assert "runtime_issue: upstream provider is still failing" in output
+
+
+def test_actor_status_does_not_flag_retry_loop_broken_while_stdout_is_live(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    stale_started = (datetime.now(tz=UTC) - timedelta(seconds=60)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    fresh_heartbeat = (datetime.now(tz=UTC) - timedelta(seconds=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    fresh_stream = (datetime.now(tz=UTC) - timedelta(seconds=2)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    session_registry._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "pid": os.getpid(),
+            "started_at": stale_started,
+            "heartbeat_at": fresh_heartbeat,
+            "runtime_issue_kind": actor.RUNTIME_UPSTREAM_RETRY_LOOP_KIND,
+            "runtime_issue_summary": (
+                "upstream provider is still failing; the actor runtime has retried "
+                "3 times without producing actor-visible progress"
+            ),
+            "runtime_issue_count": 3,
+            "runtime_stdout_at": fresh_stream,
+            "runtime_stderr_at": fresh_stream,
+        },
+    )
+    append_actor_note(
+        root,
+        claude,
+        message=actor.LAUNCHER_HEARTBEAT_NOTE,
+        author=actor.LAUNCHER_AUTHOR,
+        timestamp="2026-03-21T00:00:00Z",
+    )
+
+    payload = _actor_status_payload(root, claude)
+
+    assert payload["voice"] == "setup"
+    assert payload["notes_status"] == "setup"
+    assert payload["runtime_broken"] is False
+    assert "Record `gotta actor fail" not in payload["next_step"]
+    assert "then stop the runtime with `gotta actor stop" not in payload["next_step"]
+
+
+def test_actor_runtime_exit_after_stop_signal_honors_pending_failure(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    session_registry._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "closing",
+            "pid": 4242,
+            "requested_status": "failed",
+            "requested_summary": "operator stopped this run",
+            "requested_at": "2026-03-17T00:01:00Z",
+            "runtime_stop_signal": "SIGTERM",
+            "runtime_stop_signal_at": "2026-03-17T00:02:00Z",
+        },
+    )
+
+    assert (
+        actor._finalize_actor_runtime_exit(
+            root,
+            claude,
+            returncode=-15,
+            finished_at="2026-03-17T00:03:00Z",
+        )
+        == -15
+    )
+
+    payload = _actor_status_payload(root, claude)
+    assert payload["status"] == "failed"
+    assert payload["summary"] == "operator stopped this run"
+    assert payload["requested_pending"] is False
+    assert payload["runtime_stop_signal_at"] == ""
+
+
+def test_actor_runtime_exit_after_stop_signal_without_disposition_awaits_closeout(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "session"
+
+    _init_session(root, capsys)
+    _bind_actors(root, capsys, "Claude")
+    claude = _actor_id(root, "claude")
+    session_registry._write_actor_state(
+        root,
+        claude,
+        {
+            "status": "active",
+            "pid": 4242,
+            "runtime_stop_signal": "SIGTERM",
+            "runtime_stop_signal_at": "2026-03-17T00:02:00Z",
+        },
+    )
+
+    assert (
+        actor._finalize_actor_runtime_exit(
+            root,
+            claude,
+            returncode=-15,
+            finished_at="2026-03-17T00:03:00Z",
+        )
+        == -15
+    )
+
+    payload = _actor_status_payload(root, claude)
+    assert payload["status"] == "awaiting_disposition"
+    assert payload["requested_pending"] is False
+    assert "no durable terminal lifecycle was recorded yet" in payload["next_step"]
+    assert f"`gotta actor settle {claude}`" in payload["next_step"]
 
 
 def test_notes_projection_skips_supervisor_warning_for_nonfailed_pending_requests(
@@ -1694,7 +1949,7 @@ def test_actor_status_json_separates_progress_from_lifecycle(
     assert payload["artifact_count"] == 0
 
 
-def test_actor_status_reports_clean_runtime_exit_after_honoring_stop_request(
+def test_actor_status_reports_clean_runtime_exit_after_honoring_runtime_stop_signal(
     tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session"
@@ -1711,8 +1966,8 @@ def test_actor_status_reports_clean_runtime_exit_after_honoring_stop_request(
                     {
                         "timestamp": "2026-03-17T00:01:00Z",
                         "actor": claude,
-                        "event": "stop_requested",
-                        "detail": "operator requested graceful stop",
+                        "event": "runtime_stop_requested",
+                        "detail": "sent SIGTERM to pid 4242",
                     }
                 ),
                 json.dumps(
@@ -1743,7 +1998,7 @@ def test_actor_status_reports_clean_runtime_exit_after_honoring_stop_request(
     assert "recent_progress: 2026-03-17T00:01:00Z Reached a stable checkpoint" in output
     assert (
         "recent_lifecycle: 2026-03-17T00:03:00Z runtime exit: actor process exited cleanly "
-        "after honoring graceful stop request" in output
+        "after honoring runtime stop signal" in output
     )
 
 

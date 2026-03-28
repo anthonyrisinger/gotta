@@ -8,7 +8,7 @@ import time
 
 from gotta.actor import requested_disposition_label
 from gotta.compat import datetime
-from gotta.notes import actor_notes_ready, actor_voice
+from gotta.notes import actor_notes_status, actor_voice
 from gotta.session.activity.summary import (
     _actor_evidence_note,
     _actor_evidence_summary,
@@ -44,6 +44,8 @@ ACTOR_TERMINAL_STATUS = {
     "signed_off",
 }
 
+ACTOR_STARTUP_GRACE_SECONDS = 30
+
 
 def _int_value(value: object, *, default: int = 0) -> int:
     try:
@@ -58,6 +60,17 @@ def _lifecycle_entries(value: object) -> list[dict[str, object]]:
     return [dict(item) for item in value if isinstance(item, dict)]
 
 
+def _iso_age_seconds(value: object) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return time.time() - parsed.timestamp()
+
+
 def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     actor_name = _resolve_bound_actor_name(work_dir, actor_name)
     state = _read_actor_state(work_dir, actor_name)
@@ -66,6 +79,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     requested_summary = str(state.get("requested_summary") or "")
     requested_label = requested_disposition_label(state)
     heartbeat_at = str(state.get("heartbeat_at") or "")
+    started_at = str(state.get("started_at") or "")
     derived_status = status
     heartbeat_stale = False
     runtime_live: bool | None = None
@@ -80,33 +94,35 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
             runtime_live = False
         else:
             runtime_live = True
+    if (
+        runtime_live is None
+        and pid <= 0
+        and (
+            str(state.get("finished_at") or "").strip()
+            or state.get("exit_code") is not None
+        )
+    ):
+        runtime_live = False
+    started_age_seconds = _iso_age_seconds(started_at)
     if status in {"starting", "active"} and heartbeat_at:
-        try:
-            heartbeat_dt = datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))
-        except ValueError:
-            heartbeat_dt = None
-        if heartbeat_dt is not None:
-            age = time.time() - heartbeat_dt.timestamp()
-            state["heartbeat_age_seconds"] = round(age, 1)
-            if age > ACTOR_STALL_SECONDS:
+        heartbeat_age_seconds = _iso_age_seconds(heartbeat_at)
+        if heartbeat_age_seconds is not None:
+            state["heartbeat_age_seconds"] = round(heartbeat_age_seconds, 1)
+            if heartbeat_age_seconds > ACTOR_STALL_SECONDS:
                 derived_status = "stalled"
                 heartbeat_stale = True
     elif status in {"starting", "active"} and not heartbeat_at:
-        started_at = str(state.get("started_at") or "")
-        try:
-            started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-        except ValueError:
-            started_dt = None
         if (
-            started_dt is not None
-            and (time.time() - started_dt.timestamp()) > ACTOR_STALL_SECONDS
+            started_age_seconds is not None
+            and started_age_seconds > ACTOR_STALL_SECONDS
         ):
             derived_status = "stalled"
             heartbeat_stale = True
     signoff_at = str(state.get("signoff_at") or "")
     actor_dir = _actor_session_dir(work_dir, actor_name)
     voice = actor_voice(work_dir, _normalize_actor_name(actor_name))
-    notes_ready = voice == "present"
+    notes_status = actor_notes_status(work_dir, _normalize_actor_name(actor_name))
+    notes_ready = notes_status == "present"
     evidence = _actor_evidence_summary(work_dir, actor_name)
     evidence_note = _actor_evidence_note(evidence)
     recent_activity = _actor_recent_activity(work_dir, actor_name)
@@ -120,7 +136,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     ):
         lifecycle_detail = str(lifecycle_entries[0].get("detail") or "")
         request_labels = {
-            "stop_requested": "graceful stop request",
+            "runtime_stop_requested": "runtime stop signal",
             "failed_requested": "failure request",
             "signoff_requested": "sign-off request",
             "complete_requested": "completion request",
@@ -148,13 +164,21 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     evidence_live = _int_value(evidence.get("artifact_count")) > 0
     if signoff_at:
         derived_status = "signed_off"
-    notes_status = (
-        "present"
-        if actor_notes_ready(work_dir, _normalize_actor_name(actor_name))
-        else "empty"
-    )
+    runtime_issue_kind = str(state.get("runtime_issue_kind") or "").strip()
+    runtime_issue_summary = str(state.get("runtime_issue_summary") or "").strip()
+    runtime_issue_count = _int_value(state.get("runtime_issue_count"))
+    runtime_stdout_at = str(state.get("runtime_stdout_at") or "").strip()
+    runtime_stderr_at = str(state.get("runtime_stderr_at") or "").strip()
+    runtime_stop_signal = str(state.get("runtime_stop_signal") or "").strip()
+    runtime_stop_signal_at = str(state.get("runtime_stop_signal_at") or "").strip()
     runtime_note = ""
-    if status in {"starting", "active"} and runtime_live is False:
+    if runtime_stop_signal_at and runtime_live:
+        runtime_note = (
+            f" Shutdown signal `{runtime_stop_signal or 'SIGTERM'}` was already sent at "
+            f"{runtime_stop_signal_at}. Wait for runtime exit, then record the "
+            "authoritative disposition explicitly."
+        )
+    if status in ACTOR_RUNNING_STATUS and runtime_live is False:
         if requested_status in {"completed", "failed", "signed_off"}:
             derived_status = requested_status
         else:
@@ -174,21 +198,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     still_running = derived_status in ACTOR_RUNNING_STATUS and not heartbeat_stale
     request_note = ""
     if requested_status and derived_status not in ACTOR_TERMINAL_STATUS:
-        if requested_label == "stop":
-            if derived_status == "stalled":
-                request_note = (
-                    " Operator already requested a graceful stop"
-                    + (f" ({requested_summary})." if requested_summary else ".")
-                    + " Because the heartbeat is stale, you can settle now with "
-                    f"`gotta actor settle {_normalize_actor_name(actor_name)}`."
-                )
-            else:
-                request_note = (
-                    " Operator already requested a graceful stop"
-                    + (f" ({requested_summary})." if requested_summary else ".")
-                    + " The actor should wind down, append one final short note, and sign off."
-                )
-        elif derived_status == "stalled":
+        if derived_status == "stalled":
             request_note = (
                 f" Operator already requested `{requested_label}`"
                 + (f" ({requested_summary})." if requested_summary else ".")
@@ -206,6 +216,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     voice_setup = voice == "setup"
     voice_pulse = voice == "pulse"
     progress_stale = bool(progress.get("progress_stale"))
+    progress_kind = str(progress.get("progress_kind") or "none").strip()
     last_note_at = str(note_summary.get("last_note_at") or "")
     last_artifact_at = str(evidence.get("last_artifact_at") or "")
     note_checks_since_update = _int_value(
@@ -221,7 +232,59 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         and progress_stale
         and _int_value(evidence.get("artifact_count")) == 0
     )
-    if derived_status == "closing":
+    stdout_age_seconds = _iso_age_seconds(runtime_stdout_at)
+    stderr_age_seconds = _iso_age_seconds(runtime_stderr_at)
+    stdout_quiet = (
+        stdout_age_seconds is None or stdout_age_seconds >= ACTOR_STARTUP_GRACE_SECONDS
+    )
+    setup_only_live = (
+        bool(runtime_live)
+        and voice in {"missing", "setup"}
+        and progress_kind == "none"
+        and not evidence_live
+    )
+    runtime_broken = (
+        setup_only_live
+        and runtime_issue_kind == "upstream_retry_loop"
+        and runtime_issue_count >= 2
+        and stdout_quiet
+        and stderr_age_seconds is not None
+        and (started_age_seconds or 0) >= ACTOR_STARTUP_GRACE_SECONDS
+    )
+    if runtime_broken:
+        issue_clause = (
+            runtime_issue_summary + " "
+            if runtime_issue_summary
+            else "Upstream provider failures are keeping the runtime in a retry loop. "
+        )
+        if runtime_stop_signal_at:
+            next_step = (
+                "actor runtime is broken and still has not produced actor-authored voice, "
+                "progress, or evidence. "
+                + issue_clause
+                + f"Shutdown signal `{runtime_stop_signal or 'SIGTERM'}` was already sent at "
+                f"{runtime_stop_signal_at}. "
+                + (
+                    f"Pending `{requested_label}` disposition remains authoritative when the runtime exits."
+                    if requested_status
+                    else "Recheck actor status shortly and intervene at the OS level only if the process still refuses to exit."
+                )
+            )
+        else:
+            next_step = (
+                "actor runtime is broken and still has not produced actor-authored voice, "
+                "progress, or evidence. "
+                + issue_clause
+                + "This is not normal warmup. "
+                + (
+                    f"Stop the runtime with `gotta actor stop {_normalize_actor_name(actor_name)} --summary ...`."
+                    + f" Pending `{requested_label}` disposition will remain authoritative when the runtime exits."
+                    if requested_status
+                    else f"Record `gotta actor fail {_normalize_actor_name(actor_name)} --summary ...` now, "
+                    + f"then stop the runtime with `gotta actor stop {_normalize_actor_name(actor_name)} --summary ...`."
+                )
+            )
+    elif derived_status == "closing":
         if notes_ready and needs_note_refresh:
             next_step = (
                 "actor close-out is pending while the runtime is still live, and new "
@@ -517,6 +580,12 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         ),
         "still_running": still_running,
         "runtime_live": runtime_live,
+        "runtime_issue_kind": runtime_issue_kind,
+        "runtime_issue_summary": runtime_issue_summary,
+        "runtime_issue_count": runtime_issue_count,
+        "runtime_broken": runtime_broken,
+        "runtime_stop_signal": runtime_stop_signal,
+        "runtime_stop_signal_at": runtime_stop_signal_at,
         "review_ready": bool(
             derived_status in {"completed", "signed_off"}
             and (notes_ready or evidence_live)

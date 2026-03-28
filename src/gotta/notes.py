@@ -96,11 +96,17 @@ def actor_voice(work_dir: Path, actor_name: str) -> str:
     return "missing"
 
 
+def actor_notes_status(work_dir: Path, actor_name: str) -> str:
+    voice = actor_voice(work_dir, actor_name)
+    if voice == "present":
+        return "present"
+    if voice == "setup":
+        return "setup"
+    return "empty"
+
+
 def actor_notes_ready(work_dir: Path, actor_name: str) -> bool:
-    return any(
-        str(record.get("message") or "").strip()
-        for record in visible_actor_notes_records(work_dir, actor_name)
-    )
+    return actor_notes_status(work_dir, actor_name) == "present"
 
 
 def _author_name() -> str:
