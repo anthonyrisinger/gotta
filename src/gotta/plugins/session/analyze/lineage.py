@@ -370,6 +370,34 @@ def _lineage_focus_score(item: dict[str, Any], query: str) -> tuple[int, int, st
     return (score, materialized, label.lower())
 
 
+def _empty_lineage_focus_payload(
+    payload: dict[str, Any],
+    *,
+    query: str,
+    next_step: str,
+) -> dict[str, Any]:
+    return {
+        "sessionDir": payload["sessionDir"],
+        "contentDir": payload["contentDir"],
+        "focus": query,
+        "matched": False,
+        "empty": True,
+        "nextStep": next_step,
+        "root": {},
+        "neighbors": [],
+        "sources": [],
+        "content": [],
+        "sourceEdges": [],
+        "revisionEdges": [],
+        "leadSources": [],
+        "leadEdges": [],
+        "discoveryArtifactCount": 0,
+        "evidenceArtifactCount": 0,
+        "anchors": [],
+        "matchedCount": 0,
+    }
+
+
 def lineage_focus_payload(
     payload: dict[str, Any],
     *,
@@ -379,26 +407,11 @@ def lineage_focus_payload(
 ) -> dict[str, Any]:
     query = focus.strip()
     if not query:
-        return {
-            "sessionDir": payload["sessionDir"],
-            "contentDir": payload["contentDir"],
-            "focus": "",
-            "matched": False,
-            "empty": True,
-            "nextStep": "Provide a focus keyword, locator, artifact name, or checksum prefix.",
-            "root": {},
-            "neighbors": [],
-            "sources": [],
-            "content": [],
-            "sourceEdges": [],
-            "revisionEdges": [],
-            "leadSources": [],
-            "leadEdges": [],
-            "discoveryArtifactCount": 0,
-            "evidenceArtifactCount": 0,
-            "anchors": [],
-            "matchedCount": 0,
-        }
+        return _empty_lineage_focus_payload(
+            payload,
+            query="",
+            next_step="Provide a focus keyword, locator, artifact name, or checksum prefix.",
+        )
     sources = [dict(item) for item in payload.get("sources") or []]
     content_items = [dict(item) for item in payload.get("content") or []]
     lead_sources = [dict(item) for item in payload.get("leadSources") or []]
@@ -428,30 +441,16 @@ def lineage_focus_payload(
         limit=max(limit * 2, 8),
     )
     seed_cap = max(4, min(max(limit, 1), 12))
+    no_match_step = (
+        f"No analyzed lineage anchor or projected artifact matched `{query}`. Try a canonical locator, "
+        "artifact name, checksum prefix, or a tighter target from session scan, leads, or manifest."
+    )
     if not matches and not scan_entries:
-        return {
-            "sessionDir": payload["sessionDir"],
-            "contentDir": payload["contentDir"],
-            "focus": query,
-            "matched": False,
-            "empty": True,
-            "nextStep": (
-                f"No analyzed lineage anchor or projected artifact matched `{query}`. Try a canonical locator, "
-                "artifact name, checksum prefix, or a tighter target from session scan, leads, or manifest."
-            ),
-            "root": {},
-            "neighbors": [],
-            "sources": [],
-            "content": [],
-            "sourceEdges": [],
-            "revisionEdges": [],
-            "leadSources": [],
-            "leadEdges": [],
-            "discoveryArtifactCount": 0,
-            "evidenceArtifactCount": 0,
-            "anchors": [],
-            "matchedCount": 0,
-        }
+        return _empty_lineage_focus_payload(
+            payload,
+            query=query,
+            next_step=no_match_step,
+        )
     best_score = _lineage_focus_score(matches[0], query)[0] if matches else 0
     threshold = focus_match_threshold(best_score)
     seeds: list[dict[str, Any]] = []
@@ -489,29 +488,11 @@ def lineage_focus_payload(
             break
 
     if not seeds:
-        return {
-            "sessionDir": payload["sessionDir"],
-            "contentDir": payload["contentDir"],
-            "focus": query,
-            "matched": False,
-            "empty": True,
-            "nextStep": (
-                f"No analyzed lineage anchor or projected artifact matched `{query}`. Try a canonical locator, "
-                "artifact name, checksum prefix, or a tighter target from session scan, leads, or manifest."
-            ),
-            "root": {},
-            "neighbors": [],
-            "sources": [],
-            "content": [],
-            "sourceEdges": [],
-            "revisionEdges": [],
-            "leadSources": [],
-            "leadEdges": [],
-            "discoveryArtifactCount": 0,
-            "evidenceArtifactCount": 0,
-            "anchors": [],
-            "matchedCount": 0,
-        }
+        return _empty_lineage_focus_payload(
+            payload,
+            query=query,
+            next_step=no_match_step,
+        )
 
     root = dict(seeds[0])
     selected_sources: set[str] = set()

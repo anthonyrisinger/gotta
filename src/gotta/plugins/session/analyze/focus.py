@@ -1,4 +1,4 @@
-"""Shared focus-selection helpers for session analysis."""
+"""Shared focus-mode helpers for session analysis."""
 
 from __future__ import annotations
 

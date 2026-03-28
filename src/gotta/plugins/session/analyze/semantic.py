@@ -178,7 +178,7 @@ def _semantic_node_follow_command(
     return ""
 
 
-def _analysis_focus_score(
+def _semantic_focus_score(
     node: dict[str, Any], query: str
 ) -> tuple[int, int, int, str]:
     query_lower = query.lower()
@@ -200,7 +200,7 @@ def _analysis_focus_score(
     return (score, materialized, discovered, label_lower)
 
 
-def _neighbor_sort_key(
+def _semantic_neighbor_sort_key(
     node: dict[str, Any],
     *,
     relation_labels: list[str],
@@ -219,6 +219,29 @@ def _neighbor_sort_key(
     )
 
 
+def _empty_semantic_focus_payload(
+    semantic: dict[str, Any],
+    *,
+    query: str,
+    next_step: str,
+) -> dict[str, Any]:
+    return {
+        "sessionDir": semantic["sessionDir"],
+        "contentDir": semantic["contentDir"],
+        "focus": query,
+        "matched": False,
+        "empty": True,
+        "nextStep": next_step,
+        "nodeCount": 0,
+        "edgeCount": 0,
+        "nodes": [],
+        "edges": [],
+        "neighbors": [],
+        "anchors": [],
+        "matchedCount": 0,
+    }
+
+
 def semantic_focus_payload(
     lineage: dict[str, Any],
     semantic: dict[str, Any],
@@ -229,21 +252,11 @@ def semantic_focus_payload(
 ) -> dict[str, Any]:
     query = focus.strip()
     if not query:
-        return {
-            "sessionDir": semantic["sessionDir"],
-            "contentDir": semantic["contentDir"],
-            "focus": "",
-            "matched": False,
-            "empty": True,
-            "nextStep": "Provide a focus keyword, locator, artifact name, or checksum prefix.",
-            "nodeCount": 0,
-            "edgeCount": 0,
-            "nodes": [],
-            "edges": [],
-            "neighbors": [],
-            "anchors": [],
-            "matchedCount": 0,
-        }
+        return _empty_semantic_focus_payload(
+            semantic,
+            query="",
+            next_step="Provide a focus keyword, locator, artifact name, or checksum prefix.",
+        )
     nodes = [dict(node) for node in semantic.get("nodes") or []]
     node_index = {str(node["id"]): node for node in nodes}
     matches = sorted(
@@ -251,9 +264,9 @@ def semantic_focus_payload(
             node
             for node in nodes
             if str(node.get("kind") or "") in {"source", "content"}
-            and _analysis_focus_score(node, query)[0] > 0
+            and _semantic_focus_score(node, query)[0] > 0
         ),
-        key=lambda node: _analysis_focus_score(node, query),
+        key=lambda node: _semantic_focus_score(node, query),
         reverse=True,
     )
     scan_entries = ordered_focus_scan_entries(
@@ -261,27 +274,18 @@ def semantic_focus_payload(
         limit=max(limit * 2, 8),
     )
     seed_cap = max(4, min(max(limit, 1), 12))
+    no_match_step = (
+        f"No analyzed node or projected artifact matched `{query}`. Try a canonical locator, "
+        "artifact name, checksum prefix, or a tighter keyword from session scan, leads, or manifest."
+    )
     if not matches and not scan_entries:
-        return {
-            "sessionDir": semantic["sessionDir"],
-            "contentDir": semantic["contentDir"],
-            "focus": query,
-            "matched": False,
-            "empty": True,
-            "nextStep": (
-                f"No analyzed node or projected artifact matched `{query}`. Try a canonical locator, "
-                "artifact name, checksum prefix, or a tighter keyword from session scan, leads, or manifest."
-            ),
-            "nodeCount": 0,
-            "edgeCount": 0,
-            "nodes": [],
-            "edges": [],
-            "neighbors": [],
-            "anchors": [],
-            "matchedCount": 0,
-        }
+        return _empty_semantic_focus_payload(
+            semantic,
+            query=query,
+            next_step=no_match_step,
+        )
 
-    best_score = _analysis_focus_score(matches[0], query)[0] if matches else 0
+    best_score = _semantic_focus_score(matches[0], query)[0] if matches else 0
     threshold = focus_match_threshold(best_score)
     seed_ids: list[str] = []
 
@@ -290,7 +294,7 @@ def semantic_focus_payload(
             seed_ids.append(node_id)
 
     for node in matches:
-        if _analysis_focus_score(node, query)[0] < threshold:
+        if _semantic_focus_score(node, query)[0] < threshold:
             break
         add_seed(str(node.get("id") or ""))
         if len(seed_ids) >= seed_cap:
@@ -308,24 +312,11 @@ def semantic_focus_payload(
             break
 
     if not seed_ids:
-        return {
-            "sessionDir": semantic["sessionDir"],
-            "contentDir": semantic["contentDir"],
-            "focus": query,
-            "matched": False,
-            "empty": True,
-            "nextStep": (
-                f"No analyzed node or projected artifact matched `{query}`. Try a canonical locator, "
-                "artifact name, checksum prefix, or a tighter keyword from session scan, leads, or manifest."
-            ),
-            "nodeCount": 0,
-            "edgeCount": 0,
-            "nodes": [],
-            "edges": [],
-            "neighbors": [],
-            "anchors": [],
-            "matchedCount": 0,
-        }
+        return _empty_semantic_focus_payload(
+            semantic,
+            query=query,
+            next_step=no_match_step,
+        )
 
     root = dict(node_index[seed_ids[0]])
     root["followCommand"] = _semantic_node_follow_command(
@@ -392,7 +383,7 @@ def semantic_focus_payload(
         neighbor_id
         for neighbor_id in sorted(
             selected_neighbor_ids,
-            key=lambda neighbor_id: _neighbor_sort_key(
+            key=lambda neighbor_id: _semantic_neighbor_sort_key(
                 node_index.get(neighbor_id, {}),
                 relation_labels=relation_labels_by_neighbor.get(neighbor_id, []),
             ),
