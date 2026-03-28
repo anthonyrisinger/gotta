@@ -129,6 +129,19 @@ def test_residue_paths_find_python_cache_residue(tmp_path: Path) -> None:
     )
 
 
+def test_scrub_residue_removes_python_cache_residue(tmp_path: Path) -> None:
+    driver = _load_driver()
+    cache_dir = tmp_path / "src" / "pkg" / "__pycache__"
+    cache_dir.mkdir(parents=True)
+    pyc = cache_dir / "x.cpython-310.pyc"
+    pyc.write_bytes(b"x")
+
+    removed = driver.scrub_residue(tmp_path)
+
+    assert removed == ("src/pkg/__pycache__",)
+    assert driver.residue_paths(tmp_path) == ()
+
+
 def test_select_pytest_targets_unions_changed_tests_and_source_mappings() -> None:
     driver = _load_driver()
 
@@ -377,6 +390,12 @@ def test_run_discover_prints_discovery_caveat(monkeypatch, capsys) -> None:
 
 def test_release_script_uses_full_study_gate() -> None:
     assert "./scripts/study --full" in RELEASE_PATH.read_text(encoding="utf-8")
+
+
+def test_release_script_suppresses_bytecode_emission() -> None:
+    assert "export PYTHONDONTWRITEBYTECODE=1" in RELEASE_PATH.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_study_script_is_python_owner() -> None:

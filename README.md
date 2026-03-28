@@ -209,9 +209,10 @@ correctness blockers. `--deep` and `--types` both imply `--full`; `--deep` adds
 `import-linter` and `semgrep`, and `--types` adds a source-only `pyright` pass.
 
 Quick and full modes both treat generated `__pycache__/` directories and
-`*.pyc` files under `src/` as residue. The study runner also suppresses new
-bytecode emission in its subprocesses so the gate does not dirty the source
-tree while it runs.
+`*.pyc` files under `src/` as residue. The study runner now scrubs that
+existing residue before the gate starts and also suppresses new bytecode
+emission in its subprocesses, so the pass remains self-healing without leaving
+new source-tree exhaust behind.
 
 ## Advanced Study Battery
 

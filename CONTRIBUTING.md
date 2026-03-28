@@ -67,10 +67,11 @@ as `cloc`, `ctags`, and `ast-grep` when they are installed. `--deep` and
 `--types` both imply `--full`; `--deep` adds `import-linter` and `semgrep`,
 and `--types` adds a source-only `pyright` pass as a pressure map.
 
-Quick and full modes both fail if generated `__pycache__/` directories or
-`*.pyc` files are present under `src/`. The study runner suppresses new
-bytecode emission in its subprocesses so the gate itself does not leave that
-source-tree residue behind.
+Quick and full modes both treat generated `__pycache__/` directories and
+`*.pyc` files under `src/` as residue. The study runner now scrubs that
+existing residue before the gate starts and suppresses new bytecode emission
+in its subprocesses so the gate itself does not leave new source-tree exhaust
+behind.
 
 If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts through the canonical release wrapper:

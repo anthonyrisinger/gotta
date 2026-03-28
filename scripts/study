@@ -378,6 +378,27 @@ def residue_paths(repo_root: Path) -> tuple[str, ...]:
     return tuple(sorted(residue))
 
 
+def scrub_residue(repo_root: Path) -> tuple[str, ...]:
+    removed: set[str] = set()
+    for surface in REPO_SURFACES:
+        root = repo_root / surface
+        if not root.exists():
+            continue
+        pycache_dirs = sorted(
+            (path for path in root.rglob("__pycache__") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for path in pycache_dirs:
+            removed.add(path.relative_to(repo_root).as_posix())
+            shutil.rmtree(path)
+        for path in root.rglob("*.pyc"):
+            if path.is_file():
+                removed.add(path.relative_to(repo_root).as_posix())
+                path.unlink()
+    return tuple(sorted(removed))
+
+
 def residue_error(repo_root: Path) -> str:
     residue = residue_paths(repo_root)
     if not residue:
@@ -559,6 +580,9 @@ def print_discovery_section(
 
 def run_quick(repo_root: Path, *, verbose: bool) -> int:
     print("note: quick mode is a working-tree loop, not a repo-health signal")
+    scrubbed = scrub_residue(repo_root)
+    if scrubbed:
+        print(f"note: scrubbed {len(scrubbed)} python residue paths under src/")
     if run_namespace_check(repo_root=repo_root, verbose=verbose) != 0:
         return 1
     if run_residue_check(repo_root=repo_root, verbose=verbose) != 0:
@@ -605,6 +629,11 @@ def have_command(command: str) -> bool:
 
 
 def run_full(repo_root: Path, *, deep: bool, types: bool) -> int:
+    scrubbed = scrub_residue(repo_root)
+    if scrubbed:
+        print(
+            f"note: scrubbed {len(scrubbed)} python residue paths under src/ before full gate"
+        )
     failure = namespace_policy_error(repo_root)
     if failure:
         print(failure, file=sys.stderr)
