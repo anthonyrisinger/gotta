@@ -151,10 +151,15 @@ publish_github_release() {
 
   git push origin "$tag"
 
-  existing_release_url="$(
-    gh release list --limit 100 --json tagName,url \
-      --jq ".[] | select(.tagName == \"$tag\") | .url"
-  )"
+  release_view_output="$(gh release view "$tag" --json url --jq .url 2>&1)" || true
+  case "$release_view_output" in
+    https://*)
+      existing_release_url="$release_view_output"
+      ;;
+    *)
+      existing_release_url=""
+      ;;
+  esac
   if [ -n "$existing_release_url" ]; then
     printf 'GitHub release exists: %s\n' "$existing_release_url"
     return 0
