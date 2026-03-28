@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from gotta.notes import actor_notes_payload, render_actor_notes_markdown
+from gotta.notes.render import actor_notes_payload, render_actor_notes_markdown
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
 from gotta.session.activity.note import _record_note_check

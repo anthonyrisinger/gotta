@@ -16,7 +16,7 @@ import gotta.content.store as content_store
 import gotta.cli.argv as cli_argv
 import gotta.cli.bind as cli_bind
 import gotta.cli.entry as cli
-from gotta.notes import append_actor_note
+from gotta.notes.file import append_actor_note
 from gotta.capture import Capture
 from gotta.plugins import github
 from gotta.plugins import jira

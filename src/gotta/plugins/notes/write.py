@@ -7,7 +7,7 @@ from pathlib import Path
 
 from gotta.actor import require_writer, session_actor, writer_name
 from gotta.content.context import current_actor
-from gotta.notes import append_actor_note
+from gotta.notes.file import append_actor_note
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry

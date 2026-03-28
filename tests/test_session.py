@@ -29,11 +29,8 @@ from gotta.logs import append_log_record, log_records, render_logs_markdown
 from gotta import stored
 from gotta import topology
 from gotta.actor import SESSION_ACTOR_ENV
-from gotta.notes import (
-    actor_notes_records,
-    append_actor_note,
-    render_actor_notes_markdown,
-)
+from gotta.notes.file import actor_notes_records, append_actor_note
+from gotta.notes.render import render_actor_notes_markdown
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry

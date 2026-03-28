@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gotta.notes import actor_notes_status, actor_voice
+from gotta.notes.voice import actor_notes_status, actor_voice
 from gotta.session.activity.summary import (
     _actor_evidence_note,
     _actor_evidence_summary,

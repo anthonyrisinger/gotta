@@ -223,8 +223,10 @@ State management:
   append-only JSONL with Markdown projection.
 - **`projection.py`** — Bidirectional JSONL-to-Markdown serialization. Append-only
   JSONL is canonical truth; Markdown projections are derived for readability.
-- **`logs.py`**, **`notes.py`**, **`todo.py`** — Per-channel state surfaces using
-  the same JSONL-plus-projection pattern.
+- **`logs.py`**, **`notes/`**, **`todo.py`** — Per-channel state surfaces using
+  the same JSONL-plus-projection pattern. `notes/file.py` owns canonical actor
+  note state, `notes/voice.py` owns voice/readiness inference, and
+  `notes/render.py` owns payload and Markdown projection.
 
 Utilities:
 

@@ -8,7 +8,7 @@ import time
 
 from gotta.compat import datetime
 from gotta.friction import OOPS_CHANNEL, visible_channel_records
-from gotta.notes import visible_actor_notes_records
+from gotta.notes.file import visible_actor_notes_records
 from gotta.session.activity.summary import _actor_activity_summary
 from gotta.session.registry import (
     ACTOR_STALL_SECONDS,

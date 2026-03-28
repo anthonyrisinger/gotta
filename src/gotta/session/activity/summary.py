@@ -9,7 +9,7 @@ import time
 from gotta.actor import writer_role
 from gotta.compat import datetime
 from gotta.content.scope import session_identity
-from gotta.notes import visible_actor_notes_records
+from gotta.notes.file import visible_actor_notes_records
 
 from gotta.session.registry import (
     ACTOR_STALL_SECONDS,
