@@ -8,12 +8,10 @@ from typing import Any
 
 from ..parse import explicit_session_ref, require_started_session, session_dirs_for_read
 from ..scan.payload import scan_payload
-from .lineage import lineage_focus_payload
+from .lineage import lineage_focus_payload, lineage_payload
 from .overview import (
     analysis_overview_payload,
-    analysis_payload,
     combined_analysis_payload,
-    semantic_payload,
 )
 from .render import (
     render_analysis_focus_text,
@@ -32,21 +30,21 @@ from .render import (
     render_single_focus_markdown,
     render_text_bundle,
 )
-from .semantic import semantic_focus_payload
+from .semantic import semantic_focus_payload, semantic_payload
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     dirs = session_dirs_for_read(args)
     require_started_session(dirs)
     session_ref = explicit_session_ref(args)
-    lineage_payload = analysis_payload(dirs, session_ref=session_ref)
-    lineage_mermaid = render_analysis_mermaid(lineage_payload)
-    semantic_graph = semantic_payload(dirs, session_ref=session_ref)
+    lineage_graph = lineage_payload(dirs, session_ref=session_ref)
+    lineage_mermaid = render_analysis_mermaid(lineage_graph)
+    semantic_graph = semantic_payload(lineage_graph)
     semantic_mermaid = render_semantic_mermaid(semantic_graph)
     focus_query = str(getattr(args, "focus", "") or "").strip()
     focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
     overview = analysis_overview_payload(
-        lineage_payload,
+        lineage_graph,
         semantic_graph,
         limit=focus_limit,
     )
@@ -61,13 +59,13 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             session_ref=session_ref,
         )
         lineage_focus = lineage_focus_payload(
-            lineage_payload,
+            lineage_graph,
             focus=focus_query,
             limit=focus_limit,
             scan_payload=focus_scan,
         )
         semantic_focus = semantic_focus_payload(
-            lineage_payload,
+            lineage_graph,
             semantic_graph,
             focus=focus_query,
             limit=focus_limit,
@@ -79,7 +77,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print(
                 render_lineage_focus_text(lineage_focus)
                 if lineage_focus is not None
-                else render_lineage_overview_text(lineage_payload, limit=focus_limit)
+                else render_lineage_overview_text(lineage_graph, limit=focus_limit)
             )
         elif args.mode == "semantic":
             print(
@@ -104,7 +102,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         if args.mode == "lineage":
             print(
                 json.dumps(
-                    lineage_focus if lineage_focus is not None else lineage_payload,
+                    lineage_focus if lineage_focus is not None else lineage_graph,
                     indent=2,
                     sort_keys=True,
                 )
@@ -125,7 +123,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                         lineage=(
                             lineage_focus
                             if lineage_focus is not None
-                            else lineage_payload
+                            else lineage_graph
                         ),
                         semantic=(
                             semantic_focus
@@ -146,9 +144,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     section_lines=render_lineage_focus_markdown_section(lineage_focus),
                 )
                 if lineage_focus is not None
-                else render_lineage_overview_markdown(
-                    lineage_payload, limit=focus_limit
-                ),
+                else render_lineage_overview_markdown(lineage_graph, limit=focus_limit),
                 end="",
             )
         elif args.mode == "semantic":
@@ -178,7 +174,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print(
                 render_analysis_overview_markdown(
                     overview,
-                    lineage=lineage_payload,
+                    lineage=lineage_graph,
                     limit=focus_limit,
                 ),
                 end="",

@@ -42,8 +42,9 @@ from gotta.plugins import goal
 from gotta.plugins.logs import main as logs
 from gotta.plugins.notes import main as notes
 from gotta.plugins import actor
-import gotta.plugins.session.analyze.overview as session_analyze_overview
+import gotta.plugins.session.analyze.lineage as session_analyze_lineage
 import gotta.plugins.session.analyze.render as session_analyze_render
+import gotta.plugins.session.analyze.semantic as session_analyze_semantic
 from gotta.plugins.session.graph.payload import graph_payload as session_graph_payload
 from gotta.plugins.session import main as session_main
 from gotta.plugins.session import parse as session_parse
@@ -4110,7 +4111,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
     )
 
     graph_payload = session_graph_payload(dirs)
-    analysis_payload = session_analyze_overview.analysis_payload(dirs)
+    analysis_payload = session_analyze_lineage.lineage_payload(dirs)
 
     assert graph_payload["sources"][0]["collision"] is False
     assert graph_payload["sources"][0]["variant"] is True
@@ -4159,7 +4160,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    analysis_payload = session_analyze_overview.analysis_payload(dirs)
+    analysis_payload = session_analyze_lineage.lineage_payload(dirs)
 
     assert analysis_payload["collisionCount"] == 0
     assert analysis_payload["variantCount"] == 0
@@ -4210,8 +4211,8 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    analysis_payload = session_analyze_overview.analysis_payload(dirs)
-    semantic_payload = session_analyze_overview.semantic_payload(dirs)
+    analysis_payload = session_analyze_lineage.lineage_payload(dirs)
+    semantic_payload = session_analyze_semantic.semantic_payload(analysis_payload)
     analysis_mermaid = session_analyze_render.render_analysis_mermaid(analysis_payload)
 
     assert analysis_payload["leadSourceCount"] == 3
@@ -6193,7 +6194,7 @@ def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    payload = session_analyze_overview.analysis_payload(dirs)
+    payload = session_analyze_lineage.lineage_payload(dirs)
 
     assert payload["revisionEdgeCount"] == 0
     provider_sets = {tuple(item["providers"]) for item in payload["content"]}
@@ -6230,7 +6231,7 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    payload = session_analyze_overview.analysis_payload(dirs)
+    payload = session_analyze_lineage.lineage_payload(dirs)
 
     assert payload["nameCollisionCount"] == 1
     assert payload["nameCollisions"] == ["shared-thread.md"]
