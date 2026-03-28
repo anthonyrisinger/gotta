@@ -59,6 +59,7 @@ artifacts through the canonical release wrapper:
 ./scripts/release prepare patch
 ./scripts/release prepare minor
 ./scripts/release publish
+./scripts/release publish --notes-file /tmp/gotta-release.md
 ./scripts/release github
 ./scripts/release github 0.41.0
 ./scripts/release patch
@@ -75,8 +76,11 @@ reviewed. `publish` validates the current prepared version and then pushes
 `main`, publishes to PyPI, waits for public propagation, pushes the annotated
 `vX.Y.Z` tag, and creates the GitHub Release. `github [version]` is the retry
 and retrofit path for the GitHub tag/release layer without republishing to
-PyPI. It reads the PyPI token from `~/.pypirc` under `[pypi].password` and
-expects an authenticated `gh` CLI for the GitHub release layer.
+PyPI. Set `GOTTA_RELEASE_NOTES_FILE=/path/to/release.md` or pass
+`--notes-file /path/to/release.md` to publish a hand-written GitHub Release
+body verbatim instead of the generated fallback. It reads the PyPI token from
+`~/.pypirc` under `[pypi].password` and expects an authenticated `gh` CLI for
+the GitHub release layer.
 
 ## Project Expectations
 
