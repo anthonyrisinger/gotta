@@ -42,15 +42,24 @@ For regular study and maintenance work, use the repo wrapper:
 
 ```bash
 ./scripts/study
+./scripts/study --quick
+./scripts/study --full
 ./scripts/study --deep
 ./scripts/study --types
 ```
 
-`./scripts/study` runs the blocking gate, pressure tools, and local study
-binaries such as `cloc`, `ctags`, and `ast-grep` when they are installed.
-Pressure-map tools such as `radon` and `lizard` are surfaced as advisory
-signals rather than correctness blockers. `--deep` adds `import-linter` and
-`semgrep`. `--types` adds a source-only `pyright` pass as a pressure map.
+`./scripts/study` now defaults to the quick working-tree loop: namespace
+policy, full-tree `ruff check`, full-tree `ruff format --check`, and a
+deterministic targeted pytest slice derived from the current working tree.
+Treat that quick pass as squeeze-loop signal, not branch health. `--quick` is
+the explicit alias for that same mode.
+
+`./scripts/study --full` preserves the branch-grade pass and remains the
+release-validation contract. It keeps the full pytest run, vulture, formatter
+gate, durations pass, advisory pressure tools, and local study binaries such
+as `cloc`, `ctags`, and `ast-grep` when they are installed. `--deep` and
+`--types` both imply `--full`; `--deep` adds `import-linter` and `semgrep`,
+and `--types` adds a source-only `pyright` pass as a pressure map.
 
 If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts through the canonical release wrapper:
@@ -67,7 +76,7 @@ artifacts through the canonical release wrapper:
 ```
 
 `./scripts/release` is the canonical path for shipping. It runs
-`./scripts/study` on the unbumped tree, then bumps the version with `uv`,
+`./scripts/study --full` on the unbumped tree, then bumps the version with `uv`,
 validates fresh artifacts, smoke-installs the wheel, commits the release
 metadata, and either stops for review or pushes, publishes, tags, and creates
 the GitHub Release. `prepare`

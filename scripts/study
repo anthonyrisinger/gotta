@@ -1,128 +1,541 @@
-#!/usr/bin/env sh
+#!/usr/bin/env python3
+"""Drive quick and full study passes for the repo."""
 
-set -eu
+from __future__ import annotations
 
-usage() {
-  cat <<'EOF'
-usage: ./scripts/study [--deep] [--types]
+from dataclasses import dataclass
+import argparse
+from pathlib import Path, PurePosixPath
+import shutil
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
 
-Run the local quality gate, structural pressure tools, and optional study
-instrumentation.
 
-  --deep   add import-linter and semgrep study passes
-  --types  add a source-only pyright pressure pass
-EOF
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CORE_SLICE = (
+    "tests/test_cli.py",
+    "tests/test_dispatch.py",
+    "tests/test_content.py",
+    "tests/test_read.py",
+    "tests/test_session.py",
+)
+REPO_CONTROL_FALLBACK = frozenset(
+    {
+        "pyproject.toml",
+        "uv.lock",
+        ".importlinter",
+        ".semgrep/study.yml",
+    }
+)
+EXACT_MAPPINGS: dict[str, tuple[str, ...]] = {
+    "src/gotta/plugins/read.py": (
+        "tests/test_read.py",
+        "tests/test_dispatch.py",
+    ),
+    "src/gotta/plugins/github.py": (
+        "tests/test_github.py",
+        "tests/test_cli.py",
+    ),
+    "src/gotta/plugins/slack.py": (
+        "tests/test_slack.py",
+        "tests/test_cli.py",
+    ),
+    "src/gotta/plugins/jira.py": ("tests/test_atlassian.py",),
+    "src/gotta/plugins/confluence.py": ("tests/test_atlassian.py",),
+    "src/gotta/plugins/gdocs.py": ("tests/test_google.py",),
+    "src/gotta/plugins/gdrive.py": ("tests/test_google.py",),
+    "src/gotta/plugins/gsheets.py": ("tests/test_google.py",),
+    "src/gotta/plugins/grafana.py": ("tests/test_grafana.py",),
+    "src/gotta/plugins/granola.py": ("tests/test_granola.py",),
+    "src/gotta/plugins/oops.py": ("tests/test_oops.py",),
+    "src/gotta/plugins/ask.py": ("tests/test_ask.py",),
+    "src/gotta/providers/atlassian.py": ("tests/test_atlassian.py",),
+    "src/gotta/providers/google.py": ("tests/test_google.py",),
+    "src/gotta/providers/slack.py": ("tests/test_slack.py",),
+    "scripts/study": ("tests/test_study.py",),
+    "scripts/release": ("tests/test_study.py",),
 }
+PREFIX_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    sorted(
+        {
+            "src/gotta/plugins/session/": ("tests/test_session.py",),
+            "src/gotta/plugins/logs/": (
+                "tests/test_session.py",
+                "tests/test_cli.py",
+            ),
+            "src/gotta/plugins/notes/": (
+                "tests/test_session.py",
+                "tests/test_cli.py",
+            ),
+            "src/gotta/cli/": (
+                "tests/test_cli.py",
+                "tests/test_dispatch.py",
+            ),
+            "src/gotta/dispatch/": (
+                "tests/test_dispatch.py",
+                "tests/test_cli.py",
+            ),
+            "src/gotta/resolve/": (
+                "tests/test_read.py",
+                "tests/test_dispatch.py",
+            ),
+            "src/gotta/content/": (
+                "tests/test_content.py",
+                "tests/test_session.py",
+            ),
+            "src/gotta/source/": (
+                "tests/test_source.py",
+                "tests/test_session.py",
+            ),
+            "src/gotta/notes/": (
+                "tests/test_session.py",
+                "tests/test_cli.py",
+            ),
+            "src/gotta/session/": (
+                "tests/test_session.py",
+                "tests/test_cli.py",
+            ),
+        }.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+)
 
-section() {
-  printf '\n== %s ==\n' "$1"
-}
 
-run_cmd() {
-  printf '+'
-  for arg in "$@"; do
-    printf ' %s' "$arg"
-  done
-  printf '\n'
-  "$@"
-}
+@dataclass(frozen=True, slots=True)
+class Mode:
+    quick: bool
+    full: bool
+    deep: bool
+    types: bool
+    verbose: bool
 
-advisory_cmd() {
-  printf '+'
-  for arg in "$@"; do
-    printf ' %s' "$arg"
-  done
-  printf '\n'
-  if "$@"; then
+
+@dataclass(frozen=True, slots=True)
+class Selection:
+    targets: tuple[str, ...]
+    reason: str
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="./scripts/study",
+        description=(
+            "Run a quick working-tree study loop by default, or the full branch-grade "
+            "study pass with --full."
+        ),
+    )
+    parser.add_argument(
+        "--quick", action="store_true", help="run the quick working-tree loop"
+    )
+    parser.add_argument(
+        "--full", action="store_true", help="run the full branch-grade study pass"
+    )
+    parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="add import-linter and semgrep on top of full mode",
+    )
+    parser.add_argument(
+        "--types", action="store_true", help="add advisory pyright on top of full mode"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="stream command output in quick mode; full mode already streams",
+    )
+    return parser
+
+
+def resolve_mode(argv: list[str]) -> Mode:
+    args = build_parser().parse_args(argv)
+    if args.quick and (args.full or args.deep or args.types):
+        raise SystemExit("--quick cannot be combined with --full, --deep, or --types")
+    full = bool(args.full or args.deep or args.types)
+    quick = bool(args.quick or not full)
+    return Mode(
+        quick=quick,
+        full=full,
+        deep=bool(args.deep),
+        types=bool(args.types),
+        verbose=bool(args.verbose),
+    )
+
+
+def normalize_path(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        return ""
+    return PurePosixPath(value).as_posix()
+
+
+def parse_porcelain_z(raw: bytes) -> tuple[str, ...]:
+    fields = raw.decode("utf-8", errors="surrogateescape").split("\0")
+    paths: list[str] = []
+    index = 0
+    while index < len(fields):
+        record = fields[index]
+        if not record:
+            break
+        status = record[:2]
+        path = normalize_path(record[3:])
+        if path:
+            paths.append(path)
+        index += 1
+        if "R" in status or "C" in status:
+            if index < len(fields):
+                original = normalize_path(fields[index])
+                if original:
+                    paths.append(original)
+            index += 1
+    return tuple(paths)
+
+
+def changed_paths(repo_root: Path) -> tuple[str, ...]:
+    proc = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+    )
+    return tuple(sorted(set(parse_porcelain_z(proc.stdout))))
+
+
+def resolve_path_targets(path: str) -> tuple[str, ...]:
+    if path.startswith("tests/test_") and path.endswith(".py"):
+        return (path,)
+    if path in EXACT_MAPPINGS:
+        return EXACT_MAPPINGS[path]
+    for prefix, targets in PREFIX_MAPPINGS:
+        if path.startswith(prefix):
+            return targets
+    return ()
+
+
+def select_pytest_targets(paths: tuple[str, ...], repo_root: Path) -> Selection:
+    if not paths:
+        return Selection(existing_targets(CORE_SLICE, repo_root), "clean tree fallback")
+
+    selected: set[str] = set()
+    repo_control_fallback = False
+    unmapped_src = False
+
+    for path in paths:
+        if path in REPO_CONTROL_FALLBACK:
+            repo_control_fallback = True
+        targets = resolve_path_targets(path)
+        if targets:
+            selected.update(targets)
+            continue
+        if path.startswith("src/"):
+            unmapped_src = True
+
+    reason = "mapped from changed paths"
+    if repo_control_fallback:
+        selected.update(CORE_SLICE)
+        reason = "repo-control fallback"
+    elif not selected and unmapped_src:
+        selected.update(CORE_SLICE)
+        reason = "unmapped source fallback"
+    elif not selected:
+        return Selection((), "no changed test targets")
+
+    return Selection(existing_targets(selected, repo_root), reason)
+
+
+def existing_targets(
+    targets: tuple[str, ...] | set[str], repo_root: Path
+) -> tuple[str, ...]:
+    return tuple(sorted(target for target in targets if (repo_root / target).exists()))
+
+
+def shell_join(command: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def print_section(title: str) -> None:
+    print(f"\n== {title} ==")
+
+
+def print_command(command: list[str]) -> None:
+    print(f"+ {shell_join(command)}")
+
+
+def run_streaming(command: list[str], *, cwd: Path, advisory: bool = False) -> int:
+    print_command(command)
+    proc = subprocess.run(command, cwd=cwd, check=False)
+    if proc.returncode != 0 and advisory:
+        print(f"advisory step failed with exit {proc.returncode}", file=sys.stderr)
+        return 0
+    return proc.returncode
+
+
+def run_summary(command: list[str], *, cwd: Path, label: str) -> int:
+    start = time.monotonic()
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as handle:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            check=False,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        elapsed = time.monotonic() - start
+        if proc.returncode == 0:
+            print(f"ok {elapsed:.2f}s {label}")
+            return 0
+        handle.seek(0)
+        output = handle.read()
+    print(f"fail {label}")
+    print(f"command: {shell_join(command)}")
+    if output:
+        sys.stdout.write(output)
+        if not output.endswith("\n"):
+            print()
+    return proc.returncode
+
+
+def namespace_policy_error(repo_root: Path) -> str:
+    offenders = sorted(
+        path.relative_to(repo_root).as_posix()
+        for path in (repo_root / "src").rglob("__init__.py")
+    )
+    if not offenders:
+        return ""
+    return "\n".join(
+        [
+            "namespace-package policy violated: __init__.py found under src/",
+            *offenders,
+        ]
+    )
+
+
+def run_namespace_check(*, repo_root: Path, verbose: bool) -> int:
+    start = time.monotonic()
+    failure = namespace_policy_error(repo_root)
+    elapsed = time.monotonic() - start
+    if verbose:
+        if failure:
+            print(failure, file=sys.stderr)
+            return 1
+        print("ok namespace-package policy")
+        return 0
+    if failure:
+        print("fail namespace-package policy")
+        print(failure)
+        return 1
+    print(f"ok {elapsed:.2f}s namespace-package policy")
     return 0
-  else
-    status=$?
-  fi
-  printf 'advisory step failed with exit %s\n' "$status" >&2
-  return 0
-}
 
-have_cmd() {
-  command -v "$1" >/dev/null 2>&1
-}
 
-deep=0
-types=0
+def run_quick(repo_root: Path, *, verbose: bool) -> int:
+    print("note: quick mode is a working-tree loop, not a repo-health signal")
+    if run_namespace_check(repo_root=repo_root, verbose=verbose) != 0:
+        return 1
 
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --deep)
-      deep=1
-      ;;
-    --types)
-      types=1
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      usage >&2
-      exit 64
-      ;;
-  esac
-  shift
-done
+    commands = [
+        (["uv", "run", "ruff", "check", "src", "tests"], "ruff check"),
+        (
+            ["uv", "run", "ruff", "format", "--check", "src", "tests"],
+            "ruff format --check",
+        ),
+    ]
+    for command, label in commands:
+        status = (
+            run_streaming(command, cwd=repo_root)
+            if verbose
+            else run_summary(command, cwd=repo_root, label=label)
+        )
+        if status != 0:
+            return status
 
-repo_root="$(git rev-parse --show-toplevel)"
-cd "$repo_root"
+    selection = select_pytest_targets(changed_paths(repo_root), repo_root)
+    targets_text = ", ".join(selection.targets) if selection.targets else "none"
+    print(f"pytest targets ({selection.reason}): {targets_text}")
+    if not selection.targets:
+        return 0
+    pytest_command = [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "--maxfail=1",
+        *selection.targets,
+    ]
+    return (
+        run_streaming(pytest_command, cwd=repo_root)
+        if verbose
+        else run_summary(pytest_command, cwd=repo_root, label="pytest")
+    )
 
-if [ -n "$(find src -type f -name '__init__.py' -print -quit)" ]; then
-  printf '%s\n' 'namespace-package policy violated: __init__.py found under src/' >&2
-  find src -type f -name '__init__.py' -print | sort >&2
-  exit 1
-fi
 
-section "Core Gate"
-run_cmd uv run pytest -q
-run_cmd uv run ruff check src tests
-run_cmd uv run python -m vulture src tests --min-confidence 80
+def have_command(command: str) -> bool:
+    return shutil.which(command) is not None
 
-section "Formatter Gate"
-run_cmd uv run ruff format --check src tests
 
-section "Pressure Map"
-run_cmd uv run pytest --durations=15 -q
-advisory_cmd uv run python -m radon cc src tests -s
-advisory_cmd uv run lizard src tests
+def run_full(repo_root: Path, *, deep: bool, types: bool) -> int:
+    failure = namespace_policy_error(repo_root)
+    if failure:
+        print(failure, file=sys.stderr)
+        return 1
 
-section "Study Counters"
-if have_cmd cloc; then
-  run_cmd cloc src tests
-else
-  printf 'skip cloc (not installed)\n'
-fi
+    sections: tuple[tuple[str, tuple[tuple[list[str], bool], ...]], ...] = (
+        (
+            "Core Gate",
+            (
+                (["uv", "run", "pytest", "-q"], False),
+                (["uv", "run", "ruff", "check", "src", "tests"], False),
+                (
+                    [
+                        "uv",
+                        "run",
+                        "python",
+                        "-m",
+                        "vulture",
+                        "src",
+                        "tests",
+                        "--min-confidence",
+                        "80",
+                    ],
+                    False,
+                ),
+            ),
+        ),
+        (
+            "Formatter Gate",
+            (
+                (
+                    ["uv", "run", "ruff", "format", "--check", "src", "tests"],
+                    False,
+                ),
+            ),
+        ),
+        (
+            "Pressure Map",
+            (
+                (["uv", "run", "pytest", "--durations=15", "-q"], False),
+                (
+                    ["uv", "run", "python", "-m", "radon", "cc", "src", "tests", "-s"],
+                    True,
+                ),
+                (["uv", "run", "lizard", "src", "tests"], True),
+            ),
+        ),
+    )
 
-if have_cmd ctags; then
-  tags_file="$(mktemp)"
-  trap 'rm -f "$tags_file"' EXIT INT TERM
-  run_cmd ctags -R -f "$tags_file" src tests
-  run_cmd wc -l "$tags_file"
-else
-  printf 'skip ctags (not installed)\n'
-fi
+    for title, steps in sections:
+        print_section(title)
+        for command, advisory in steps:
+            status = run_streaming(command, cwd=repo_root, advisory=advisory)
+            if status != 0:
+                return status
 
-if have_cmd ast-grep; then
-  run_cmd ast-grep -p '@dataclass($$$ARGS)' -l python src/gotta
-  run_cmd ast-grep -p 'parser.add_argument($$$ARGS)' -l python src/gotta
-else
-  printf 'skip ast-grep (not installed)\n'
-fi
+    print_section("Study Counters")
+    if have_command("cloc"):
+        if run_streaming(["cloc", "src", "tests"], cwd=repo_root) != 0:
+            return 1
+    else:
+        print("skip cloc (not installed)")
 
-if [ "$deep" -eq 1 ]; then
-  section "Architecture"
-  run_cmd env PYTHONPATH=src uvx --from import-linter lint-imports --config .importlinter --show-timings
+    if have_command("ctags"):
+        with tempfile.NamedTemporaryFile() as handle:
+            tags_file = handle.name
+            if (
+                run_streaming(
+                    ["ctags", "-R", "-f", tags_file, "src", "tests"], cwd=repo_root
+                )
+                != 0
+            ):
+                return 1
+            if run_streaming(["wc", "-l", tags_file], cwd=repo_root) != 0:
+                return 1
+    else:
+        print("skip ctags (not installed)")
 
-  section "Semantic Probes"
-  run_cmd uvx semgrep --config .semgrep/study.yml src/gotta
-fi
+    if have_command("ast-grep"):
+        if (
+            run_streaming(
+                ["ast-grep", "-p", "@dataclass($$$ARGS)", "-l", "python", "src/gotta"],
+                cwd=repo_root,
+            )
+            != 0
+        ):
+            return 1
+        if (
+            run_streaming(
+                [
+                    "ast-grep",
+                    "-p",
+                    "parser.add_argument($$$ARGS)",
+                    "-l",
+                    "python",
+                    "src/gotta",
+                ],
+                cwd=repo_root,
+            )
+            != 0
+        ):
+            return 1
+    else:
+        print("skip ast-grep (not installed)")
 
-if [ "$types" -eq 1 ]; then
-  section "Type Pressure"
-  advisory_cmd uvx pyright src
-fi
+    if deep:
+        print_section("Architecture")
+        if (
+            run_streaming(
+                [
+                    "env",
+                    "PYTHONPATH=src",
+                    "uvx",
+                    "--from",
+                    "import-linter",
+                    "lint-imports",
+                    "--config",
+                    ".importlinter",
+                    "--show-timings",
+                ],
+                cwd=repo_root,
+            )
+            != 0
+        ):
+            return 1
+
+        print_section("Semantic Probes")
+        if (
+            run_streaming(
+                ["uvx", "semgrep", "--config", ".semgrep/study.yml", "src/gotta"],
+                cwd=repo_root,
+            )
+            != 0
+        ):
+            return 1
+
+    if types:
+        print_section("Type Pressure")
+        if run_streaming(["uvx", "pyright", "src"], cwd=repo_root, advisory=True) != 0:
+            return 1
+
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    mode = resolve_mode(list(argv or sys.argv[1:]))
+    if mode.full:
+        return run_full(REPO_ROOT, deep=mode.deep, types=mode.types)
+    return run_quick(REPO_ROOT, verbose=mode.verbose)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

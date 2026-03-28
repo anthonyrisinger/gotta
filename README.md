@@ -182,16 +182,23 @@ For one-command study and maintenance passes, use:
 
 ```bash
 ./scripts/study
+./scripts/study --quick
+./scripts/study --full
 ./scripts/study --deep
 ./scripts/study --types
 ```
 
-`./scripts/study` runs the blocking gate, pressure tools, and any local study
-binaries already installed. Pressure-map tools such as `radon` and `lizard`
-are surfaced as advisory signals rather than correctness blockers. `--deep`
-adds architecture and semantic probes through `import-linter` and `semgrep`.
-`--types` adds a source-only `pyright` pass as a pressure map rather than a
-release gate.
+`./scripts/study` now defaults to the quick working-tree loop: namespace policy,
+full-tree `ruff check`, full-tree `ruff format --check`, and a deterministic
+targeted pytest slice chosen from the current working tree. That quick pass is
+for squeeze work, not repo health. Use `--quick` explicitly when you want to
+spell that intent out in scripts or notes.
+
+`./scripts/study --full` preserves the branch-grade pass: full pytest, vulture,
+formatter gate, durations, advisory pressure tools, and optional study counters.
+Pressure-map tools such as `radon` and `lizard` remain advisory rather than
+correctness blockers. `--deep` and `--types` both imply `--full`; `--deep` adds
+`import-linter` and `semgrep`, and `--types` adds a source-only `pyright` pass.
 
 ## Advanced Study Battery
 

@@ -77,7 +77,7 @@ PY
 }
 
 run_study_gate() {
-  ./scripts/study
+  ./scripts/study --full
 }
 
 run_artifact_gate() {
