@@ -1,59 +1,56 @@
-"""Root session surfaces for `gotta session`."""
+"""Doctor surface for `gotta session`."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+from typing import TypedDict
 
-from gotta.compat import UTC, datetime
-from gotta import binding as binding_helpers
-from gotta import topology
 from gotta.content.context import current_context_binding
-from gotta.content.env import (
-    CONTENT_ENV,
-    SESSION_ACTIVATION_ENV,
-    SESSION_CREATED_ENV,
-    SESSION_ENV,
-    env_mapping,
-    load_state_env_at_root,
-    write_session_state,
-)
-from gotta.content.path import sh_quote
-from gotta.content.scope import (
-    resolve_dirs,
-    session_identity,
-    session_is_initialized,
-    session_shared_id,
-    shared_session_root,
-)
-from gotta.session import bootstrap as session_bootstrap
-from gotta.session import registry as session_registry
-from gotta.session import scope as session_scope
+from gotta.content.env import SESSION_CREATED_ENV, load_state_env_at_root
+from gotta.content.model import ResolvedDirs
+from gotta.content.scope import session_is_initialized, shared_session_root
+from gotta import topology
 
-from .parse import (
-    options_from_args,
-    require_started_session,
-    session_dirs_for_read,
-    session_scope_started,
-)
+from .parse import require_started_session, session_dirs_for_read, session_scope_started
+from .show import show_payload
 
 
-def _print_dirs(args: argparse.Namespace, payload: dict[str, str]) -> int:
-    print_format = getattr(args, "print_format", "path")
-    if print_format == "json":
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-    if print_format == "path":
-        print(payload["GOTTA_SESSION_DIR"])
-        return 0
-    if print_format == "env":
-        for key, value in payload.items():
-            print(f"{key}={value}")
-        return 0
-    lines = [f"export {key}={sh_quote(value)}" for key, value in payload.items()]
-    print("\n".join(lines))
-    return 0
+class DoctorRuntimePayload(TypedDict):
+    present: bool
+    contextId: str
+    contextSource: str
+    bindingId: str
+
+
+class DoctorSessionPayload(TypedDict):
+    sessionId: str
+    actor: str
+    sessionRoot: str
+    contentRoot: str
+    initialized: bool
+    repo: str
+    createdAt: str
+
+
+class DoctorCheck(TypedDict):
+    status: str
+    detail: str
+
+
+class DoctorChecks(TypedDict):
+    runtimeContextPresent: DoctorCheck
+    durableBindingsPresent: DoctorCheck
+    runtimeBindingMatchesTarget: DoctorCheck
+    sessionTopologyConsistent: DoctorCheck
+
+
+class DoctorPayload(TypedDict):
+    runtime: DoctorRuntimePayload
+    session: DoctorSessionPayload
+    bindings: list[dict[str, object]]
+    checks: DoctorChecks
 
 
 def _binding_detail(record: dict[str, object]) -> str:
@@ -66,37 +63,7 @@ def _binding_detail(record: dict[str, object]) -> str:
     )
 
 
-def show_payload(dirs) -> dict[str, str]:
-    resolved = dirs.session_dir.resolve()
-    if resolved.parent.name == "actors":
-        actor_root = resolved
-        session_root = session_registry._group_session_root(actor_root)
-        primary_actor = session_identity(actor_root)
-        state_dir = str(actor_root / "state")
-    elif topology.parse_shared_session_root(resolved) is None:
-        actor_root = resolved
-        session_root = session_registry._group_session_root(resolved)
-        primary_actor = ""
-        state_dir = str(actor_root / "state")
-    else:
-        session_root = session_registry._group_session_root(resolved)
-        primary_actor = session_scope._primary_actor_name(session_root) or ""
-        actor_root = (
-            session_registry._actor_session_dir(session_root, primary_actor)
-            if primary_actor
-            else session_root
-        )
-        state_dir = str(actor_root / "state") if primary_actor else ""
-    return {
-        SESSION_ENV: str(actor_root),
-        "GOTTA_SESSION_ID": session_shared_id(session_root),
-        CONTENT_ENV: str(dirs.content_dir),
-        "GOTTA_SESSION_STATE_DIR": state_dir,
-        "GOTTA_SESSION_ACTOR": primary_actor,
-    }
-
-
-def doctor_payload(dirs) -> dict[str, object]:
+def doctor_payload(dirs: ResolvedDirs) -> DoctorPayload:
     session_env = show_payload(dirs)
     state = load_state_env_at_root(dirs.session_dir)
     runtime = current_context_binding()
@@ -104,16 +71,16 @@ def doctor_payload(dirs) -> dict[str, object]:
     bindings = topology.binding_records_for_session(dirs.session_dir)
     target_session_id = str(session_env.get("GOTTA_SESSION_ID") or "")
     target_shared_root = shared_session_root(target_session_id).resolve()
-    session_payload = {
+    session_payload: DoctorSessionPayload = {
         "sessionId": target_session_id,
         "actor": str(session_env.get("GOTTA_SESSION_ACTOR") or ""),
         "sessionRoot": str(dirs.session_dir),
         "contentRoot": str(dirs.content_dir),
         "initialized": bool(session_is_initialized(dirs.session_dir)),
-        "repo": state.get("GOTTA_SESSION_REPO", ""),
-        "createdAt": state.get(SESSION_CREATED_ENV, ""),
+        "repo": str(state.get("GOTTA_SESSION_REPO") or ""),
+        "createdAt": str(state.get(SESSION_CREATED_ENV) or ""),
     }
-    runtime_payload = {
+    runtime_payload: DoctorRuntimePayload = {
         "present": bool(runtime.context_id),
         "contextId": runtime.context_id,
         "contextSource": runtime.context_source,
@@ -148,7 +115,7 @@ def doctor_payload(dirs) -> dict[str, object]:
         and bool(bindings)
         and bindings_match_target
     )
-    checks = {
+    checks: DoctorChecks = {
         "runtimeContextPresent": {
             "status": "ok" if runtime_payload["present"] else "missing",
             "detail": (
@@ -199,7 +166,7 @@ def doctor_payload(dirs) -> dict[str, object]:
     }
 
 
-def _print_doctor_summary(payload: dict[str, object]) -> int:
+def _print_doctor_summary(payload: DoctorPayload) -> int:
     runtime = payload["runtime"]
     session_payload = payload["session"]
     print(f"session: {session_payload['sessionRoot']}")
@@ -222,36 +189,6 @@ def _print_doctor_summary(payload: dict[str, object]) -> int:
         check = payload["checks"][name]
         print(f"- {name}: {check['status']} - {check['detail']}")
     return 0
-
-
-def cmd_show(args: argparse.Namespace) -> int:
-    dirs = session_dirs_for_read(args)
-    require_started_session(dirs)
-    return _print_dirs(args, show_payload(dirs))
-
-
-def cmd_bind(args: argparse.Namespace) -> int:
-    return binding_helpers.bind_current_context(
-        session_ref=getattr(args, "session_id", None),
-        output=getattr(args, "output", "summary"),
-    )
-
-
-def cmd_init(args: argparse.Namespace) -> int:
-    dirs = resolve_dirs(options_from_args(args), create=True)
-    current = dirs.session_dir.resolve()
-    write_session_state(
-        dirs,
-        {
-            SESSION_CREATED_ENV: load_state_env_at_root(current).get(
-                SESSION_CREATED_ENV, ""
-            )
-            or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            SESSION_ACTIVATION_ENV: "manual",
-        },
-    )
-    session_bootstrap.scaffold_session(current)
-    return _print_dirs(args, env_mapping(dirs))
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:

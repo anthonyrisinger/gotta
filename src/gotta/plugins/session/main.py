@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from gotta import binding as binding_helpers
 from gotta.content.model import ContentError
 from gotta.helptext import is_long_help_request, print_long_help
 
 from .analyze.main import cmd_analyze
 from .graph.main import cmd_graph
+from .init import cmd_init
 from .lead.main import cmd_leads
 from .manifest.main import cmd_manifest
 from .parse import build_parser
-from .root import cmd_bind, cmd_doctor, cmd_init, cmd_show
+from .doctor import cmd_doctor
 from .scan.main import cmd_scan
+from .show import cmd_show
 from .timeline.main import cmd_timeline
 
 
@@ -32,7 +35,10 @@ def main(argv: list[str]) -> int:
             )
         command = args.command or "show"
         if command == "bind":
-            return cmd_bind(args)
+            return binding_helpers.bind_current_context(
+                session_ref=getattr(args, "session_id", None),
+                output=getattr(args, "output", "summary"),
+            )
         if command == "show":
             return cmd_show(args)
         if command == "init":
