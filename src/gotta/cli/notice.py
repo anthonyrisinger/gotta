@@ -16,7 +16,7 @@ from gotta.actor import (
 )
 from gotta import topology
 from gotta.content.path import sh_quote
-from gotta.session import status as session_status
+from gotta.session.status.payload import _actor_status_payload
 
 
 def die(message: str, code: int = 2) -> int:
@@ -63,7 +63,7 @@ def _actor_note_check_warning(root: Path) -> str:
     if not actor_name:
         return ""
     try:
-        payload = session_status._actor_status_payload(root, actor_name)
+        payload = _actor_status_payload(root, actor_name)
     except SystemExit:
         return ""
     return supervisor_note_check_message(actor_name, status_payload=payload)

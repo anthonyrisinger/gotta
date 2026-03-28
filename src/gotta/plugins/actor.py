@@ -37,7 +37,6 @@ from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
-from gotta.session import status as session_status
 from gotta.session.registry import (
     _normalize_actor_name,
     _actor_goal_path,
@@ -46,6 +45,10 @@ from gotta.session.registry import (
     _read_actor_state,
     _write_actor_state,
 )
+from gotta.session.status.bind import _bind_actor
+from gotta.session.status.blocker import _actor_launch_blockers
+from gotta.session.status.payload import _actor_status_payload
+from gotta.session.status.todo import _sync_actor_todo_state
 
 
 ACTOR_HEARTBEAT_SECONDS = 30
@@ -487,7 +490,7 @@ def _finalize_actor_runtime_exit(
         session_activity._actor_log_line(
             work_root, actor_name, f"{final_status.replace('_', ' ')} and exited"
         )
-    session_status._sync_actor_todo_state(work_root)
+    _sync_actor_todo_state(work_root)
     return int(returncode)
 
 
@@ -689,7 +692,7 @@ def _sync_actor_outputs(
     work_root: Path, actor_name: str, *, sync_todo: bool = False
 ) -> None:
     if sync_todo:
-        session_status._sync_actor_todo_state(work_root)
+        _sync_actor_todo_state(work_root)
 
 
 def _record_requested_disposition(
@@ -797,7 +800,7 @@ def _cmd_status(args: argparse.Namespace, work_root: Path, actor_name: str) -> i
         explicit_session=str(getattr(args, "session", None) or "").strip(),
     )
     payload = {
-        current_actor: session_status._actor_status_payload(work_root, current_actor)
+        current_actor: _actor_status_payload(work_root, current_actor)
         for current_actor in actors
     }
     if args.output == "json":
@@ -821,7 +824,7 @@ def _cmd_bind(args: argparse.Namespace, work_root: Path, actor_names: list[str])
         )
     results: list[dict[str, object]] = []
     for actor_name in actor_names:
-        results.append(session_status._bind_actor(work_root, actor_name))
+        results.append(_bind_actor(work_root, actor_name))
     if args.output == "json":
         print(
             json.dumps(
@@ -847,7 +850,7 @@ def _cmd_heartbeat(work_root: Path, actor_name: str) -> int:
 
 
 def _cmd_complete(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
-    current = session_status._actor_status_payload(work_root, actor_name)
+    current = _actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
     if live_closeout:
         return _record_requested_disposition(
@@ -872,7 +875,7 @@ def _cmd_complete(args: argparse.Namespace, work_root: Path, actor_name: str) ->
 
 
 def _cmd_fail(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
-    current = session_status._actor_status_payload(work_root, actor_name)
+    current = _actor_status_payload(work_root, actor_name)
     if _runtime_closeout_note(current):
         return _record_requested_disposition(
             work_root,
@@ -894,7 +897,7 @@ def _cmd_fail(args: argparse.Namespace, work_root: Path, actor_name: str) -> int
 
 
 def _cmd_stop(args: argparse.Namespace, work_root: Path, actor_name: str) -> int:
-    current = session_status._actor_status_payload(work_root, actor_name)
+    current = _actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
     if live_closeout:
         return _record_requested_disposition(
@@ -941,7 +944,7 @@ def _live_actor_settle_override(current: dict[str, object]) -> bool:
 
 
 def _cmd_settle(work_root: Path, actor_name: str) -> int:
-    current = session_status._actor_status_payload(work_root, actor_name)
+    current = _actor_status_payload(work_root, actor_name)
     if bool(current.get("runtime_live")) and not _live_actor_settle_override(current):
         requested_status = str(current.get("requested_status") or "").strip()
         requested_label = str(current.get("requested_label") or "").strip()
@@ -999,7 +1002,7 @@ def _cmd_signoff(args: argparse.Namespace, work_root: Path, actor_name: str) -> 
     summary = str(args.summary or "").strip()
     if not summary:
         raise SystemExit("signoff requires `--summary`")
-    current = session_status._actor_status_payload(work_root, actor_name)
+    current = _actor_status_payload(work_root, actor_name)
     live_closeout = _runtime_closeout_note(current)
     if live_closeout:
         return _record_requested_disposition(
@@ -1025,7 +1028,7 @@ def _cmd_signoff(args: argparse.Namespace, work_root: Path, actor_name: str) -> 
 
 def _cmd_launch(work_root: Path, actor_name: str) -> int:
     actor_name = session_registry._resolve_bound_actor_name(work_root, actor_name)
-    current = session_status._actor_status_payload(work_root, actor_name)
+    current = _actor_status_payload(work_root, actor_name)
     if _runtime_closeout_note(current):
         raise SystemExit(
             f"{actor_name} is already {current['status']}; inspect with `gotta actor status {actor_name}`"
@@ -1033,7 +1036,7 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
     goal_path = work_root / "GOAL.md"
     if not goal_path.is_file():
         raise SystemExit(f"goal file does not exist: {goal_path}")
-    blockers = session_status._actor_launch_blockers(work_root, actor_name=actor_name)
+    blockers = _actor_launch_blockers(work_root, actor_name=actor_name)
     if blockers:
         raise SystemExit(
             "actor launch is blocked until the session framing is real: "
@@ -1110,7 +1113,7 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
         work_root, actor_name, event="starting", detail=str(goal_path)
     )
     session_activity._actor_log_line(work_root, actor_name, f"starting with {model}")
-    session_status._sync_actor_todo_state(work_root)
+    _sync_actor_todo_state(work_root)
     _record_launcher_heartbeat(work_root, actor_name)
     print(
         f"launcher pulse landed for {actor_name}; the launched background runtime already is "

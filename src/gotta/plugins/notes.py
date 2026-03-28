@@ -19,7 +19,7 @@ from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
-from gotta.session import status as session_status
+from gotta.session.status.payload import _actor_status_payload
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
@@ -80,7 +80,7 @@ def _normalize_args(argv: list[str]) -> list[str]:
 
 
 def _summary_payload(work_dir, *, actor_name: str) -> dict[str, object]:
-    status = session_status._actor_status_payload(work_dir, actor_name)
+    status = _actor_status_payload(work_dir, actor_name)
     return {
         "actor": actor_name,
         "label": session_registry._actor_label(actor_name, work_dir=work_dir),
@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if scoped_actor:
             session_activity._record_note_check(work_dir, scoped_actor)
-            status = session_status._actor_status_payload(work_dir, scoped_actor)
+            status = _actor_status_payload(work_dir, scoped_actor)
             payload = actor_notes_payload(
                 work_dir,
                 scoped_actor,
@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         actor_payloads: dict[str, dict[str, object]] = {}
         entries: list[dict[str, object]] = []
         for actor_name in actor_ids:
-            status = session_status._actor_status_payload(work_dir, actor_name)
+            status = _actor_status_payload(work_dir, actor_name)
             actor_payloads[actor_name] = actor_notes_payload(
                 work_dir,
                 actor_name,

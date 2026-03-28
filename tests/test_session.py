@@ -37,7 +37,8 @@ from gotta.notes import (
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
-from gotta.session import status as session_status
+from gotta.session.status.blocker import _actor_launch_blockers
+from gotta.session.status.payload import _actor_status_payload
 from gotta import todo as session_todo
 from gotta.plugins import goal
 from gotta.plugins import logs
@@ -400,7 +401,7 @@ def test_actor_launch_blockers_emit_native_actor_charter_commands(
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
 
-    blockers = session_status._actor_launch_blockers(root, actor_name="claude")
+    blockers = _actor_launch_blockers(root, actor_name="claude")
 
     assert any(
         f"gotta want --actor {claude} --stdin" in blocker for blocker in blockers
@@ -419,7 +420,7 @@ def test_actor_launch_blockers_report_linked_actor_paths(
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
 
-    blockers = session_status._actor_launch_blockers(root, actor_name="claude")
+    blockers = _actor_launch_blockers(root, actor_name="claude")
 
     assert any(
         str(session_registry._actor_session_dir(root, claude) / "WANT.md") in blocker
@@ -455,7 +456,7 @@ def test_actor_launch_uses_isolated_copilot_config_dir(
             return None
 
     monkeypatch.setattr(
-        actor.session_status,
+        actor,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -510,7 +511,7 @@ def test_actor_launch_records_immediate_launcher_heartbeat(
             return None
 
     monkeypatch.setattr(
-        actor.session_status,
+        actor,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -530,7 +531,7 @@ def test_actor_launch_records_immediate_launcher_heartbeat(
     records = actor_notes_records(actor_root, claude)
     assert records[-1]["author"] == actor.LAUNCHER_AUTHOR
     assert records[-1]["message"] == actor.LAUNCHER_HEARTBEAT_NOTE
-    payload = session_status._actor_status_payload(actor_root, claude)
+    payload = _actor_status_payload(actor_root, claude)
     assert payload["notes_status"] == "present"
     assert payload["voice"] == "setup"
     assert payload["launched_at"]
@@ -564,7 +565,7 @@ def test_actor_launch_records_passive_launcher_provenance(
             return None
 
     monkeypatch.setattr(
-        actor.session_status,
+        actor,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -582,7 +583,7 @@ def test_actor_launch_records_passive_launcher_provenance(
     assert actor.main(["launch", claude, "--session", str(root)]) == 0
     capsys.readouterr()
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
     assert payload["launched_by"] == scout
     assert payload["launched_at"]
 
@@ -630,7 +631,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
             return None
 
     monkeypatch.setattr(
-        actor.session_status,
+        actor,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -646,7 +647,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
 
     assert actor.main(["launch", claude, "--session", str(root)]) == 0
     captured = capsys.readouterr()
-    status = session_status._actor_status_payload(actor_root, claude)
+    status = _actor_status_payload(actor_root, claude)
     activity = content_activity.activity_events(actor_root)
 
     assert "ordinary stdout" in captured.out
@@ -657,7 +658,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
         actor_root,
         claude,
         label=session_registry._actor_label(claude, work_dir=actor_root),
-        status_payload=session_status._actor_status_payload(actor_root, claude),
+        status_payload=_actor_status_payload(actor_root, claude),
     )
     assert "first durable heartbeat note" in rendered_notes
     assert (
@@ -729,7 +730,7 @@ def test_actor_launch_consumes_invalid_feedback_directives_and_warns(
             return None
 
     monkeypatch.setattr(
-        actor.session_status,
+        actor,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -1288,7 +1289,7 @@ def test_actor_complete_stays_pending_while_runtime_is_live_and_survives_heartbe
         == 0
     )
     capsys.readouterr()
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
     assert payload["status"] == "closing"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "completed"
@@ -1296,7 +1297,7 @@ def test_actor_complete_stays_pending_while_runtime_is_live_and_survives_heartbe
 
     assert actor.main(["heartbeat", claude, "--session", str(root)]) == 0
     capsys.readouterr()
-    heartbeat_payload = session_status._actor_status_payload(root, claude)
+    heartbeat_payload = _actor_status_payload(root, claude)
     assert heartbeat_payload["status"] == "closing"
     assert heartbeat_payload["requested_pending"] is True
 
@@ -1325,7 +1326,7 @@ def test_actor_signoff_stays_pending_while_runtime_is_live_and_survives_heartbea
         == 0
     )
     capsys.readouterr()
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
     assert payload["status"] == "closing"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "signed_off"
@@ -1333,7 +1334,7 @@ def test_actor_signoff_stays_pending_while_runtime_is_live_and_survives_heartbea
 
     assert actor.main(["heartbeat", claude, "--session", str(root)]) == 0
     capsys.readouterr()
-    heartbeat_payload = session_status._actor_status_payload(root, claude)
+    heartbeat_payload = _actor_status_payload(root, claude)
     assert heartbeat_payload["status"] == "closing"
     assert heartbeat_payload["requested_pending"] is True
 
@@ -1373,7 +1374,7 @@ def test_actor_runtime_exit_finalizes_pending_signoff_authoritatively(
         == 0
     )
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
     assert payload["status"] == "signed_off"
     assert payload["requested_pending"] is False
     assert payload["signoff_summary"] == "accepted by operator"
@@ -1398,7 +1399,7 @@ def test_actor_status_treats_signoff_timestamp_as_authoritative(
         },
     )
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
 
     assert payload["status"] == "signed_off"
     assert payload["still_running"] is False
@@ -1429,7 +1430,7 @@ def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
         == 0
     )
     output = capsys.readouterr().out
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
 
     assert "authoritative status stays active" in output
     assert payload["status"] == "closing"
@@ -1469,7 +1470,7 @@ def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
         == 0
     )
     output = capsys.readouterr().out
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
 
     assert f"recorded stop request for {claude}" in output
     assert payload["status"] == "closing"
@@ -1513,7 +1514,7 @@ def test_notes_projection_skips_supervisor_warning_for_nonfailed_pending_request
         root,
         claude,
         label=session_registry._actor_label(claude, work_dir=root),
-        status_payload=session_status._actor_status_payload(root, claude),
+        status_payload=_actor_status_payload(root, claude),
     )
     assert "Supervisor requested `failed`" not in notes_text
     assert (
@@ -1531,10 +1532,7 @@ def test_actor_bind_canonical_root_has_no_projection_files(
     assert actor.main(["bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
 
-    assert (
-        session_status._actor_status_payload(root, _actor_id(root, "claude"))["status"]
-        == "bound"
-    )
+    assert _actor_status_payload(root, _actor_id(root, "claude"))["status"] == "bound"
 
 
 def test_actor_status_reports_recent_activity_and_recent_artifacts(
@@ -1765,7 +1763,7 @@ def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
         },
     )
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
     assert payload["notes_status"] == "empty"
     assert "brief startup window" in payload["next_step"]
     assert "one heartbeat interval" in payload["next_step"]
@@ -1796,7 +1794,7 @@ def test_actor_status_ignores_actor_log_for_voice_before_note(
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
 
     assert payload["notes_status"] == "empty"
     assert payload["voice"] == "missing"
@@ -1838,7 +1836,7 @@ def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progres
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
 
     assert payload["still_running"] is True
     assert payload["progress_kind"] == "narration"
@@ -1880,7 +1878,7 @@ def test_actor_status_reports_pulse_after_actor_evidence_before_note(
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = session_status._actor_status_payload(root, actor_name)
+    payload = _actor_status_payload(root, actor_name)
 
     assert payload["status"] == "producing_evidence"
     assert payload["notes_status"] == "empty"
@@ -1913,7 +1911,7 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = session_status._actor_status_payload(root, actor_name)
+    payload = _actor_status_payload(root, actor_name)
     assert payload["status"] == "pending"
     assert payload["artifact_count"] == 1
     assert payload["notes_status"] == "empty"
@@ -1952,7 +1950,7 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
         timestamp="2026-03-21T00:00:01Z",
     )
 
-    payload = session_status._actor_status_payload(root, actor_name)
+    payload = _actor_status_payload(root, actor_name)
     assert payload["status"] == "pending"
     assert payload["notes_status"] == "present"
     assert payload["artifact_count"] == 1
@@ -1973,7 +1971,7 @@ def test_foreign_notes_show_records_checks_and_append_resets_feedback(
     assert notes.main(["--session", str(root), "--actor", scout]) == 0
     capsys.readouterr()
 
-    status = session_status._actor_status_payload(root, scout)
+    status = _actor_status_payload(root, scout)
     assert status["note_checks_since_update"] == 1
     assert status["last_note_check_at"]
     assert status["last_note_check_by"] == "operator-1"
@@ -1987,7 +1985,7 @@ def test_foreign_notes_show_records_checks_and_append_resets_feedback(
     )
     capsys.readouterr()
 
-    reset_status = session_status._actor_status_payload(root, scout)
+    reset_status = _actor_status_payload(root, scout)
     assert reset_status["note_checks_since_update"] == 0
     assert reset_status["last_note_check_at"] == ""
     assert reset_status["last_note_check_by"] == ""
@@ -2008,7 +2006,7 @@ def test_explicit_actor_notes_show_counts_cold_start_supervisor_read(
     assert notes.main(["--session", str(root), "--actor", scout]) == 0
     capsys.readouterr()
 
-    status = session_status._actor_status_payload(root, scout)
+    status = _actor_status_payload(root, scout)
     assert status["note_checks_since_update"] == 1
     assert status["last_note_check_at"]
     assert status["last_note_check_by"]
@@ -2028,7 +2026,7 @@ def test_notes_show_does_not_count_self_reads(
     assert notes.main(["--session", str(root), "--actor", scout]) == 0
     capsys.readouterr()
 
-    status = session_status._actor_status_payload(root, scout)
+    status = _actor_status_payload(root, scout)
     assert status["note_checks_since_update"] == 0
     assert status["last_note_check_at"] == ""
     assert status["last_note_check_by"] == ""
@@ -2049,14 +2047,8 @@ def test_session_wide_notes_show_does_not_increment_actor_note_check_counters(
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["actor_count"] == 2
-    assert (
-        session_status._actor_status_payload(root, scout)["note_checks_since_update"]
-        == 0
-    )
-    assert (
-        session_status._actor_status_payload(root, beacon)["note_checks_since_update"]
-        == 0
-    )
+    assert _actor_status_payload(root, scout)["note_checks_since_update"] == 0
+    assert _actor_status_payload(root, beacon)["note_checks_since_update"] == 0
 
 
 def test_actor_status_preserves_note_read_pulse_when_low_signal_progress_is_active(
@@ -2094,7 +2086,7 @@ def test_actor_status_preserves_note_read_pulse_when_low_signal_progress_is_acti
         },
     )
 
-    payload = session_status._actor_status_payload(root, scout)
+    payload = _actor_status_payload(root, scout)
 
     assert (
         "Supervisor has checked this actor's notes 2 times since the last note."
@@ -2116,7 +2108,7 @@ def test_actor_notes_projection_describes_notes_as_canonical_narration(
         root,
         claude,
         label=session_registry._actor_label(claude, work_dir=root),
-        status_payload=session_status._actor_status_payload(root, claude),
+        status_payload=_actor_status_payload(root, claude),
     )
 
     assert "canonical actor-authored narration surface" in rendered
@@ -2161,7 +2153,7 @@ def test_actor_recent_activity_carries_cross_actor_author(
         encoding="utf-8",
     )
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
     assert payload["recent_activity"][0]["author"] == codex
     assert payload["recent_activity"][0]["summary"] == f"{codex}: Wave 2 landed"
     assert payload["recent_lifecycle"] == []
@@ -2182,7 +2174,7 @@ def test_actor_status_ignores_foreign_note_for_voice(tmp_path: Path, capsys) -> 
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = session_status._actor_status_payload(root, claude)
+    payload = _actor_status_payload(root, claude)
 
     assert payload["notes_status"] == "empty"
     assert payload["voice"] == "missing"

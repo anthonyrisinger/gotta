@@ -1,60 +1,33 @@
-"""Actor lifecycle, progress, and status synthesis helpers."""
+"""Actor lifecycle status payload synthesis."""
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import time
 
+from gotta.actor import requested_disposition_label
 from gotta.compat import datetime
-from gotta.content.path import sh_quote
-from gotta.friction import OOPS_CHANNEL, visible_channel_records
-from gotta.notes import actor_notes_ready, actor_voice, visible_actor_notes_records
-from gotta.actor import (
-    requested_disposition_label,
-)
-from gotta.todo import (
-    ensure_managed_todo_item,
-    set_todo_checked,
-    todo_items,
-)
-
-from .activity import (
-    _actor_activity_summary,
+from gotta.notes import actor_notes_ready, actor_voice
+from gotta.session.activity import (
     _actor_evidence_note,
     _actor_evidence_summary,
-    _actor_log_line,
     _actor_note_check_summary,
     _actor_note_summary,
     _actor_recent_activity,
-    _append_actor_event,
 )
-from .bootstrap import (
-    _bootstrap_actor_goal,
-    _bootstrap_actor_want,
-    _bootstrap_want,
-    _ensure_actor_surface,
-)
-from .registry import (
+from gotta.session.registry import (
     ACTOR_STALL_SECONDS,
-    WANT_FILE,
-    _actor_charter_command,
-    _actor_dir_path,
     _actor_events_path,
-    _actor_goal_path,
-    _actor_is_selected,
     _actor_label,
     _actor_session_dir,
     _actor_state_path,
-    _actor_want_path,
-    _bind_actor_identity,
     _normalize_actor_name,
     _read_actor_state,
     _resolve_bound_actor_name,
-    _write_actor_state,
 )
-from .scope import _selected_actor_ids
+from gotta.session.status.progress import _actor_progress_summary
+
 
 ACTOR_RUNNING_STATUS = {
     "starting",
@@ -71,266 +44,18 @@ ACTOR_TERMINAL_STATUS = {
     "signed_off",
 }
 
-FINAL_SIGNOFF_MARKER = "actors-final-signoff"
+
+def _int_value(value: object, *, default: int = 0) -> int:
+    try:
+        return int(str(value or default))
+    except ValueError:
+        return default
 
 
-def _actor_todo_marker(actor_name: str, phase: str) -> str:
-    return f"actor-{_normalize_actor_name(actor_name)}-{phase}"
-
-
-def _actor_todo_redirect(actor_name: str, phase: str) -> str:
-    actor = _normalize_actor_name(actor_name)
-    label = _actor_label(actor)
-    if phase == "initial":
-        return (
-            f"that TODO item is owned by {label} lifecycle; inspect with "
-            f"`gotta actor status {actor}` and advance it through "
-            f"`gotta actor complete {actor}` or `gotta actor signoff {actor} ...`"
-        )
-    if phase == "complete":
-        return (
-            f"that TODO item is owned by {label} lifecycle; use "
-            f"`gotta actor complete {actor}` once the actor run has materially landed"
-        )
-    if phase == "dispositioned":
-        return (
-            f"that TODO item is owned by {label} disposition; use "
-            f"`gotta actor signoff {actor} --summary ...` after review"
-        )
-    raise ValueError(f"unknown actor TODO phase: {phase}")
-
-
-def _managed_todo_redirect(managed_key: str) -> str:
-    if managed_key == FINAL_SIGNOFF_MARKER:
-        return (
-            "that TODO item is owned by final actor sign-off; inspect all actors with "
-            "`gotta actor status` and sign off each actor through "
-            "`gotta actor signoff ...`"
-        )
-    prefix = "actor-"
-    suffixes = ("-initial", "-complete", "-dispositioned")
-    if managed_key.startswith(prefix):
-        for suffix in suffixes:
-            if managed_key.endswith(suffix):
-                actor = managed_key[len(prefix) : -len(suffix)]
-                phase = suffix.removeprefix("-")
-                return _actor_todo_redirect(actor, phase)
-    return (
-        "that TODO item is managed by native actor state; use "
-        "`gotta actor ...` to advance it instead of "
-        "`gotta todo check`"
-    )
-
-
-def _want_rewrite_pending(work_dir: Path) -> bool:
-    want_path = work_dir / WANT_FILE
-    if not want_path.is_file():
-        return True
-    current = want_path.read_text(encoding="utf-8").strip()
-    return current == _bootstrap_want().strip()
-
-
-def _goal_rewrite_pending(goal_path: Path) -> bool:
-    if not goal_path.is_file():
-        return True
-    return (
-        goal_path.read_text(encoding="utf-8")
-        .strip()
-        .startswith("# Seed Goal Placeholder")
-    )
-
-
-def _actor_want_rewrite_pending(work_root: Path, actor_name: str) -> bool:
-    path = _actor_want_path(work_root, actor_name)
-    if not path.is_file():
-        return True
-    current = path.read_text(encoding="utf-8").strip()
-    return (
-        current
-        == _bootstrap_actor_want(
-            actor_name=actor_name,
-            label=_actor_label(actor_name, work_dir=work_root),
-        ).strip()
-    )
-
-
-def _actor_goal_rewrite_pending(work_root: Path, actor_name: str) -> bool:
-    path = _actor_goal_path(work_root, actor_name)
-    if not path.is_file():
-        return True
-    return (
-        path.read_text(encoding="utf-8").strip()
-        == _bootstrap_actor_goal(
-            actor_name=actor_name,
-            label=_actor_label(actor_name, work_dir=work_root),
-            actor_dir=_actor_session_dir(work_root, actor_name),
-            work_dir=work_root,
-        ).strip()
-    )
-
-
-def _actor_launch_blockers(work_root: Path, *, actor_name: str = "") -> list[str]:
-    blockers: list[str] = []
-    goal_path = work_root / "GOAL.md"
-    if _want_rewrite_pending(work_root):
-        blockers.append(f"rewrite `{work_root / WANT_FILE}` first")
-    if _goal_rewrite_pending(goal_path):
-        blockers.append(f"rewrite `{goal_path}` from the current moment before launch")
-    if actor_name:
-        actor_name = _resolve_bound_actor_name(work_root, actor_name)
-        actor_want = _actor_dir_path(work_root, actor_name) / WANT_FILE
-        actor_goal = _actor_dir_path(work_root, actor_name) / "GOAL.md"
-        want_cmd = _actor_charter_command(actor_name, "want")
-        goal_cmd = _actor_charter_command(actor_name, "goal")
-        if _actor_want_rewrite_pending(work_root, actor_name):
-            blockers.append(
-                f"rewrite `{actor_want}` as the actor-local intent frame with `{want_cmd}` before launch"
-            )
-        if _actor_goal_rewrite_pending(work_root, actor_name):
-            blockers.append(
-                f"rewrite `{actor_goal}` as the actor-local goal with `{goal_cmd}` before launch"
-            )
-    return blockers
-
-
-def _actor_progress_summary(
-    work_dir: Path, actor_name: str, *, limit: int = 5
-) -> dict[str, object]:
-    normalized_actor = _normalize_actor_name(actor_name)
-    actor_root = _actor_session_dir(work_dir, normalized_actor)
-    events: list[dict[str, object]] = []
-    order = 0
-
-    def append_progress_event(
-        *,
-        timestamp: str,
-        event: str,
-        detail: str,
-        summary: str,
-        priority: int,
-    ) -> None:
-        nonlocal order
-        cleaned_timestamp = timestamp.strip()
-        cleaned_detail = detail.strip()
-        if not cleaned_timestamp or not cleaned_detail:
-            return
-        events.append(
-            {
-                "timestamp": cleaned_timestamp,
-                "event": event,
-                "author": normalized_actor,
-                "detail": cleaned_detail,
-                "summary": summary.strip() or cleaned_detail,
-                "_priority": priority,
-                "_order": order,
-            }
-        )
-        order += 1
-
-    for record in visible_actor_notes_records(work_dir, normalized_actor):
-        if str(record.get("author") or "").strip() != normalized_actor:
-            continue
-        message = str(record.get("message") or "").strip()
-        append_progress_event(
-            timestamp=str(record.get("timestamp") or ""),
-            event="note",
-            detail=message,
-            summary=_actor_activity_summary(
-                "note",
-                message,
-                author=normalized_actor,
-                target_actor=normalized_actor,
-            ),
-            priority=4,
-        )
-
-    for record in visible_channel_records(actor_root, OOPS_CHANNEL):
-        if str(record.get("actor") or "").strip() != normalized_actor:
-            continue
-        message = str(record.get("message") or "").strip()
-        append_progress_event(
-            timestamp=str(record.get("timestamp") or ""),
-            event="oops",
-            detail=message,
-            summary=_actor_activity_summary(
-                "oops",
-                message,
-                author=normalized_actor,
-                target_actor=normalized_actor,
-            ),
-            priority=3,
-        )
-
-    manifest_path = work_dir / "content" / "manifest.jsonl"
-    if manifest_path.exists():
-        for raw_line in manifest_path.read_text(encoding="utf-8").splitlines():
-            if not raw_line.strip():
-                continue
-            try:
-                payload = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            if str(payload.get("actor") or "").strip() != normalized_actor:
-                continue
-            locator = str(
-                payload.get("canonical_locator")
-                or payload.get("locator")
-                or payload.get("preferred_name")
-                or ""
-            ).strip()
-            append_progress_event(
-                timestamp=str(payload.get("fetched_at") or ""),
-                event="evidence",
-                detail=locator,
-                summary=f"evidence: {locator}",
-                priority=2,
-            )
-
-    ordered = sorted(
-        events,
-        key=lambda item: (
-            str(item.get("timestamp") or ""),
-            int(item.get("_priority") or 0),
-            int(item.get("_order") or 0),
-        ),
-        reverse=True,
-    )
-    recent_progress = [
-        {
-            "timestamp": str(item.get("timestamp") or ""),
-            "event": str(item.get("event") or ""),
-            "author": str(item.get("author") or ""),
-            "detail": str(item.get("detail") or ""),
-            "summary": str(item.get("summary") or ""),
-        }
-        for item in ordered[:limit]
-    ]
-    latest = recent_progress[0] if recent_progress else {}
-    progress_kind = (
-        "evidence"
-        if any(str(item.get("event") or "") == "evidence" for item in ordered)
-        else "narration"
-        if ordered
-        else "none"
-    )
-    progress_stale = False
-    latest_timestamp = str(latest.get("timestamp") or "")
-    if latest_timestamp:
-        try:
-            latest_dt = datetime.fromisoformat(latest_timestamp.replace("Z", "+00:00"))
-        except ValueError:
-            latest_dt = None
-        if latest_dt is not None:
-            progress_stale = (time.time() - latest_dt.timestamp()) > ACTOR_STALL_SECONDS
-    return {
-        "recent_progress": recent_progress,
-        "last_activity_at": str(latest.get("timestamp") or ""),
-        "last_activity_summary": str(latest.get("summary") or ""),
-        "progress_kind": progress_kind,
-        "progress_stale": progress_stale,
-    }
+def _lifecycle_entries(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
 
 
 def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
@@ -345,7 +70,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     heartbeat_stale = False
     runtime_live: bool | None = None
     try:
-        pid = int(state.get("pid") or 0)
+        pid = _int_value(state.get("pid"))
     except (TypeError, ValueError):
         pid = 0
     if pid > 0:
@@ -388,9 +113,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     note_summary = _actor_note_summary(work_dir, actor_name)
     note_check_summary = _actor_note_check_summary(work_dir, actor_name)
     progress = _actor_progress_summary(work_dir, actor_name)
-    lifecycle_entries = [
-        dict(item) for item in recent_activity.get("recent_lifecycle", [])
-    ]
+    lifecycle_entries = _lifecycle_entries(recent_activity.get("recent_lifecycle"))
     if (
         lifecycle_entries
         and str(lifecycle_entries[0].get("event") or "") == "runtime_exit"
@@ -422,7 +145,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         recent_activity["last_lifecycle_summary"] = str(
             lifecycle_entries[0].get("summary") or ""
         )
-    evidence_live = int(evidence["artifact_count"]) > 0
+    evidence_live = _int_value(evidence.get("artifact_count")) > 0
     if signoff_at:
         derived_status = "signed_off"
     notes_status = (
@@ -485,8 +208,8 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     progress_stale = bool(progress.get("progress_stale"))
     last_note_at = str(note_summary.get("last_note_at") or "")
     last_artifact_at = str(evidence.get("last_artifact_at") or "")
-    note_checks_since_update = int(
-        note_check_summary.get("note_checks_since_update") or 0
+    note_checks_since_update = _int_value(
+        note_check_summary.get("note_checks_since_update")
     )
     needs_note_refresh = bool(
         evidence_live
@@ -496,7 +219,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
     low_signal_progress = (
         bool(runtime_live)
         and progress_stale
-        and int(evidence.get("artifact_count") or 0) == 0
+        and _int_value(evidence.get("artifact_count")) == 0
     )
     if derived_status == "closing":
         if notes_ready and needs_note_refresh:
@@ -805,175 +528,3 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         **recent_activity,
         **evidence,
     }
-
-
-def _ensure_actor_todo_items(work_dir: Path, actor_name: str) -> None:
-    actor = _normalize_actor_name(actor_name)
-    label = _actor_label(actor, work_dir=work_dir)
-    ensure_managed_todo_item(
-        work_dir,
-        section="Actor Checklist",
-        text=f"Initial actor pass collected from {label}",
-        managed_key=_actor_todo_marker(actor, "initial"),
-    )
-    ensure_managed_todo_item(
-        work_dir,
-        section="Actor Checklist",
-        text=f"{label} run materially complete",
-        managed_key=_actor_todo_marker(actor, "complete"),
-    )
-    ensure_managed_todo_item(
-        work_dir,
-        section="Actor Checklist",
-        text=f"{label} findings dispositioned",
-        managed_key=_actor_todo_marker(actor, "dispositioned"),
-    )
-    ensure_managed_todo_item(
-        work_dir,
-        section="Actor Checklist",
-        text="Final actor sign-off collected after edits for the chosen team",
-        managed_key=FINAL_SIGNOFF_MARKER,
-    )
-
-
-def _sync_actor_todo_state(work_dir: Path) -> None:
-    actor_ids = _selected_actor_ids(work_dir)
-    actor_payloads = {
-        actor: _actor_status_payload(work_dir, actor) for actor in actor_ids
-    }
-    launched_actor_ids = [
-        actor
-        for actor in actor_ids
-        if str(actor_payloads[actor].get("status") or "pending")
-        not in {"pending", "bound"}
-    ]
-    for actor_name in launched_actor_ids:
-        _ensure_actor_todo_items(work_dir, actor_name)
-    items_by_key = {
-        str(item.get("managed_key") or ""): item
-        for item in todo_items(work_dir)
-        if item.get("managed_key")
-    }
-    for actor_name in launched_actor_ids:
-        payload = actor_payloads[actor_name]
-        materially_complete = bool(
-            payload.get("notes_ready") or payload.get("evidence_live")
-        )
-        terminal = str(payload.get("status") or "") in {
-            "completed",
-            "failed",
-            "rejected",
-            "signed_off",
-            "incomplete",
-        }
-        signed_off = str(payload.get("status") or "") == "signed_off"
-        for marker, checked in (
-            (_actor_todo_marker(actor_name, "initial"), materially_complete),
-            (_actor_todo_marker(actor_name, "complete"), terminal),
-            (_actor_todo_marker(actor_name, "dispositioned"), signed_off),
-        ):
-            item = items_by_key.get(marker)
-            if item is None:
-                continue
-            updated = set_todo_checked(work_dir, str(item["id"]), checked=checked)
-            if updated is not None:
-                items_by_key[marker] = updated
-    final_item = items_by_key.get(FINAL_SIGNOFF_MARKER)
-    final_checked = bool(launched_actor_ids) and all(
-        str(actor_payloads[actor].get("status") or "") == "signed_off"
-        for actor in launched_actor_ids
-    )
-    if final_item is not None:
-        set_todo_checked(work_dir, str(final_item["id"]), checked=final_checked)
-
-
-def _actor_launch_command(work_dir: Path, actor_name: str) -> str:
-    return f"gotta actor launch {actor_name} --session {sh_quote(str(work_dir))}"
-
-
-def _render_actor_bind_message(payload: dict[str, object]) -> str:
-    actor = str(payload.get("actor") or "").strip()
-    label = str(payload.get("label") or actor).strip()
-    actor_want = str(payload.get("wantPath") or "").strip()
-    actor_goal = str(payload.get("goalPath") or "").strip()
-    want_cmd = str(payload.get("wantCommand") or "").strip()
-    goal_cmd = str(payload.get("goalCommand") or "").strip()
-    todo_cmd = str(payload.get("todoCommand") or "").strip()
-    launch_cmd = str(payload.get("launchCommand") or "").strip()
-    actor_blockers = [
-        str(item).strip()
-        for item in (payload.get("blockers") or [])
-        if str(item).strip()
-    ]
-    if actor_blockers:
-        suffix = (
-            f"; not launched. This bind completed the addressable actor target, so rewrite `{actor_want}` and `{actor_goal}` for {label} with `{want_cmd}` and `{goal_cmd}` first. "
-            f"Use `{todo_cmd}` to extend the minimal actor-local checklist before launch if useful, "
-            f"then launch with `{launch_cmd}` when you actually want {label} to start"
-        )
-    else:
-        suffix = (
-            f"; not launched. `{actor_want}` and `{actor_goal}` are already real. "
-            f"Use `{todo_cmd}` to extend the minimal actor-local checklist before launch if useful, "
-            f"then launch with `{launch_cmd}` when you actually want {label} to start"
-        )
-    if bool(payload.get("alreadyBound")):
-        return f"{actor} ({label}) already bound{suffix}"
-    created_note = " [new actor]" if bool(payload.get("created")) else ""
-    return (
-        f"bound {actor} ({label}) session, seeded actor-local WANT/GOAL placeholders, minimal actor-local canonical state, and shared evidence access{created_note}"
-        f"{suffix}"
-    )
-
-
-def _bind_actor(session_root: Path, actor_name: str) -> dict[str, object]:
-    actor, created = _bind_actor_identity(session_root, actor_name)
-    already_bound = _actor_is_selected(session_root, actor)
-    _ensure_actor_surface(session_root, actor)
-    label = _actor_label(actor, work_dir=session_root)
-    current_status = str(
-        _read_actor_state(session_root, actor).get("status") or "pending"
-    )
-    if current_status in {
-        "",
-        "pending",
-        "completed",
-        "failed",
-        "incomplete",
-        "rejected",
-        "signed_off",
-    }:
-        _write_actor_state(session_root, actor, {"status": "bound"})
-    launch_cmd = _actor_launch_command(session_root, actor)
-    actor_want = _actor_dir_path(session_root, actor) / WANT_FILE
-    actor_goal = _actor_dir_path(session_root, actor) / "GOAL.md"
-    want_cmd = _actor_charter_command(actor, "want")
-    goal_cmd = _actor_charter_command(actor, "goal")
-    actor_blockers = _actor_launch_blockers(session_root, actor_name=actor)
-    todo_cmd = f"gotta todo --actor {actor}"
-    if already_bound:
-        status = "already_bound"
-    else:
-        _append_actor_event(
-            session_root, actor, event="bound", detail="bound actor session"
-        )
-        _actor_log_line(session_root, actor, "bound session")
-        status = "bound"
-    payload: dict[str, object] = {
-        "actor": actor,
-        "label": label,
-        "created": created,
-        "alreadyBound": already_bound,
-        "status": status,
-        "sessionRoot": str(session_root.resolve()),
-        "actorRoot": str(_actor_dir_path(session_root, actor).resolve()),
-        "wantPath": str(actor_want.resolve()),
-        "goalPath": str(actor_goal.resolve()),
-        "wantCommand": want_cmd,
-        "goalCommand": goal_cmd,
-        "todoCommand": todo_cmd,
-        "launchCommand": launch_cmd,
-        "blockers": actor_blockers,
-    }
-    payload["message"] = _render_actor_bind_message(payload)
-    return payload

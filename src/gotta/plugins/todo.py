@@ -19,7 +19,8 @@ from gotta.todo import (
 from gotta.session import activity as session_activity
 from gotta.session import charter as session_charter
 from gotta.session import scope as session_scope
-from gotta.session import status as session_status
+from gotta.session.status.marker import _managed_todo_redirect
+from gotta.session.status.todo import _sync_actor_todo_state
 
 
 TODO_LINE_RE = re.compile(r"^(?P<indent>\s*)- \[(?P<checked>[ xX])\] (?P<text>.+?)\s*$")
@@ -236,7 +237,7 @@ def _check_todo_item(work_dir, *, item_id: str) -> dict[str, object]:
     current = resolve_todo_item(work_dir, item_id=item_id)
     managed_key = str(current.get("managed_key") or "")
     if managed_key and not bool(current.get("checked")):
-        raise SystemExit(session_status._managed_todo_redirect(managed_key))
+        raise SystemExit(_managed_todo_redirect(managed_key))
     updated = set_todo_checked(work_dir, item_id, checked=True)
     if updated is None:
         updated = current
@@ -281,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
-    session_status._sync_actor_todo_state(work_dir)
+    _sync_actor_todo_state(work_dir)
     action = args.action or "show"
     if action == "show":
         payload = todo_payload(work_dir, status=args.status, limit=max(args.limit, 0))
