@@ -13,7 +13,9 @@ from gotta.compat import UTC, datetime
 from gotta import content
 import gotta.dispatch.main as dispatch
 from gotta.friction import oops_records
-from gotta import leads
+import gotta.lead.cache as lead_cache
+import gotta.lead.extract as lead_extract
+import gotta.lead.model as lead_model
 from gotta.logs import append_log_record, log_records, render_logs_markdown
 from gotta import main as cli
 from gotta import stored
@@ -4468,7 +4470,7 @@ def test_session_leads_falls_back_to_workspace_scoped_slack_search_for_semantic_
 
 
 def test_extract_explicit_leads_strips_wrapped_url_noise() -> None:
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "PR: <https://github.com/acme/widgets/pull/7|PR 7>\n"
         "Issue: https://github.com/acme/widgets/issues/9)*\n"
     )
@@ -4480,7 +4482,7 @@ def test_extract_explicit_leads_strips_wrapped_url_noise() -> None:
 
 
 def test_extract_explicit_leads_collapses_duplicated_markdown_urls() -> None:
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "Granola: https://notes.granola.ai/t/demo](https://notes.granola.ai/t/demo)\n"
     )
 
@@ -4492,7 +4494,7 @@ def test_extract_explicit_leads_collapses_duplicated_markdown_urls() -> None:
 def test_extract_explicit_leads_trims_trailing_quote_and_normalizes_shortlinks() -> (
     None
 ):
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "Auth: https://login.demo.internal'\n"
         "Page: https://example.atlassian.net/wiki/x/1J0AAA\n"
     )
@@ -4503,7 +4505,7 @@ def test_extract_explicit_leads_trims_trailing_quote_and_normalizes_shortlinks()
 
 
 def test_extract_explicit_leads_drops_partial_atlassian_browse_urls() -> None:
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "Truncated: <https://example.atlassian.net/browse/AB|AB>\n"
         "Exact: <https://example.atlassian.net/browse/ABC-12|ABC-12>\n"
     )
@@ -4514,7 +4516,7 @@ def test_extract_explicit_leads_drops_partial_atlassian_browse_urls() -> None:
 
 
 def test_extract_explicit_leads_drops_malformed_atlassian_wiki_embed_urls() -> None:
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "2100446110108744560547851Untitled Diagram-1773161260589.drawio22"
         "https://example.atlassian.net/wikiUntitled Diagram-1773161260589.drawio01170.5521\n"
     )
@@ -4524,7 +4526,7 @@ def test_extract_explicit_leads_drops_malformed_atlassian_wiki_embed_urls() -> N
 
 
 def test_extract_explicit_leads_drops_obvious_placeholder_and_asset_urls() -> None:
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "Badge: https://img.shields.io/badge/build-passing-brightgreen.svg\n"
         "Local example: http://127.0.0.1:7400\n"
         "Placeholder: http://www.example.com:8080\n"
@@ -4541,7 +4543,7 @@ def test_extract_explicit_leads_drops_obvious_placeholder_and_asset_urls() -> No
 def test_extract_explicit_leads_prefers_root_thread_from_slack_reply_permalink() -> (
     None
 ):
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "Reply: https://demo.slack.com/archives/C12345678/p1773081279142849?thread_ts=1773075428.384009\n"
     )
 
@@ -4551,7 +4553,7 @@ def test_extract_explicit_leads_prefers_root_thread_from_slack_reply_permalink()
 
 
 def test_extract_explicit_leads_drops_ellipsized_host_only_urls() -> None:
-    mentions = leads.extract_explicit_leads(
+    mentions = lead_extract.extract_explicit_leads(
         "#### Hi there <https://kubernetes.i...\n"
         "Real: https://kubernetes.io/docs/concepts/services-networking/service/\n"
     )
@@ -4583,7 +4585,7 @@ def test_materialize_bytes_eagerly_writes_lead_cache(
 
     assert cache_path.exists()
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert payload["version"] == leads.LEADS_CACHE_VERSION
+    assert payload["version"] == lead_model.LEADS_CACHE_VERSION
     assert {entry["canonical_locator"] for entry in payload["entries"]} == {
         "jira:ABC-2",
         "confluence:12345",
@@ -4591,11 +4593,11 @@ def test_materialize_bytes_eagerly_writes_lead_cache(
 
     snapshot = content.scan_content_store(dirs.content_dir)[0]
 
-    def fail_extract(_text: str) -> list[leads.LeadMention]:
+    def fail_extract(_text: str) -> list[lead_model.LeadMention]:
         raise AssertionError("lead extraction should reuse the eager cache")
 
-    monkeypatch.setattr(leads, "extract_explicit_leads", fail_extract)
-    mentions = leads.lead_mentions_for_snapshot(snapshot)
+    monkeypatch.setattr(lead_cache, "extract_explicit_leads", fail_extract)
+    mentions = lead_cache.lead_mentions_for_snapshot(snapshot)
 
     assert {mention.canonical_locator for mention in mentions} == {
         "jira:ABC-2",
@@ -4731,11 +4733,11 @@ def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None
     )
 
     snapshot = content.scan_content_store(dirs.content_dir)[0]
-    mentions = leads.lead_mentions_for_snapshot(snapshot)
+    mentions = lead_cache.lead_mentions_for_snapshot(snapshot)
 
     assert [mention.canonical_locator for mention in mentions] == ["jira:ABC-2"]
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert payload["version"] == leads.LEADS_CACHE_VERSION
+    assert payload["version"] == lead_model.LEADS_CACHE_VERSION
     assert payload["leadCount"] == 1
 
 

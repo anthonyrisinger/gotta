@@ -866,9 +866,9 @@ def materialize_bytes(
             "fetch_link": str(fetch_link),
         },
     )
-    from gotta import leads as lead_index
+    import gotta.lead.cache as lead_cache
 
-    lead_index.maybe_write_lead_cache(content_dir)
+    lead_cache.maybe_write_lead_cache(content_dir)
 
     return Materialization(
         content_dir=content_dir,

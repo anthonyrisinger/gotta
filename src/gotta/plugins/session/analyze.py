@@ -8,9 +8,9 @@ import json
 
 from gotta.source import best_visibility_metadata
 from gotta.content import ContentSnapshot, content_locator, scan_content_store
-from gotta.leads import (
-    aggregate_lead_sources,
-    build_lead_edge_records,
+from gotta.lead.aggregate import aggregate_lead_sources
+from gotta.lead.edge import build_lead_edge_records
+from gotta.lead.snapshot import (
     snapshot_artifact_locator,
     snapshot_display_name,
     snapshot_locator,

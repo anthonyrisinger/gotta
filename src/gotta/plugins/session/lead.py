@@ -6,11 +6,11 @@ import argparse
 import json
 
 from gotta.content import content_locator, scan_content_store
-from gotta.leads import (
-    aggregate_lead_sources,
-    build_lead_edge_records,
-    edge_best_first_sort_key,
-    resolve_lead_snapshots,
+from gotta.lead.aggregate import aggregate_lead_sources
+from gotta.lead.edge import build_lead_edge_records
+from gotta.lead.rank import edge_best_first_sort_key
+from gotta.lead.resolve import resolve_lead_snapshots
+from gotta.lead.snapshot import (
     snapshot_artifact_locator,
     snapshot_display_name,
     snapshot_last_fetched_at,

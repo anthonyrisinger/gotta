@@ -151,7 +151,7 @@ The hottest responsibility concentrations are currently:
 - `src/gotta/plugins/github.py`
 - `src/gotta/session/`
 - `src/gotta/dispatch/`
-- `src/gotta/leads.py`
+- `src/gotta/lead/`
 - `src/gotta/main.py`
 
 Treat those as supernodes. Read them by function and contract, not as flat
@@ -187,9 +187,13 @@ Evidence and synthesis:
   resolve local files, artifacts, URLs, and provider-routed targets.
 - **`routing.py`** — Canonical locator parsing. Converts locators to plugin argv
   for re-invocation.
-- **`leads.py`** — Lead extraction. Detects URLs, Jira keys, canonical locators,
-  and Slack permalinks in artifact text. Classifies leads and generates followup
-  commands.
+- **`lead/`** — Lead kernel package. `model.py` owns `LeadMention` and cache
+  identity, `canon.py` canonicalizes external targets, `query.py` derives
+  search-seed queries, `extract.py` mines explicit and semantic leads,
+  `cache.py` owns `leads.json`, `edge.py` builds source-to-target edges,
+  `aggregate.py` reduces edges into lead sources, `resolve.py` resolves lead
+  targets back to stored snapshots, and `snapshot.py` owns content-snapshot
+  labeling.
 - **`source.py`** — Source metadata extraction. Normalizes timestamps from JSON,
   Markdown, and Slack formats into classified ISO-8601 timestamps.
 
