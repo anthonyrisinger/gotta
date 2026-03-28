@@ -11,7 +11,9 @@ import subprocess
 import time
 
 from gotta.compat import UTC, datetime
+from gotta import binding as binding_helpers
 from gotta import topology
+from gotta.builtin import SessionAccessMode
 from gotta.content.context import default_session_id
 from gotta.content.env import (
     SESSION_ACTOR_ENV,
@@ -223,6 +225,60 @@ def _resolve_existing_session_root(context_id: str) -> Path | None:
     if binding is not None and session_is_initialized(binding):
         return binding
     return None
+
+
+def resolve_target_root(
+    root: Path | None,
+    *,
+    context_id: str,
+    context_source: str,
+    session_access: SessionAccessMode,
+    auto_bootstrap: bool,
+) -> tuple[Path | None, bool, bool]:
+    created = False
+    bound_current_context = False
+    if root is None:
+        root = _resolve_existing_session_root(context_id)
+    if root is None and (session_access == "write" or auto_bootstrap):
+        root, created = _bind_session_root(context_id, context_source)
+        bound_current_context = True
+    return root, created, bound_current_context
+
+
+def finalize_target_root(
+    root: Path | None,
+    *,
+    context_id: str,
+    context_source: str,
+    session_access: SessionAccessMode,
+    auto_bootstrap: bool,
+    init_command: bool,
+    bound_current_context: bool,
+) -> tuple[Path | None, bool, bool]:
+    scaffold_created = False
+    if auto_bootstrap and root is not None and session_access in {"read", "ambient"}:
+        root, scaffold_created = _ensure_scaffolded_session(
+            root,
+            context_id=context_id,
+            context_source=context_source,
+        )
+    if session_access in {"read", "ambient"}:
+        return root, scaffold_created, bound_current_context
+    assert root is not None
+    root, created = _ensure_scaffolded_session(
+        root,
+        context_id=context_id,
+        context_source=context_source,
+    )
+    scaffold_created = scaffold_created or created
+    if init_command and not bound_current_context:
+        root = binding_helpers.bind_root_for_context(
+            root,
+            context_id=context_id,
+            context_source=context_source,
+        )
+        bound_current_context = True
+    return root, scaffold_created, bound_current_context
 
 
 def _ensure_scaffolded_session(

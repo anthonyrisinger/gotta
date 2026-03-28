@@ -175,6 +175,15 @@ def _is_nonbinding_help(argv: list[str]) -> bool:
     return "--help" in argv or "--help-all" in argv
 
 
+def dispatches_without_session_management(argv: list[str]) -> bool:
+    if not argv:
+        return True
+    plugin_name = argv[0]
+    if plugin_name == "session" and len(argv) >= 2 and argv[1] in {"bind"}:
+        return True
+    return _session_access_mode(argv) == "none"
+
+
 def _session_access_mode(argv: list[str]) -> SessionAccessMode:
     if not argv:
         return "none"

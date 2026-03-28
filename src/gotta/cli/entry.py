@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
             effective
         ):
             return cli_argv._gotta_main(normalized)
-        if cli_root.dispatches_without_session_management(effective):
+        if cli_argv.dispatches_without_session_management(effective):
             return cli_argv._gotta_main(normalized)
         context = current_context_binding()
         context_id = context.context_id

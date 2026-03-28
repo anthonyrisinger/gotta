@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from gotta.builtin import SessionAccessMode
+import gotta.cli.bind as cli_bind
 import gotta.cli.env as cli_env
 from gotta.content.context import current_context_binding, default_session_id
 from gotta.content.env import SESSION_ACTOR_ENV, SESSION_ENV
@@ -210,3 +211,168 @@ def _resolve_primary_actor_root(root: Path) -> Path | None:
     if not primary:
         return None
     return session_registry._actor_session_dir(session_root, primary)
+
+
+def resolve_requested_root(
+    argv: list[str],
+    *,
+    context_id: str,
+    explicit_session: str | None,
+    explicit_actor: str | None,
+    session_access: SessionAccessMode,
+    shared_root_command: bool,
+    init_command: bool,
+) -> Path | None:
+    if explicit_session:
+        root = resolve_explicit_session_root(
+            argv,
+            context_id=context_id,
+            explicit_session=explicit_session,
+            explicit_actor=explicit_actor,
+            session_access=session_access,
+            shared_root_command=shared_root_command,
+            init_command=init_command,
+        )
+        if root is None:
+            raise SystemExit(
+                "session references must be an absolute path, a shared session id, "
+                "or an explicit <session>/<actor> session reference"
+            )
+        return root
+    if explicit_actor:
+        current = _prefer_bound_session_root()
+        if current is None:
+            current = cli_bind._resolve_existing_session_root(context_id)
+        if current is None:
+            raise SystemExit(
+                "explicit actor targeting requires an existing session; run "
+                "`gotta session bind` first or pass `--session <session-id>`"
+            )
+        resolved_actor = session_registry._resolve_bound_actor_name(
+            current,
+            explicit_actor,
+        )
+        return session_registry._actor_session_dir(current, resolved_actor)
+    return _prefer_bound_session_root()
+
+
+def resolve_explicit_session_root(
+    argv: list[str],
+    *,
+    context_id: str,
+    explicit_session: str,
+    explicit_actor: str | None,
+    session_access: SessionAccessMode,
+    shared_root_command: bool,
+    init_command: bool,
+) -> Path | None:
+    if init_command:
+        target_identity = topology.normalize_identity(_active_identity(context_id))
+        return resolve_session_reference(
+            explicit_session,
+            identity=target_identity,
+            allow_missing=True,
+        )
+    if shared_root_command:
+        return _resolve_shared_explicit_session(explicit_session)
+    if (
+        session_access == "read"
+        and not explicit_actor
+        and _prefers_primary_actor_root(argv)
+    ):
+        shared_root = _resolve_shared_explicit_session(explicit_session)
+        if shared_root is None or not _is_shared_session_root(shared_root):
+            return shared_root
+        primary_root = _resolve_primary_actor_root(shared_root)
+        if primary_root is None:
+            raise SystemExit(
+                "this shared session does not resolve to one canonical actor root; "
+                "pass `--actor <actor>` explicitly"
+            )
+        return primary_root
+    target_identity = topology.normalize_identity(
+        explicit_actor or _active_identity(context_id)
+    )
+    explicit_root = resolve_session_reference(
+        explicit_session,
+        identity=target_identity,
+        allow_missing=False,
+    )
+    if explicit_root is not None and explicit_actor:
+        resolved_actor = session_registry._resolve_bound_actor_name(
+            explicit_root,
+            explicit_actor,
+        )
+        return session_registry._actor_session_dir(explicit_root, resolved_actor)
+    if explicit_root is not None:
+        return explicit_root
+    if explicit_actor:
+        raise SystemExit(
+            "explicit actor targeting requires an existing shared session and a bound actor"
+        )
+    return resolve_session_reference(
+        explicit_session,
+        identity=target_identity,
+        allow_missing=True,
+    )
+
+
+def ambient_target_root(
+    root: Path | None,
+    *,
+    session_access: SessionAccessMode,
+    shared_root_command: bool,
+    explicit_target: bool,
+) -> Path | None:
+    if (
+        session_access == "ambient"
+        and root is not None
+        and not session_is_initialized(root)
+        and not shared_root_command
+    ):
+        if explicit_target:
+            raise SystemExit(
+                "ambient retrieval requires an existing initialized actor root in the "
+                "target session; bind an actor there first or pass `--actor <actor>`"
+            )
+        return None
+    return root
+
+
+def finalize_read_target_root(
+    root: Path | None,
+    *,
+    explicit_session: str | None,
+    explicit_actor: str | None,
+    shared_root_command: bool,
+) -> Path:
+    if (
+        root is not None
+        and not session_is_initialized(root)
+        and not shared_root_command
+    ):
+        existing = _existing_actor_root_for_session(
+            root,
+            preferred_identities=_preferred_read_only_session_identities(
+                root,
+                explicit_actor=explicit_actor,
+            ),
+        )
+        if existing is not None:
+            root = existing
+    if root is None:
+        raise SystemExit(
+            "explicit session inspection requires an initialized actor root in the "
+            "target shared session; bind an actor there first or pass --actor"
+        )
+    if session_is_initialized(root) or shared_root_command:
+        return root
+    if explicit_session and not _is_shared_session_root(root):
+        raise SystemExit(
+            "explicit session inspection requires an existing initialized session "
+            "at that exact root"
+        )
+    raise SystemExit(
+        "explicit session inspection requires an initialized actor root in the "
+        "target shared session; bind an actor there first or pass --actor"
+    )
