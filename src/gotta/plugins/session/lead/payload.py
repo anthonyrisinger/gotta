@@ -31,7 +31,7 @@ from ..core import (
     top_count_records,
     topology_next_step,
 )
-from ..manifest import manifest_entries
+from ..manifest.record import manifest_entries
 
 
 def _string_items(value: object) -> list[str]:

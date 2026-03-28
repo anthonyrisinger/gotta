@@ -31,7 +31,7 @@ from ..core import (
     session_read_command,
     topology_next_step,
 )
-from ..manifest import manifest_entries
+from ..manifest.record import manifest_entries
 
 
 def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:

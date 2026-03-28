@@ -29,7 +29,7 @@ from .core import (
     top_count_records,
     topology_next_step,
 )
-from .manifest import manifest_entries
+from .manifest.record import manifest_entries
 from .parse import explicit_session_ref, require_started_session, session_dirs_for_read
 
 

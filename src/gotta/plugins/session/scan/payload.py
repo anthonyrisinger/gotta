@@ -18,7 +18,7 @@ from ..core import (
     resolved_visibility_metadata,
     session_read_command,
 )
-from ..manifest import (
+from ..manifest.record import (
     aggregate_manifest_entries,
     filter_manifest_entries,
     manifest_entries,

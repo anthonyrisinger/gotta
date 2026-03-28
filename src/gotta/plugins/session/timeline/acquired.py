@@ -12,7 +12,7 @@ from ..core import (
     rendered_actor,
     resolved_visibility_metadata,
 )
-from ..manifest import manifest_entries
+from ..manifest.record import manifest_entries
 
 
 def acquired_timeline_events(

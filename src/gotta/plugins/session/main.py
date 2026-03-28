@@ -8,7 +8,7 @@ from gotta.helptext import is_long_help_request, print_long_help
 from .analyze.main import cmd_analyze
 from .graph import cmd_graph
 from .lead.main import cmd_leads
-from .manifest import cmd_manifest
+from .manifest.main import cmd_manifest
 from .parse import build_parser
 from .root import cmd_bind, cmd_doctor, cmd_init, cmd_show
 from .scan.main import cmd_scan
