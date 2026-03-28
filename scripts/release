@@ -12,12 +12,14 @@ usage() {
 usage: ./scripts/release [patch|minor]
        ./scripts/release prepare [patch|minor]
        ./scripts/release publish
+       ./scripts/release github [version]
 
 Prepare and/or publish a gotta release.
 
   patch|minor         bump, validate, commit, push, and publish in one pass
   prepare patch|minor bump, validate, and commit, but stop before push/publish
   publish             validate the current prepared version, then push/publish
+  github [version]    create/push the annotated tag and GitHub Release notes
 EOF
 }
 
@@ -90,6 +92,86 @@ run_artifact_gate() {
   "$tmpdir/venv/bin/gotta" read --help >/dev/null
 }
 
+release_commit_for_version() {
+  version="$1"
+  git log --format='%H' --grep "^release: bump to ${version}\$" -n 1
+}
+
+previous_release_tag() {
+  current_tag="$1"
+
+  git tag --list 'v*' --sort=-v:refname | while IFS= read -r tag; do
+    [ -n "$tag" ] || continue
+    [ "$tag" = "$current_tag" ] && continue
+    printf '%s\n' "$tag"
+    break
+  done
+}
+
+write_release_notes() {
+  version="$1"
+  release_commit="$2"
+  current_tag="$3"
+  notes_file="$4"
+  previous_tag="$(previous_release_tag "$current_tag")"
+
+  {
+    printf '## Highlights\n\n'
+    if [ -n "$previous_tag" ]; then
+      git log --format='- %s (`%h`)' "${previous_tag}..${release_commit}" \
+        | sed '/^- release: bump to /d'
+    else
+      git log --format='- %s (`%h`)' -n 5 "${release_commit}" \
+        | sed '/^- release: bump to /d'
+    fi
+
+    printf '\n## Package Notes\n\n'
+    printf -- '- PyPI release: `gotta==%s`\n' "$version"
+    printf -- '- Release commit: `%s`\n' "$(git rev-parse --short "$release_commit")"
+    if [ -n "$previous_tag" ]; then
+      printf -- '- Compare from: `%s`\n' "$previous_tag"
+    fi
+  } >"$notes_file"
+}
+
+publish_github_release() {
+  version="$1"
+  tag="v${version}"
+  release_commit="$(release_commit_for_version "$version")"
+  [ -n "$release_commit" ] || die "unable to find release commit for ${version}"
+
+  existing_tag="$(git tag --list "$tag")"
+  if [ -n "$existing_tag" ]; then
+    tagged_commit="$(git rev-list -n 1 "$tag")"
+    [ "$tagged_commit" = "$release_commit" ] \
+      || die "tag ${tag} already exists on ${tagged_commit}, not ${release_commit}"
+  else
+    git tag -a "$tag" "$release_commit" -m "release: ${tag}"
+  fi
+
+  git push origin "$tag"
+
+  existing_release_url="$(
+    gh release list --limit 100 --json tagName,url \
+      --jq ".[] | select(.tagName == \"$tag\") | .url"
+  )"
+  if [ -n "$existing_release_url" ]; then
+    printf 'GitHub release exists: %s\n' "$existing_release_url"
+    return 0
+  fi
+
+  notes_file="$(mktemp)"
+  cleanup_notes() {
+    rm -f "$notes_file"
+  }
+  trap cleanup_notes EXIT INT TERM
+
+  write_release_notes "$version" "$release_commit" "$tag" "$notes_file"
+  gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+  rm -f "$notes_file"
+  trap - EXIT INT TERM
+}
+
 publish_release() {
   version="$1"
   sdist="dist/gotta-${version}.tar.gz"
@@ -102,11 +184,13 @@ publish_release() {
   uv publish --dry-run "$sdist" "$wheel"
   uv publish "$sdist" "$wheel"
   wait_for_pypi "$version"
+  publish_github_release "$version"
   git status --short --branch
 }
 
 mode=""
 bump=""
+release_version=""
 
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
   usage
@@ -123,6 +207,9 @@ case "$#" in
       publish)
         mode="publish"
         ;;
+      github)
+        mode="github"
+        ;;
       *)
         usage
         exit 64
@@ -134,6 +221,10 @@ case "$#" in
       prepare:patch|prepare:minor)
         mode="prepare"
         bump="$2"
+        ;;
+      github:*)
+        mode="github"
+        release_version="$2"
         ;;
       *)
         usage
@@ -176,5 +267,13 @@ case "$mode" in
     run_study_gate
     run_artifact_gate "$version"
     publish_release "$version"
+    ;;
+  github)
+    if [ -n "$release_version" ]; then
+      version="$release_version"
+    else
+      version="$(uv version --short)"
+    fi
+    publish_github_release "$version"
     ;;
 esac

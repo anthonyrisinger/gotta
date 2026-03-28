@@ -825,6 +825,8 @@ Build and validate artifacts with `uv`:
 ./scripts/release prepare patch
 ./scripts/release prepare minor
 ./scripts/release publish
+./scripts/release github
+./scripts/release github 0.41.0
 ./scripts/release patch
 ./scripts/release minor
 ```
@@ -832,14 +834,17 @@ Build and validate artifacts with `uv`:
 The script is the canonical release path. It runs `./scripts/study` on the
 unbumped tree, then bumps the version with `uv`, builds the wheel and sdist,
 validates them with `twine check`, smoke-installs the wheel on Python 3.10,
-commits the release metadata, and then either stops for review or pushes and
-publishes. The
+commits the release metadata, and then either stops for review or pushes,
+publishes, tags, and creates the GitHub Release. The
 blocking correctness gate still comes from `pytest`, `ruff`, `vulture`, build,
 and packaging validation; pressure-map output from `./scripts/study` is
 surfaced for review without blocking the release candidate. `prepare` creates
 the reviewable release commit without pushing. `publish` validates the current
-prepared version and then pushes `main`, publishes to PyPI, and waits for
-public propagation. One-shot `patch` and `minor` still do the full flow in one
-pass.
+prepared version and then pushes `main`, publishes to PyPI, waits for public
+propagation, pushes the annotated `vX.Y.Z` tag, and creates the corresponding
+GitHub Release. One-shot `patch` and `minor` still do the full flow in one
+pass. `github [version]` is the retry and retrofit path for the GitHub tag and
+release-notes layer without republishing to PyPI.
 
-It reads the PyPI token from `~/.pypirc` under `[pypi].password`.
+It reads the PyPI token from `~/.pypirc` under `[pypi].password` and expects an
+authenticated `gh` CLI for the GitHub release layer.
