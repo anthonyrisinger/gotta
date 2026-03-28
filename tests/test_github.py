@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from gotta.plugins import github
+import gotta.plugins.github.main as github
+import gotta.plugins.github.read as github_read
+import gotta.plugins.github.search as github_search
 
 
 def test_parse_args_supports_status_subcommand() -> None:
@@ -546,11 +548,11 @@ def test_main_supports_commit_history_root_urls(monkeypatch, capsys) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
 
-    def fake_gh_json_object(gh, args):
-        seen.append(args)
-        return {"default_branch": "main"}
+    def fake_default_branch_name(gh: str, *, owner: str, repo: str) -> str:
+        seen.append(["api", f"repos/{owner}/{repo}"])
+        return "main"
 
-    monkeypatch.setattr(github, "gh_json_object", fake_gh_json_object)
+    monkeypatch.setattr(github, "default_branch_name", fake_default_branch_name)
     monkeypatch.setattr(
         github,
         "gh_json_value",
@@ -630,7 +632,7 @@ def test_main_supports_repo_search(monkeypatch, capsys) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
     monkeypatch.setattr(
-        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+        github_search, "_accessible_owner_targets", lambda gh: [("org", "acme")]
     )
 
     def fake_gh_json_object(gh, args):
@@ -658,7 +660,7 @@ def test_main_supports_repo_search(monkeypatch, capsys) -> None:
             "default owned-scope search should not hit the global corpus"
         )
 
-    monkeypatch.setattr(github, "gh_json_object", fake_gh_json_object)
+    monkeypatch.setattr(github_search, "gh_json_object", fake_gh_json_object)
 
     assert github.main(["search", "relay"]) == 0
     output = capsys.readouterr().out
@@ -678,7 +680,7 @@ def test_main_supports_global_repo_search_excluding_owned_results(
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
     monkeypatch.setattr(
-        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+        github_search, "_accessible_owner_targets", lambda gh: [("org", "acme")]
     )
 
     def fake_gh_json_object(gh, args):
@@ -710,7 +712,7 @@ def test_main_supports_global_repo_search_excluding_owned_results(
             ],
         }
 
-    monkeypatch.setattr(github, "gh_json_object", fake_gh_json_object)
+    monkeypatch.setattr(github_search, "gh_json_object", fake_gh_json_object)
 
     assert github.main(["search", "--global", "ABC"]) == 0
     output = capsys.readouterr().out
@@ -723,7 +725,7 @@ def test_main_supports_pull_request_search(monkeypatch, capsys) -> None:
     monkeypatch.setattr(github, "ensure_gh", lambda: "gh")
     monkeypatch.setattr(github, "ensure_gh_auth", lambda gh: None)
     monkeypatch.setattr(
-        github,
+        github_search,
         "gh_json_object",
         lambda gh, args: {
             "total_count": 1,
@@ -818,7 +820,7 @@ def test_main_supports_code_search(monkeypatch, capsys) -> None:
 
 def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
     monkeypatch.setattr(
-        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+        github_search, "_accessible_owner_targets", lambda gh: [("org", "acme")]
     )
 
     def fake_gh_json_object(gh, args):
@@ -839,9 +841,9 @@ def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
             "default owned-scope search should not hit the global corpus"
         )
 
-    monkeypatch.setattr(github, "gh_json_object", fake_gh_json_object)
+    monkeypatch.setattr(github_search, "gh_json_object", fake_gh_json_object)
 
-    payload = github.search_repositories_payload(
+    payload = github_search.search_repositories_payload(
         "gh",
         query="ABC",
         repo="",
@@ -859,10 +861,10 @@ def test_search_payload_defaults_to_owned_scope(monkeypatch) -> None:
 
 def test_search_payload_global_excludes_owned_hits(monkeypatch) -> None:
     monkeypatch.setattr(
-        github, "_accessible_owner_targets", lambda gh: [("org", "acme")]
+        github_search, "_accessible_owner_targets", lambda gh: [("org", "acme")]
     )
     monkeypatch.setattr(
-        github,
+        github_search,
         "gh_json_object",
         lambda gh, args: {
             "total_count": 3,
@@ -889,7 +891,7 @@ def test_search_payload_global_excludes_owned_hits(monkeypatch) -> None:
         },
     )
 
-    payload = github.search_repositories_payload(
+    payload = github_search.search_repositories_payload(
         "gh",
         query="ABC",
         repo="",
@@ -1008,7 +1010,7 @@ def test_main_repo_markdown_uses_fragment_to_render_root_readme(monkeypatch) -> 
         ],
     )
     monkeypatch.setattr(
-        github,
+        github_read,
         "fetch_content_file",
         lambda gh, *, owner, repo, ref, path: {
             "type": "file",
@@ -1067,7 +1069,7 @@ def test_main_tree_markdown_uses_fragment_to_render_matching_document(
         ],
     )
     monkeypatch.setattr(
-        github,
+        github_read,
         "fetch_content_file",
         lambda gh, *, owner, repo, ref, path: {
             "type": "file",

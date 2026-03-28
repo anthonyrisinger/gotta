@@ -408,14 +408,16 @@ def github_plugin() -> PluginSpec:
     return PluginSpec(
         name="github",
         description="render common GitHub URLs through the GitHub CLI",
-        runner=_runner("gotta.plugins.github"),
-        route_target=_module_attr("gotta.plugins.github", "route_target"),
+        runner=_runner("gotta.plugins.github.main"),
+        route_target=_module_attr("gotta.plugins.github.route", "route_target"),
         route_priority=10,
         session_access=_artifact_session_access("github"),
-        canonical_locator=_module_attr("gotta.plugins.github", "canonical_locator"),
-        preferred_name=_module_attr("gotta.plugins.github", "preferred_name"),
-        capture=_module_attr("gotta.plugins.github", "capture"),
-        project=_module_attr("gotta.plugins.github", "project"),
+        canonical_locator=_module_attr(
+            "gotta.plugins.github.parse", "canonical_locator"
+        ),
+        preferred_name=_module_attr("gotta.plugins.github.parse", "preferred_name"),
+        capture=_module_attr("gotta.plugins.github.main", "capture"),
+        project=_module_attr("gotta.plugins.github.main", "project"),
     )
 
 

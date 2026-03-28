@@ -190,7 +190,7 @@ The hottest responsibility concentrations are currently:
 - `src/gotta/plugins/session/`
 - `src/gotta/plugins/slack.py`
 - `src/gotta/plugins/jira.py`
-- `src/gotta/plugins/github.py`
+- `src/gotta/plugins/github/`
 - `src/gotta/session/`
 - `src/gotta/dispatch/`
 - `src/gotta/resolve/`
