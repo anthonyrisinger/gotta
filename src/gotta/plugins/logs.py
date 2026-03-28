@@ -9,7 +9,7 @@ from gotta.actor import require_writer, session_actor, writer_name, writer_role
 from gotta.content.scope import session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.logs import append_log_record, log_records, logs_state_path
-from gotta.session import activity as session_activity
+from gotta.session.activity.record import _record_session_activity
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
@@ -283,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 actor=record_actor,
             )
-        session_activity._record_session_activity(
+        _record_session_activity(
             work_dir,
             plugin="logs",
             surface="logs",
@@ -308,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         actor=record_actor,
     )
-    session_activity._record_session_activity(
+    _record_session_activity(
         work_dir,
         plugin="logs",
         surface="logs",

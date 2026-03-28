@@ -35,7 +35,7 @@ from gotta.todo import (
     todo_state_path,
 )
 
-from .activity import _record_session_activity
+from .activity.record import _record_session_activity
 from .registry import (
     SESSION_ACTORS_ENV,
     SESSION_ACTORS_SOURCE_ENV,

@@ -32,7 +32,12 @@ from gotta.actor import (
     writer_name,
 )
 from gotta import topology
-from gotta.session import activity as session_activity
+from gotta.session.activity.note import _reset_note_check_feedback
+from gotta.session.activity.record import (
+    _actor_log_line,
+    _append_actor_event,
+    _record_actor_surface_activity,
+)
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
@@ -335,21 +340,21 @@ def _apply_feedback_directive(
         append_actor_note(
             actor_root, actor_name, message=message, author=rendered_author
         )
-        session_activity._reset_note_check_feedback(actor_root, actor_name)
-        session_activity._append_actor_event(
+        _reset_note_check_feedback(actor_root, actor_name)
+        _append_actor_event(
             actor_root,
             actor_name,
             event="note",
             detail=first_line,
             author=rendered_author,
         )
-        session_activity._actor_log_line(
+        _actor_log_line(
             actor_root,
             actor_name,
             f"noted: {first_line}",
             author=rendered_author,
         )
-        session_activity._record_actor_surface_activity(
+        _record_actor_surface_activity(
             actor_root,
             actor_name=actor_name,
             surface="notes",
@@ -469,7 +474,7 @@ def _finalize_actor_runtime_exit(
     updates["requested_summary"] = None
     updates["requested_at"] = None
     _write_actor_state(work_root, actor_name, updates)
-    session_activity._append_actor_event(
+    _append_actor_event(
         work_root,
         actor_name,
         event="runtime_exit",
@@ -477,17 +482,17 @@ def _finalize_actor_runtime_exit(
         extra={"exit_code": returncode},
     )
     if final_status == "signed_off":
-        session_activity._actor_log_line(work_root, actor_name, "signed off and exited")
+        _actor_log_line(work_root, actor_name, "signed off and exited")
     elif final_status == "completed":
-        session_activity._actor_log_line(work_root, actor_name, "completed")
+        _actor_log_line(work_root, actor_name, "completed")
     elif final_status == "failed":
-        session_activity._actor_log_line(
+        _actor_log_line(
             work_root,
             actor_name,
             f"failed with exit code {returncode}",
         )
     else:
-        session_activity._actor_log_line(
+        _actor_log_line(
             work_root, actor_name, f"{final_status.replace('_', ' ')} and exited"
         )
     _sync_actor_todo_state(work_root)
@@ -502,9 +507,7 @@ def _with_heartbeat(
     def beat() -> None:
         while not stop_event.wait(ACTOR_HEARTBEAT_SECONDS):
             _mark_actor_runtime_active(work_root, actor_name)
-            session_activity._append_actor_event(
-                work_root, actor_name, event="heartbeat"
-            )
+            _append_actor_event(work_root, actor_name, event="heartbeat")
 
     thread = threading.Thread(target=beat, daemon=True)
     thread.start()
@@ -723,10 +726,8 @@ def _record_requested_disposition(
             "requested_at": timestamp,
         },
     )
-    session_activity._append_actor_event(
-        work_root, actor_name, event=event, detail=summary
-    )
-    session_activity._actor_log_line(work_root, actor_name, log_message)
+    _append_actor_event(work_root, actor_name, event=event, detail=summary)
+    _actor_log_line(work_root, actor_name, log_message)
     _sync_actor_outputs(work_root, actor_name)
     print(
         f"recorded {disposition_label} request for {actor_name}; "
@@ -773,13 +774,13 @@ def _write_terminal_disposition(
             payload["signoff_at"] = None
             payload["signoff_summary"] = None
     _write_actor_state(work_root, actor_name, payload)
-    session_activity._append_actor_event(
+    _append_actor_event(
         work_root,
         actor_name,
         event=event,
         detail=detail if detail is not None else summary,
     )
-    session_activity._actor_log_line(work_root, actor_name, log_message)
+    _actor_log_line(work_root, actor_name, log_message)
     _sync_actor_outputs(work_root, actor_name, sync_todo=True)
     if status == "signed_off":
         print(f"recorded sign-off for {actor_name}")
@@ -844,7 +845,7 @@ def _cmd_bind(args: argparse.Namespace, work_root: Path, actor_names: list[str])
 
 def _cmd_heartbeat(work_root: Path, actor_name: str) -> int:
     _mark_actor_runtime_active(work_root, actor_name)
-    session_activity._append_actor_event(work_root, actor_name, event="heartbeat")
+    _append_actor_event(work_root, actor_name, event="heartbeat")
     print(f"heartbeat recorded for {actor_name}")
     return 0
 
@@ -984,13 +985,13 @@ def _cmd_settle(work_root: Path, actor_name: str) -> int:
             updates["signoff_at"] = None
             updates["signoff_summary"] = None
     _write_actor_state(work_root, actor_name, updates)
-    session_activity._append_actor_event(
+    _append_actor_event(
         work_root,
         actor_name,
         event="settled",
         detail=f"settled actor lifecycle as {final_status}",
     )
-    session_activity._actor_log_line(
+    _actor_log_line(
         work_root, actor_name, f"settled as {final_status.replace('_', ' ')}"
     )
     _sync_actor_outputs(work_root, actor_name, sync_todo=True)
@@ -1109,10 +1110,8 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
             "requested_at": None,
         },
     )
-    session_activity._append_actor_event(
-        work_root, actor_name, event="starting", detail=str(goal_path)
-    )
-    session_activity._actor_log_line(work_root, actor_name, f"starting with {model}")
+    _append_actor_event(work_root, actor_name, event="starting", detail=str(goal_path))
+    _actor_log_line(work_root, actor_name, f"starting with {model}")
     _sync_actor_todo_state(work_root)
     _record_launcher_heartbeat(work_root, actor_name)
     print(

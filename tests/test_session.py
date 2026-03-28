@@ -44,7 +44,8 @@ from gotta.plugins import goal
 from gotta.plugins import logs
 from gotta.plugins import notes
 from gotta.plugins import actor
-from gotta.plugins.session import analyze as session_analyze
+import gotta.plugins.session.analyze.overview as session_analyze_overview
+import gotta.plugins.session.analyze.render as session_analyze_render
 from gotta.plugins.session import graph as session_graph
 from gotta.plugins.session import main as session_main
 from gotta.plugins.session import parse as session_parse
@@ -3806,7 +3807,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
     )
 
     graph_payload = session_graph.graph_payload(dirs)
-    analysis_payload = session_analyze.analysis_payload(dirs)
+    analysis_payload = session_analyze_overview.analysis_payload(dirs)
 
     assert graph_payload["sources"][0]["collision"] is False
     assert graph_payload["sources"][0]["variant"] is True
@@ -3817,7 +3818,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
     assert analysis_payload["sources"][0]["variant"] is True
     assert analysis_payload["sources"][0]["variantCount"] == 2
 
-    mermaid = session_analyze.render_analysis_mermaid(analysis_payload)
+    mermaid = session_analyze_render.render_analysis_mermaid(analysis_payload)
     assert "renderings: 2" in mermaid
 
 
@@ -3855,7 +3856,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    analysis_payload = session_analyze.analysis_payload(dirs)
+    analysis_payload = session_analyze_overview.analysis_payload(dirs)
 
     assert analysis_payload["collisionCount"] == 0
     assert analysis_payload["variantCount"] == 0
@@ -3864,7 +3865,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
     assert analysis_payload["sources"][0]["duplicateMaterialization"] is True
     assert analysis_payload["sources"][0]["contentCount"] == 2
 
-    mermaid = session_analyze.render_analysis_mermaid(analysis_payload)
+    mermaid = session_analyze_render.render_analysis_mermaid(analysis_payload)
     assert "materializations: 2" in mermaid
 
 
@@ -3906,9 +3907,9 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    analysis_payload = session_analyze.analysis_payload(dirs)
-    semantic_payload = session_analyze.semantic_payload(dirs)
-    analysis_mermaid = session_analyze.render_analysis_mermaid(analysis_payload)
+    analysis_payload = session_analyze_overview.analysis_payload(dirs)
+    semantic_payload = session_analyze_overview.semantic_payload(dirs)
+    analysis_mermaid = session_analyze_render.render_analysis_mermaid(analysis_payload)
 
     assert analysis_payload["leadSourceCount"] == 3
     assert any(
@@ -5889,7 +5890,7 @@ def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    payload = session_analyze.analysis_payload(dirs)
+    payload = session_analyze_overview.analysis_payload(dirs)
 
     assert payload["revisionEdgeCount"] == 0
     provider_sets = {tuple(item["providers"]) for item in payload["content"]}
@@ -5926,7 +5927,7 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    payload = session_analyze.analysis_payload(dirs)
+    payload = session_analyze_overview.analysis_payload(dirs)
 
     assert payload["nameCollisionCount"] == 1
     assert payload["nameCollisions"] == ["shared-thread.md"]
@@ -5936,5 +5937,5 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
         for item in payload["content"]
     )
 
-    mermaid = session_analyze.render_analysis_mermaid(payload)
+    mermaid = session_analyze_render.render_analysis_mermaid(payload)
     assert "slack-thread:C1:111" in mermaid or "slack-thread:C1:222" in mermaid

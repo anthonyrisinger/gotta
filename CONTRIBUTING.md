@@ -156,11 +156,12 @@ Core infrastructure:
   `invoke.py` resolves a command into one canonical invocation shape.
 - **`session/`** — Session kernel package. `scope.py` resolves exact/shared/actor
   roots, `registry.py` owns actor identity and metadata, `bootstrap.py`
-  scaffolds session and actor surfaces, `activity.py` records actor/session
-  activity, `status/` owns actor lifecycle state (`marker.py`, `blocker.py`,
-  `progress.py`, `payload.py`, `todo.py`, and `bind.py`), and `charter.py`
-  owns want/goal text surfaces. The package itself is the `gotta.session`
-  import boundary; there are no `__init__.py` files under `src/`.
+  scaffolds session and actor surfaces, `activity/` owns actor/session
+  activity (`file.py`, `record.py`, `summary.py`, and `note.py`), `status/`
+  owns actor lifecycle state (`marker.py`, `blocker.py`, `progress.py`,
+  `payload.py`, `todo.py`, and `bind.py`), and `charter.py` owns want/goal
+  text surfaces. The package itself is the `gotta.session` import boundary;
+  there are no `__init__.py` files under `src/`.
 
 ### Current Pressure Points
 

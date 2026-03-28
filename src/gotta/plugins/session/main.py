@@ -5,7 +5,7 @@ from __future__ import annotations
 from gotta.content.model import ContentError
 from gotta.helptext import is_long_help_request, print_long_help
 
-from .analyze import cmd_analyze
+from .analyze.main import cmd_analyze
 from .graph import cmd_graph
 from .lead import cmd_leads
 from .manifest import cmd_manifest

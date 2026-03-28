@@ -14,7 +14,15 @@ from gotta.notes import (
     actor_notes_payload,
     render_actor_notes_markdown,
 )
-from gotta.session import activity as session_activity
+from gotta.session.activity.note import (
+    _record_note_check,
+    _reset_note_check_feedback,
+)
+from gotta.session.activity.record import (
+    _actor_log_line,
+    _append_actor_event,
+    _record_actor_surface_activity,
+)
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import charter as session_charter
 from gotta.session import registry as session_registry
@@ -162,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
             explicit_actor=getattr(args, "actor", None),
         )
         if scoped_actor:
-            session_activity._record_note_check(work_dir, scoped_actor)
+            _record_note_check(work_dir, scoped_actor)
             status = _actor_status_payload(work_dir, scoped_actor)
             payload = actor_notes_payload(
                 work_dir,
@@ -269,21 +277,21 @@ def main(argv: list[str] | None = None) -> int:
         input_name="actor note",
     )
     append_actor_note(work_dir, actor_name, message=message, author=author_name)
-    session_activity._reset_note_check_feedback(work_dir, actor_name)
-    session_activity._append_actor_event(
+    _reset_note_check_feedback(work_dir, actor_name)
+    _append_actor_event(
         work_dir,
         actor_name,
         event="note",
         detail=message.splitlines()[0],
         author=author_name,
     )
-    session_activity._actor_log_line(
+    _actor_log_line(
         work_dir,
         actor_name,
         f"noted: {message.splitlines()[0]}",
         author=author_name,
     )
-    session_activity._record_actor_surface_activity(
+    _record_actor_surface_activity(
         work_dir,
         actor_name=actor_name,
         surface="notes",

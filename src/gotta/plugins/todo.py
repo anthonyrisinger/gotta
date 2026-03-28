@@ -16,7 +16,7 @@ from gotta.todo import (
     todo_payload,
     todo_state_path,
 )
-from gotta.session import activity as session_activity
+from gotta.session.activity.record import _record_session_activity
 from gotta.session import charter as session_charter
 from gotta.session import scope as session_scope
 from gotta.session.status.marker import _managed_todo_redirect
@@ -325,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload, input_name="TODO item text"
             ),
         )
-        session_activity._record_session_activity(
+        _record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",
@@ -353,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
                     text=str(item["text"]),
                     checked=bool(item["checked"]),
                 )
-        session_activity._record_session_activity(
+        _record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",
@@ -376,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if len(updated_items) == 1:
             updated = updated_items[0]
-            session_activity._record_session_activity(
+            _record_session_activity(
                 work_dir,
                 plugin="todo",
                 surface="todo",
@@ -388,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"checked TODO item: {updated['id']} {updated['section']} :: {updated['text']}"
             )
             return 0
-        session_activity._record_session_activity(
+        _record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",

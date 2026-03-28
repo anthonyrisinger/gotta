@@ -9,7 +9,7 @@ import time
 from gotta.actor import requested_disposition_label
 from gotta.compat import datetime
 from gotta.notes import actor_notes_ready, actor_voice
-from gotta.session.activity import (
+from gotta.session.activity.summary import (
     _actor_evidence_note,
     _actor_evidence_summary,
     _actor_note_check_summary,

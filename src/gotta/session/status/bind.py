@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from gotta.content.path import sh_quote
-from gotta.session.activity import _actor_log_line, _append_actor_event
+from gotta.session.activity.record import _actor_log_line, _append_actor_event
 from gotta.session.bootstrap import _ensure_actor_surface
 from gotta.session.registry import (
     WANT_FILE,
