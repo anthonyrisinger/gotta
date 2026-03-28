@@ -43,16 +43,22 @@ For regular study and maintenance work, use the repo wrapper:
 ```bash
 ./scripts/study
 ./scripts/study --quick
+./scripts/study --discover
 ./scripts/study --full
 ./scripts/study --deep
 ./scripts/study --types
 ```
 
 `./scripts/study` now defaults to the quick working-tree loop: namespace
-policy, full-tree `ruff check`, full-tree `ruff format --check`, and a
-deterministic targeted pytest slice derived from the current working tree.
-Treat that quick pass as squeeze-loop signal, not branch health. `--quick` is
-the explicit alias for that same mode.
+policy, python-residue hygiene, full-tree `ruff check`, full-tree `ruff format
+--check`, and a deterministic targeted pytest slice derived from the current
+working tree. Treat that quick pass as squeeze-loop signal, not branch health.
+`--quick` is the explicit alias for that same mode.
+
+`./scripts/study --discover` is the next-cut discovery surface. It is designed
+for selecting the next squeeze rather than validating one local edit: it
+summarizes slow tests, live complexity hotspots, pyright file pressure,
+import-linter contract status, and semgrep rule counts in one pass.
 
 `./scripts/study --full` preserves the branch-grade pass and remains the
 release-validation contract. It keeps the full pytest run, vulture, formatter
@@ -60,6 +66,11 @@ gate, durations pass, advisory pressure tools, and local study binaries such
 as `cloc`, `ctags`, and `ast-grep` when they are installed. `--deep` and
 `--types` both imply `--full`; `--deep` adds `import-linter` and `semgrep`,
 and `--types` adds a source-only `pyright` pass as a pressure map.
+
+Quick and full modes both fail if generated `__pycache__/` directories or
+`*.pyc` files are present under `src/`. The study runner suppresses new
+bytecode emission in its subprocesses so the gate itself does not leave that
+source-tree residue behind.
 
 If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts through the canonical release wrapper:

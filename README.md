@@ -183,22 +183,35 @@ For one-command study and maintenance passes, use:
 ```bash
 ./scripts/study
 ./scripts/study --quick
+./scripts/study --discover
 ./scripts/study --full
 ./scripts/study --deep
 ./scripts/study --types
 ```
 
 `./scripts/study` now defaults to the quick working-tree loop: namespace policy,
-full-tree `ruff check`, full-tree `ruff format --check`, and a deterministic
-targeted pytest slice chosen from the current working tree. That quick pass is
-for squeeze work, not repo health. Use `--quick` explicitly when you want to
-spell that intent out in scripts or notes.
+python-residue hygiene, full-tree `ruff check`, full-tree `ruff format
+--check`, and a deterministic targeted pytest slice chosen from the current
+working tree. That quick pass is for squeeze work, not repo health. Use
+`--quick` explicitly when you want to spell that intent out in scripts or
+notes.
+
+`./scripts/study --discover` is the next-squeeze surface. It is intentionally
+broader and observational: it prints slow-test data, live lizard and radon
+hotspots, pyright file-pressure summaries, import-linter contract status, and
+semgrep rule counts so you can decide what to squeeze next without reading the
+entire full pass.
 
 `./scripts/study --full` preserves the branch-grade pass: full pytest, vulture,
 formatter gate, durations, advisory pressure tools, and optional study counters.
 Pressure-map tools such as `radon` and `lizard` remain advisory rather than
 correctness blockers. `--deep` and `--types` both imply `--full`; `--deep` adds
 `import-linter` and `semgrep`, and `--types` adds a source-only `pyright` pass.
+
+Quick and full modes both treat generated `__pycache__/` directories and
+`*.pyc` files under `src/` as residue. The study runner also suppresses new
+bytecode emission in its subprocesses so the gate does not dirty the source
+tree while it runs.
 
 ## Advanced Study Battery
 

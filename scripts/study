@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Drive quick and full study passes for the repo."""
+"""Drive quick, full, and discovery study passes for the repo."""
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import argparse
+import json
+import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import shlex
 import subprocess
@@ -15,6 +19,10 @@ import time
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SUBPROCESS_ENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+REPO_SURFACES = ("src",)
+DISCOVER_HOTSPOT_LIMIT = 15
+DISCOVER_TYPE_LIMIT = 10
 CORE_SLICE = (
     "tests/test_cli.py",
     "tests/test_dispatch.py",
@@ -103,12 +111,16 @@ PREFIX_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
         reverse=True,
     )
 )
+LIZARD_ROW_RE = re.compile(r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.+)$")
+PYRIGHT_ERROR_RE = re.compile(r"^(?P<path>.+?\.py):\d+:\d+ - error:")
+RADON_ROW_RE = re.compile(r"^\s+([FCM])\s+\d+:\d+\s+(.+?) - ([A-F]) \((\d+)\)$")
 
 
 @dataclass(frozen=True, slots=True)
 class Mode:
     quick: bool
     full: bool
+    discover: bool
     deep: bool
     types: bool
     verbose: bool
@@ -124,8 +136,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="./scripts/study",
         description=(
-            "Run a quick working-tree study loop by default, or the full branch-grade "
-            "study pass with --full."
+            "Run a quick working-tree study loop by default, a discovery pass with "
+            "--discover, or the full branch-grade study pass with --full."
         ),
     )
     parser.add_argument(
@@ -133,6 +145,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--full", action="store_true", help="run the full branch-grade study pass"
+    )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="run the discovery pass for choosing the next squeeze",
     )
     parser.add_argument(
         "--deep",
@@ -152,13 +169,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 def resolve_mode(argv: list[str]) -> Mode:
     args = build_parser().parse_args(argv)
-    if args.quick and (args.full or args.deep or args.types):
-        raise SystemExit("--quick cannot be combined with --full, --deep, or --types")
+    if args.quick and (args.full or args.deep or args.types or args.discover):
+        raise SystemExit(
+            "--quick cannot be combined with --full, --deep, --types, or --discover"
+        )
+    if args.discover and (args.full or args.deep or args.types):
+        raise SystemExit(
+            "--discover cannot be combined with --full, --deep, or --types"
+        )
     full = bool(args.full or args.deep or args.types)
-    quick = bool(args.quick or not full)
+    discover = bool(args.discover)
+    quick = bool(args.quick or (not full and not discover))
     return Mode(
         quick=quick,
         full=full,
+        discover=discover,
         deep=bool(args.deep),
         types=bool(args.types),
         verbose=bool(args.verbose),
@@ -274,7 +299,7 @@ def print_command(command: list[str]) -> None:
 
 def run_streaming(command: list[str], *, cwd: Path, advisory: bool = False) -> int:
     print_command(command)
-    proc = subprocess.run(command, cwd=cwd, check=False)
+    proc = subprocess.run(command, cwd=cwd, check=False, env=SUBPROCESS_ENV)
     if proc.returncode != 0 and advisory:
         print(f"advisory step failed with exit {proc.returncode}", file=sys.stderr)
         return 0
@@ -291,6 +316,7 @@ def run_summary(command: list[str], *, cwd: Path, label: str) -> int:
             stdout=handle,
             stderr=subprocess.STDOUT,
             text=True,
+            env=SUBPROCESS_ENV,
         )
         elapsed = time.monotonic() - start
         if proc.returncode == 0:
@@ -307,6 +333,21 @@ def run_summary(command: list[str], *, cwd: Path, label: str) -> int:
     return proc.returncode
 
 
+def run_capture(command: list[str], *, cwd: Path) -> tuple[int, str]:
+    proc = subprocess.run(
+        command,
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=SUBPROCESS_ENV,
+    )
+    output = proc.stdout
+    if proc.stderr:
+        output = f"{output}{proc.stderr}"
+    return proc.returncode, output
+
+
 def namespace_policy_error(repo_root: Path) -> str:
     offenders = sorted(
         path.relative_to(repo_root).as_posix()
@@ -318,6 +359,33 @@ def namespace_policy_error(repo_root: Path) -> str:
         [
             "namespace-package policy violated: __init__.py found under src/",
             *offenders,
+        ]
+    )
+
+
+def residue_paths(repo_root: Path) -> tuple[str, ...]:
+    residue: set[str] = set()
+    for surface in REPO_SURFACES:
+        root = repo_root / surface
+        if not root.exists():
+            continue
+        for path in root.rglob("__pycache__"):
+            if path.is_dir():
+                residue.add(path.relative_to(repo_root).as_posix())
+        for path in root.rglob("*.pyc"):
+            if path.is_file():
+                residue.add(path.relative_to(repo_root).as_posix())
+    return tuple(sorted(residue))
+
+
+def residue_error(repo_root: Path) -> str:
+    residue = residue_paths(repo_root)
+    if not residue:
+        return ""
+    return "\n".join(
+        [
+            "python residue violated: generated __pycache__/ or *.pyc found under repo surfaces",
+            *residue,
         ]
     )
 
@@ -340,9 +408,160 @@ def run_namespace_check(*, repo_root: Path, verbose: bool) -> int:
     return 0
 
 
+def run_residue_check(*, repo_root: Path, verbose: bool) -> int:
+    start = time.monotonic()
+    failure = residue_error(repo_root)
+    elapsed = time.monotonic() - start
+    if verbose:
+        if failure:
+            print(failure, file=sys.stderr)
+            return 1
+        print("ok python residue")
+        return 0
+    if failure:
+        print("fail python residue")
+        print(failure)
+        return 1
+    print(f"ok {elapsed:.2f}s python residue")
+    return 0
+
+
+def relativize_path(path_text: str, repo_root: Path) -> str:
+    path = Path(path_text)
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def extract_pytest_durations(output: str) -> str:
+    marker = "============================= slowest"
+    index = output.find(marker)
+    if index == -1:
+        return output.strip()
+    return output[index:].strip()
+
+
+def summarize_lizard_hotspots(output: str, *, limit: int) -> str:
+    by_location: dict[str, tuple[int, int, int, str]] = {}
+    for line in output.splitlines():
+        match = LIZARD_ROW_RE.match(line)
+        if not match:
+            continue
+        nloc, ccn, _token, _param, length, location = match.groups()
+        row = (int(ccn), int(length), int(nloc), location)
+        incumbent = by_location.get(location)
+        if incumbent is None or row > incumbent:
+            by_location[location] = row
+    rows = list(by_location.values())
+    rows.sort(key=lambda row: (row[0], row[1], row[2], row[3]), reverse=True)
+    if not rows:
+        return output.strip() or "no lizard hotspots found"
+    lines = ["ccn  len  nloc  location"]
+    for ccn, length, nloc, location in rows[:limit]:
+        lines.append(f"{ccn:>3}  {length:>3}  {nloc:>4}  {location}")
+    return "\n".join(lines)
+
+
+def summarize_radon_hotspots(output: str, *, limit: int) -> str:
+    current_file = ""
+    rows: list[tuple[int, str, int, str, str]] = []
+    for line in output.splitlines():
+        if not line:
+            continue
+        if not line.startswith(" "):
+            current_file = line.strip()
+            continue
+        match = RADON_ROW_RE.match(line)
+        if not match or not current_file:
+            continue
+        _kind, name, rank, score = match.groups()
+        rows.append((int(score), rank, -ord(rank), current_file, name))
+    rows.sort(key=lambda row: (row[0], row[2], row[3], row[4]), reverse=True)
+    if not rows:
+        return output.strip() or "no radon hotspots found"
+    lines = ["score  rank  location"]
+    for score, rank, _ord_key, current_file, name in rows[:limit]:
+        lines.append(f"{score:>5}  {rank:>4}  {current_file}:{name}")
+    return "\n".join(lines)
+
+
+def summarize_pyright(output: str, *, repo_root: Path, limit: int) -> str:
+    counts: Counter[str] = Counter()
+    for line in output.splitlines():
+        match = PYRIGHT_ERROR_RE.match(line.strip())
+        if not match:
+            continue
+        counts[relativize_path(match.group("path"), repo_root)] += 1
+    if not counts:
+        return output.strip() or "0 diagnostics"
+    lines = [f"{sum(counts.values())} diagnostics across {len(counts)} files"]
+    for path, count in counts.most_common(limit):
+        lines.append(f"{count:>4}  {path}")
+    return "\n".join(lines)
+
+
+def summarize_import_linter(output: str) -> str:
+    lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+    contract_lines = [
+        line
+        for line in lines
+        if line.startswith("Contracts:")
+        or line.endswith(" KEPT [0.000s]")
+        or line.endswith(" BROKEN")
+        or " KEPT [" in line
+        or " BROKEN [" in line
+    ]
+    if contract_lines:
+        return "\n".join(contract_lines)
+    return output.strip() or "no import-linter summary produced"
+
+
+def summarize_semgrep(output: str, *, limit: int) -> str:
+    payload = None
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        stripped = output.lstrip()
+        if stripped.startswith("{"):
+            try:
+                payload, _index = decoder.raw_decode(stripped)
+            except json.JSONDecodeError:
+                payload = None
+    if payload is None:
+        return output.strip() or "no semgrep summary produced"
+    counts: Counter[str] = Counter(
+        result.get("check_id", "<unknown>") for result in payload.get("results", [])
+    )
+    if not counts:
+        return "0 findings"
+    total = sum(counts.values())
+    lines = [f"{total} findings across {len(counts)} rules"]
+    for check_id, count in counts.most_common(limit):
+        lines.append(f"{count:>4}  {check_id}")
+    return "\n".join(lines)
+
+
+def print_discovery_section(
+    title: str,
+    command: list[str],
+    renderer,
+    *,
+    cwd: Path,
+) -> None:
+    print_section(title)
+    status, output = run_capture(command, cwd=cwd)
+    print(renderer(output))
+    if status != 0:
+        print(f"note: {title.lower()} exited with status {status}")
+
+
 def run_quick(repo_root: Path, *, verbose: bool) -> int:
     print("note: quick mode is a working-tree loop, not a repo-health signal")
     if run_namespace_check(repo_root=repo_root, verbose=verbose) != 0:
+        return 1
+    if run_residue_check(repo_root=repo_root, verbose=verbose) != 0:
         return 1
 
     commands = [
@@ -387,6 +606,10 @@ def have_command(command: str) -> bool:
 
 def run_full(repo_root: Path, *, deep: bool, types: bool) -> int:
     failure = namespace_policy_error(repo_root)
+    if failure:
+        print(failure, file=sys.stderr)
+        return 1
+    failure = residue_error(repo_root)
     if failure:
         print(failure, file=sys.stderr)
         return 1
@@ -530,8 +753,71 @@ def run_full(repo_root: Path, *, deep: bool, types: bool) -> int:
     return 0
 
 
+def run_discover(repo_root: Path) -> int:
+    print(
+        "note: discover mode is for choosing the next squeeze, not validating a "
+        "single working-tree cut"
+    )
+    if run_namespace_check(repo_root=repo_root, verbose=False) != 0:
+        print("note: namespace policy is broken; discovery continued anyway")
+    if run_residue_check(repo_root=repo_root, verbose=False) != 0:
+        print("note: python residue is present; discovery continued anyway")
+
+    print_discovery_section(
+        "Slow Tests",
+        ["uv", "run", "pytest", "--durations=15", "-q"],
+        extract_pytest_durations,
+        cwd=repo_root,
+    )
+    print_discovery_section(
+        "Hotspot Functions",
+        ["uv", "run", "lizard", "src", "tests"],
+        lambda output: summarize_lizard_hotspots(output, limit=DISCOVER_HOTSPOT_LIMIT),
+        cwd=repo_root,
+    )
+    print_discovery_section(
+        "Complexity Radar",
+        ["uv", "run", "python", "-m", "radon", "cc", "src", "tests", "-s"],
+        lambda output: summarize_radon_hotspots(output, limit=DISCOVER_HOTSPOT_LIMIT),
+        cwd=repo_root,
+    )
+    print_discovery_section(
+        "Type Pressure",
+        ["uvx", "pyright", "src"],
+        lambda output: summarize_pyright(
+            output, repo_root=repo_root, limit=DISCOVER_TYPE_LIMIT
+        ),
+        cwd=repo_root,
+    )
+    print_discovery_section(
+        "Architecture",
+        [
+            "env",
+            "PYTHONPATH=src",
+            "uvx",
+            "--from",
+            "import-linter",
+            "lint-imports",
+            "--config",
+            ".importlinter",
+            "--show-timings",
+        ],
+        summarize_import_linter,
+        cwd=repo_root,
+    )
+    print_discovery_section(
+        "Semantic Probes",
+        ["uvx", "semgrep", "--config", ".semgrep/study.yml", "--json", "src/gotta"],
+        lambda output: summarize_semgrep(output, limit=DISCOVER_HOTSPOT_LIMIT),
+        cwd=repo_root,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     mode = resolve_mode(list(argv or sys.argv[1:]))
+    if mode.discover:
+        return run_discover(REPO_ROOT)
     if mode.full:
         return run_full(REPO_ROOT, deep=mode.deep, types=mode.types)
     return run_quick(REPO_ROOT, verbose=mode.verbose)
