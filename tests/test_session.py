@@ -10,7 +10,8 @@ import pytest
 
 from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
 from gotta.compat import UTC, datetime
-from gotta import content, dispatch
+from gotta import content
+import gotta.dispatch.main as dispatch
 from gotta.friction import oops_records
 from gotta import leads
 from gotta.logs import append_log_record, log_records, render_logs_markdown

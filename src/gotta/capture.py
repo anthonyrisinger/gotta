@@ -27,7 +27,7 @@ def capture_json_command(
     *,
     detail: str,
 ) -> bytes:
-    from gotta.dispatch import capture_stdout
+    from gotta.dispatch.stream import capture_stdout
 
     captured_args = argparse.Namespace(**vars(args))
     setattr(captured_args, "output", "json")

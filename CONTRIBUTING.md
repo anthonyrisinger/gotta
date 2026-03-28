@@ -108,7 +108,7 @@ gotta jira search "retry budget"
   │
   ├─ main.py          resolve fingerprint, bind/discover session, detect repo
   ├─ builtin.py        discover plugin via entry points (gotta.plugins group)
-  ├─ dispatch.py        split common options, run plugin, capture stdout
+  ├─ dispatch/main.py   orchestrate plugin runtime over dispatch phases
   ├─ invocation.py      derive canonical locator, preferred name, content type
   ├─ content.py         materialize captured output to content store
   └─ stdout             emit receipt with artifact and content locators
@@ -123,9 +123,11 @@ Core infrastructure:
 - **`builtin.py`** — Plugin contract (`PluginSpec`), discovery via setuptools
   entry points, core plugin factory registrations. Plugins declare a runner,
   session access mode, and optional routing/materialization/naming callbacks.
-- **`dispatch.py`** — Plugin runtime. Splits common options, captures stdout
-  through `CapturedStream`, materializes output to the content store, derives
-  source metadata from JSON/Markdown timestamps, emits receipts.
+- **`dispatch/`** — Dispatch kernel package. `main.py` orchestrates plugin
+  runtime, `option.py` owns shared flag stripping, `stream.py` owns captured
+  stdout/stderr, `budget.py` owns interactive output truncation, `metadata.py`
+  derives source metadata, `materialize.py` writes artifacts, `receipt.py`
+  emits receipts, and `runtime.py` owns session/runtime scoping.
 - **`content.py`** — Evidence store. SHA-256-keyed content directory with atomic
   writes, append-only manifest (`manifest.jsonl`), activity logging, session
   environment export/import, context binding resolution.
@@ -148,7 +150,7 @@ The hottest responsibility concentrations are currently:
 - `src/gotta/plugins/jira.py`
 - `src/gotta/plugins/github.py`
 - `src/gotta/session/`
-- `src/gotta/dispatch.py`
+- `src/gotta/dispatch/`
 - `src/gotta/leads.py`
 - `src/gotta/main.py`
 

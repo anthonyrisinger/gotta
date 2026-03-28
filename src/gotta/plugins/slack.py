@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
-from gotta.dispatch import capture_stdout
+from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.routing import query_route, strip_http_url_fragment

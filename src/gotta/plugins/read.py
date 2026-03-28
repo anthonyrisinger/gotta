@@ -20,13 +20,11 @@ import urllib.request
 from gotta.builtin import get_plugin
 from gotta.capture import Capture
 from gotta.content import CommonOptions
-from gotta.dispatch import (
-    SUPPRESS_MATERIALIZATION_ENV,
-    SUPPRESS_RECEIPTS_ENV,
-    capture_stdout,
-    run_plugin,
-)
+from gotta.dispatch.main import run_plugin
+from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
+from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.invocation import SUPPRESS_MATERIALIZATION_ENV
 from gotta.project import html_markdown, looks_text, pretty_json
 from gotta.stored import (
     guess_lang_from_content_type,

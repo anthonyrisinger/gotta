@@ -11,8 +11,11 @@ import pytest
 
 from gotta import builtin as plugin_api
 from gotta import main as cli
-from gotta import content, dispatch
+from gotta import content
 from gotta import invocation
+import gotta.dispatch.budget as dispatch_budget
+import gotta.dispatch.main as dispatch
+import gotta.dispatch.materialize as dispatch_materialize
 from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
 from gotta.plugins import read as read_plugin
@@ -59,7 +62,7 @@ def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert dispatch.should_materialize("jira", ["get", "PROJ-1"])
     assert dispatch.should_materialize("slack", ["search", "abc"])
     assert dispatch.should_materialize("slack", ["get", "C12345678:1773085070.240949"])
-    monkeypatch.setenv(dispatch.SUPPRESS_MATERIALIZATION_ENV, "1")
+    monkeypatch.setenv(dispatch_materialize.SUPPRESS_MATERIALIZATION_ENV, "1")
     assert not dispatch.should_materialize(
         "github", ["https://github.com/acme/widgets"]
     )
@@ -106,7 +109,7 @@ def test_emit_budgeted_output_truncates_interactive_text_with_footer(
     assert emitted.truncate_reason == "lines"
     assert "output truncated by lines budget" in captured.out
     assert "gotta read artifact:demo@abc123" in captured.out
-    assert len(captured.out.encode("utf-8")) <= dispatch.OUTPUT_EMIT_BYTE_LIMIT
+    assert len(captured.out.encode("utf-8")) <= dispatch_budget.OUTPUT_EMIT_BYTE_LIMIT
 
 
 def test_emit_budgeted_output_omits_overlong_follow_command_in_text_footer(
@@ -164,19 +167,21 @@ def test_emit_budgeted_output_keeps_json_preview_valid_with_long_follow_command(
     rendered = json.loads(raw)
 
     assert emitted.output_truncated is True
-    assert len(raw) <= dispatch.OUTPUT_BUDGET_BYTE_LIMIT
+    assert len(raw) <= dispatch_budget.OUTPUT_BUDGET_BYTE_LIMIT
     assert rendered["outputTruncated"] is True
     assert rendered["requestedFormat"] == "json"
     assert rendered["truncateReason"] == "bytes"
     assert "followCommand" not in rendered
-    assert len(rendered.get("preview", "")) <= dispatch.JSON_PREVIEW_CHAR_LIMIT + 3
+    assert (
+        len(rendered.get("preview", "")) <= dispatch_budget.JSON_PREVIEW_CHAR_LIMIT + 3
+    )
 
 
 def test_select_text_cutoff_can_use_flex_to_finish_paragraph(monkeypatch) -> None:
-    monkeypatch.setattr(dispatch, "OUTPUT_BUDGET_FLEX_BYTE_LIMIT", 16)
+    monkeypatch.setattr(dispatch_budget, "OUTPUT_BUDGET_FLEX_BYTE_LIMIT", 16)
 
     payload = ("A" * 71 + "\n\n" + "B" * 80).encode("utf-8")
-    cutoff = dispatch._select_text_cutoff(payload, soft_limit=70, hard_limit=86)
+    cutoff = dispatch_budget._select_text_cutoff(payload, soft_limit=70, hard_limit=86)
 
     assert cutoff == 73
 

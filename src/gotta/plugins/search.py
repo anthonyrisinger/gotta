@@ -7,11 +7,9 @@ import os
 import signal
 import sys
 
-from gotta.dispatch import (
-    SUPPRESS_RECEIPTS_ENV,
-    load_plugin_runner,
-    system_exit_status,
-)
+from gotta.dispatch.main import load_plugin_runner
+from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
+from gotta.dispatch.runtime import system_exit_status
 from gotta.helptext import is_long_help_request
 from gotta.searching import SearchRouteError, resolve_search_route
 
@@ -83,7 +81,7 @@ def capture(argv: list[str], options: object):
     route = resolve_search_route(argv)
     from gotta.builtin import get_plugin
     from gotta.capture import Capture
-    from gotta.dispatch import capture_stdout
+    from gotta.dispatch.stream import capture_stdout
 
     spec = get_plugin(route.provider)
     if spec and spec.capture is not None:

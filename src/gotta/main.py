@@ -16,13 +16,13 @@ import json
 from gotta.builtin import SessionAccessMode, get_plugin
 from gotta.compat import UTC, datetime, tomllib
 from gotta.actors import resolve_actor_context, seed_actor_context
-from gotta.dispatch import (
+from gotta.dispatch.main import (
     available_plugins,
     print_usage,
     run_plugin,
     system_exit_status,
 )
-from gotta.dispatch import SUPPRESS_MATERIALIZATION_ENV
+from gotta.dispatch.materialize import SUPPRESS_MATERIALIZATION_ENV
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 from gotta.actor import (
     session_actor,
