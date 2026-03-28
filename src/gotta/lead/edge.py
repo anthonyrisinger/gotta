@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from gotta.content.model import ContentSnapshot
 from gotta.content.path import content_locator
-from gotta.source import best_visibility_metadata, classify_visibility_metadata
+from gotta.source.visibility import (
+    best_visibility_metadata,
+    classify_visibility_metadata,
+)
 
 from .cache import lead_mentions_for_snapshot
 from .rank import edge_best_first_sort_key, is_first_party_target

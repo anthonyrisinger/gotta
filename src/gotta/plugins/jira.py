@@ -21,12 +21,12 @@ from gotta.config import set_provider_env_values
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.resolve.route import query_route, strip_http_url_fragment
-from gotta.source import (
-    derive_source_metadata_from_payload,
+from gotta.source.render import (
     render_source_metadata_lines,
     render_visibility_metadata_lines,
-    with_visibility_metadata,
 )
+from gotta.source.stamp import derive_source_metadata_from_payload
+from gotta.source.visibility import with_visibility_metadata
 from gotta.providers import atlassian as atl
 
 OAUTH_DIR = atl.OAUTH_DIR

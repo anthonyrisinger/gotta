@@ -17,7 +17,7 @@ from gotta.content.scope import (
     session_shared_id,
     shared_session_root,
 )
-from gotta.source import (
+from gotta.source.visibility import (
     best_visibility_metadata,
     classify_visibility_metadata,
     normalize_visibility_metadata,

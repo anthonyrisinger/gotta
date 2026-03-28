@@ -213,8 +213,9 @@ Evidence and synthesis:
   `aggregate.py` reduces edges into lead sources, `resolve.py` resolves lead
   targets back to stored snapshots, and `snapshot.py` owns content-snapshot
   labeling.
-- **`source.py`** — Source metadata extraction. Normalizes timestamps from JSON,
-  Markdown, and Slack formats into classified ISO-8601 timestamps.
+- **`source/`** — Source metadata package. `stamp.py` owns timestamp
+  normalization and metadata derivation, `visibility.py` owns visibility
+  classification and selection, and `render.py` owns metadata rendering.
 
 State management:
 

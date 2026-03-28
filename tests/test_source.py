@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from gotta import source
+from gotta.source.visibility import classify_visibility_metadata
 
 
 def test_classify_local_gotta_surfaces_as_personal() -> None:
-    payload = source.classify_visibility_metadata(
+    payload = classify_visibility_metadata(
         {},
         provider="gotta",
         plugin="notes",
@@ -20,7 +20,7 @@ def test_classify_local_gotta_surfaces_as_personal() -> None:
 
 
 def test_classify_unknown_provider_stays_unknown() -> None:
-    payload = source.classify_visibility_metadata({}, provider="confluence")
+    payload = classify_visibility_metadata({}, provider="confluence")
 
     assert payload["visibility_level"] == "unknown"
     assert payload["visibility_boundary"] == "unknown"
@@ -32,7 +32,7 @@ def test_classify_unknown_provider_stays_unknown() -> None:
 
 
 def test_classify_slack_shared_public_channel_as_restricted_cross_company() -> None:
-    payload = source.classify_visibility_metadata(
+    payload = classify_visibility_metadata(
         {
             "channel": {
                 "id": "C12345678",
@@ -62,7 +62,7 @@ def test_classify_github_repo_visibility(
     level: str,
     boundary: str,
 ) -> None:
-    payload = source.classify_visibility_metadata(
+    payload = classify_visibility_metadata(
         {"visibility": raw_visibility},
         provider="github",
     )
@@ -73,7 +73,7 @@ def test_classify_github_repo_visibility(
 
 
 def test_classify_jira_issue_defaults_to_restricted_same_company_medium() -> None:
-    payload = source.classify_visibility_metadata(
+    payload = classify_visibility_metadata(
         {
             "siteUrl": "https://example.atlassian.net",
             "issueUrl": "https://example.atlassian.net/browse/OPS-1",
@@ -91,7 +91,7 @@ def test_classify_jira_issue_defaults_to_restricted_same_company_medium() -> Non
 
 
 def test_classify_jira_issue_security_as_restricted_same_company_high() -> None:
-    payload = source.classify_visibility_metadata(
+    payload = classify_visibility_metadata(
         {
             "siteUrl": "https://example.atlassian.net",
             "issueUrl": "https://example.atlassian.net/browse/OPS-1",
@@ -110,7 +110,7 @@ def test_classify_jira_issue_security_as_restricted_same_company_high() -> None:
 
 
 def test_classify_jira_locator_fallback_as_restricted_same_company_medium() -> None:
-    payload = source.classify_visibility_metadata(
+    payload = classify_visibility_metadata(
         {},
         provider="jira",
         subcommand="get",

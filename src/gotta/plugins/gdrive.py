@@ -20,10 +20,8 @@ from gotta.drawio import DRAWIO_MIME, render_drawio_summary_markdown
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.resolve.route import query_route, strip_http_url_fragment
-from gotta.source import (
-    derive_source_metadata_from_payload,
-    render_source_metadata_lines,
-)
+from gotta.source.render import render_source_metadata_lines
+from gotta.source.stamp import derive_source_metadata_from_payload
 from gotta.providers.google import (
     DEFAULT_DRIVE_FIELDS,
     GOOGLE_DOC_MIME,

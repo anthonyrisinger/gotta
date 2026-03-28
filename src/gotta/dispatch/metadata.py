@@ -7,12 +7,14 @@ import re
 from typing import Any
 
 from gotta.resolve.invoke import canonical_locator as resolve_canonical_locator
-from gotta.source import (
-    classify_visibility_metadata,
+from gotta.source.stamp import (
     derive_source_metadata_from_payload,
-    extract_visibility_metadata_from_markdown,
     normalize_source_timestamp,
     slack_timestamp_to_iso,
+)
+from gotta.source.visibility import (
+    classify_visibility_metadata,
+    extract_visibility_metadata_from_markdown,
 )
 
 

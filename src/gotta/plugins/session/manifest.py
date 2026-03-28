@@ -6,7 +6,7 @@ import argparse
 import json
 
 from gotta.content.path import content_locator
-from gotta.source import best_visibility_metadata
+from gotta.source.visibility import best_visibility_metadata
 
 from .core import (
     MANIFEST_TEXT_PREVIEW_LIMIT,

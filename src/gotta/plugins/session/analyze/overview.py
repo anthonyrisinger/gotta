@@ -15,7 +15,7 @@ from gotta.lead.snapshot import (
     snapshot_display_name,
     snapshot_locator,
 )
-from gotta.source import best_visibility_metadata
+from gotta.source.visibility import best_visibility_metadata
 
 from ..core import (
     artifact_kind,

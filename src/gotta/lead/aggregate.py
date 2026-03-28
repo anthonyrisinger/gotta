@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gotta.source import best_visibility_metadata
+from gotta.source.visibility import best_visibility_metadata
 
 from .rank import lead_source_best_first_sort_key
 

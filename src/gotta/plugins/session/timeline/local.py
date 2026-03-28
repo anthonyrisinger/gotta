@@ -6,7 +6,7 @@ from pathlib import Path
 
 from gotta.actor import session_actor
 from gotta.content.activity import activity_events, activity_log_path
-from gotta.source import classify_visibility_metadata
+from gotta.source.visibility import classify_visibility_metadata
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
 

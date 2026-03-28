@@ -25,7 +25,7 @@ from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.resolve.route import split_locator_tail
-from gotta.source import render_source_metadata_lines
+from gotta.source.render import render_source_metadata_lines
 
 
 DEFAULT_SUPABASE = (
