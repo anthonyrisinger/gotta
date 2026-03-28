@@ -132,19 +132,22 @@ Core infrastructure:
 - **`invocation.py`** — Invocation resolution. Routes provider-agnostic targets
   to provider plugins, derives canonical locators per provider, determines
   preferred output names and whether to materialize.
-- **`session.py`** — Session-level synthesis surfaces: manifest, timeline, graph,
-  leads, analyze. Actor lifecycle management (bind, launch, stall detection,
-  signoff). Charter surface operations (want, goal, todo).
+- **`session/`** — Session kernel package. `scope.py` resolves exact/shared/actor
+  roots, `registry.py` owns actor identity and metadata, `bootstrap.py`
+  scaffolds session and actor surfaces, `activity.py` records actor/session
+  activity, `status.py` synthesizes actor lifecycle state, and `charter.py`
+  owns want/goal text surfaces. The package itself is the `gotta.session`
+  import boundary; there are no `__init__.py` files under `src/`.
 
 ### Current Pressure Points
 
 The hottest responsibility concentrations are currently:
 
-- `src/gotta/plugins/session.py`
+- `src/gotta/plugins/session/`
 - `src/gotta/plugins/slack.py`
 - `src/gotta/plugins/jira.py`
 - `src/gotta/plugins/github.py`
-- `src/gotta/session.py`
+- `src/gotta/session/`
 - `src/gotta/dispatch.py`
 - `src/gotta/leads.py`
 - `src/gotta/main.py`

@@ -8,9 +8,10 @@ import urllib.error
 import pytest
 
 from gotta import content
-from gotta import session as sessionlib
 from gotta import target
-from gotta.plugins import actor, read, session
+from gotta.plugins import actor, read
+from gotta.plugins.session import main as session
+from gotta.session import registry as session_registry
 
 
 def test_read_local_directory_renders_native_listing(tmp_path: Path, capsys) -> None:
@@ -336,7 +337,7 @@ def test_read_seeded_actor_local_charter_surfaces(
     assert actor.main(["bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
 
-    actor_root = sessionlib._actor_session_dir(root, "claude")
+    actor_root = session_registry._actor_session_dir(root, "claude")
     monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
     monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(actor_root / "content"))
 

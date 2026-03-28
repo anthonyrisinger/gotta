@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 
+from gotta.actor import session_actor
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.todo import (
     create_todo_item,
@@ -15,7 +16,10 @@ from gotta.todo import (
     todo_payload,
     todo_state_path,
 )
-from gotta import session as session_plugin
+from gotta.session import activity as session_activity
+from gotta.session import charter as session_charter
+from gotta.session import scope as session_scope
+from gotta.session import status as session_status
 
 
 TODO_LINE_RE = re.compile(r"^(?P<indent>\s*)- \[(?P<checked>[ xX])\] (?P<text>.+?)\s*$")
@@ -27,7 +31,7 @@ TODO_BULLET_INPUT_RE = re.compile(r"^(?P<indent>\s*)[-*+]\s+(?P<body>.+?)\s*$")
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
-    session_plugin.add_target_args(parser)
+    session_charter.add_target_args(parser)
 
 
 def build_parser(command_name: str = "gotta todo") -> argparse.ArgumentParser:
@@ -68,7 +72,7 @@ def build_parser(command_name: str = "gotta todo") -> argparse.ArgumentParser:
 
 
 def session_access_mode(argv: list[str]) -> str:
-    positionals = session_plugin.argv_positionals(
+    positionals = session_charter.argv_positionals(
         argv,
         valued_flags=(
             "--session",
@@ -84,7 +88,7 @@ def session_access_mode(argv: list[str]) -> str:
 
 
 def _format_markdown_bullet(body: str, *, prefix: str = "- ") -> str:
-    lines = session_plugin._normalize_entry_text(body, input_name="entry text").split(
+    lines = session_charter._normalize_entry_text(body, input_name="entry text").split(
         "\n"
     )
     first = f"{prefix}{lines[0].strip()}"
@@ -125,7 +129,7 @@ def _todo_markdown_block_entries(
             item_count += 1
             continue
         lines.append(line)
-    entry = session_plugin._normalize_entry_text(
+    entry = session_charter._normalize_entry_text(
         "\n".join(lines), input_name=input_name
     )
     if entry.splitlines() and TODO_HEADING_INPUT_RE.match(entry.splitlines()[0]):
@@ -144,21 +148,21 @@ def _todo_extend_entries_source(
     if inline_items:
         entries = [
             _format_markdown_bullet(
-                session_plugin._normalize_entry_text(item, input_name=input_name),
+                session_charter._normalize_entry_text(item, input_name=input_name),
                 prefix="- [ ] ",
             )
             for item in inline_items
         ]
         return entries, len(entries)
 
-    payload = session_plugin._read_text_source(
+    payload = session_charter._read_text_source(
         session_root=session_root,
         inline=None,
         from_file=from_file,
         use_stdin=use_stdin,
         input_name=input_name,
     )
-    normalized = session_plugin._normalize_entry_text(payload, input_name=input_name)
+    normalized = session_charter._normalize_entry_text(payload, input_name=input_name)
     if any(TODO_HEADING_INPUT_RE.match(line) for line in normalized.splitlines()):
         return _todo_markdown_block_entries(normalized, input_name=input_name)
 
@@ -178,7 +182,7 @@ def _todo_extend_entries_source(
         items.append(candidate)
     entries = [
         _format_markdown_bullet(
-            session_plugin._normalize_entry_text(item, input_name=input_name),
+            session_charter._normalize_entry_text(item, input_name=input_name),
             prefix="- [ ] ",
         )
         for item in items
@@ -232,7 +236,7 @@ def _check_todo_item(work_dir, *, item_id: str) -> dict[str, object]:
     current = resolve_todo_item(work_dir, item_id=item_id)
     managed_key = str(current.get("managed_key") or "")
     if managed_key and not bool(current.get("checked")):
-        raise SystemExit(session_plugin._managed_todo_redirect(managed_key))
+        raise SystemExit(session_status._managed_todo_redirect(managed_key))
     updated = set_todo_checked(work_dir, item_id, checked=True)
     if updated is None:
         updated = current
@@ -273,23 +277,23 @@ def main(argv: list[str] | None = None) -> int:
         if int(exc.code or 0) == 0:
             return 0
         raise
-    work_dir = session_plugin._session_dir(
+    work_dir = session_scope._session_dir(
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
-    session_plugin._sync_actor_todo_state(work_dir)
+    session_status._sync_actor_todo_state(work_dir)
     action = args.action or "show"
     if action == "show":
         payload = todo_payload(work_dir, status=args.status, limit=max(args.limit, 0))
         actor_scope = (
-            session_plugin.session_actor(work_dir)
+            session_actor(work_dir)
             if work_dir.resolve().parent.name == "actors"
             else ""
         )
-        payload["locator"] = session_plugin._native_surface_locator(
+        payload["locator"] = session_charter._native_surface_locator(
             "todo", actor_name=actor_scope
         )
-        payload["follow_command"] = session_plugin._native_surface_follow_command(
+        payload["follow_command"] = session_charter._native_surface_follow_command(
             "todo",
             actor_name=actor_scope,
         )
@@ -306,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"- {item['id']} [{mark}] {item['section']} :: {item['text']}")
         return 0
     if action == "append":
-        payload = session_plugin._read_text_source(
+        payload = session_charter._read_text_source(
             session_root=work_dir,
             inline=(args.value[0] if args.value else None),
             from_file=args.from_file,
@@ -316,11 +320,11 @@ def main(argv: list[str] | None = None) -> int:
         create_todo_item(
             work_dir,
             section="Captured Work",
-            text=session_plugin._normalize_entry_text(
+            text=session_charter._normalize_entry_text(
                 payload, input_name="TODO item text"
             ),
         )
-        session_plugin._record_session_activity(
+        session_activity._record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",
@@ -348,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
                     text=str(item["text"]),
                     checked=bool(item["checked"]),
                 )
-        session_plugin._record_session_activity(
+        session_activity._record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",
@@ -361,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     if action == "check":
         updated_items = _check_todo_items(
             work_dir,
-            item_ids=session_plugin._read_text_items_source(
+            item_ids=session_charter._read_text_items_source(
                 session_root=work_dir,
                 inline_items=list(args.value or []),
                 from_file=args.from_file,
@@ -371,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if len(updated_items) == 1:
             updated = updated_items[0]
-            session_plugin._record_session_activity(
+            session_activity._record_session_activity(
                 work_dir,
                 plugin="todo",
                 surface="todo",
@@ -383,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"checked TODO item: {updated['id']} {updated['section']} :: {updated['text']}"
             )
             return 0
-        session_plugin._record_session_activity(
+        session_activity._record_session_activity(
             work_dir,
             plugin="todo",
             surface="todo",

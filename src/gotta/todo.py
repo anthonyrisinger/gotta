@@ -151,10 +151,10 @@ def _render_section_items(items: list[dict[str, object]]) -> list[str]:
 
 
 def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
-    from gotta.session import (
-        _default_actor_summary,
-        _actor_label,
+    from gotta.session.registry import (
         _actor_bind_examples,
+        _actor_label,
+        _default_actor_summary,
     )
 
     grouped: OrderedDict[str, list[dict[str, object]]] = OrderedDict()

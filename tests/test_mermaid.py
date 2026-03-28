@@ -1,4 +1,4 @@
-from gotta.plugins import session
+from gotta.plugins.session import analyze as session_analyze
 
 
 def test_render_semantic_mermaid_escapes_quotes_in_labels() -> None:
@@ -24,7 +24,7 @@ def test_render_semantic_mermaid_escapes_quotes_in_labels() -> None:
         ],
     }
 
-    mermaid = session._render_semantic_mermaid(payload)
+    mermaid = session_analyze.render_semantic_mermaid(payload)
 
     assert "&quot;Condor Integration&quot;" in mermaid
     assert '\\"Condor Integration\\"' not in mermaid
@@ -61,7 +61,7 @@ def test_render_analysis_mermaid_revision_path_is_label_safe() -> None:
         ],
     }
 
-    mermaid = session._render_analysis_mermaid(payload)
+    mermaid = session_analyze.render_analysis_mermaid(payload)
 
     assert "-->|revision:/tmp/gotta-session-demo/OOPS.md|" in mermaid
     assert "-. revision:/tmp/gotta-session-demo/OOPS.md .->" not in mermaid
@@ -97,7 +97,7 @@ def test_render_analysis_mermaid_uses_real_newlines_in_labels() -> None:
         "revisionEdges": [],
     }
 
-    mermaid = session._render_analysis_mermaid(payload)
+    mermaid = session_analyze.render_analysis_mermaid(payload)
 
     assert "\\n" not in mermaid
     assert (

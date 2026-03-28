@@ -72,6 +72,12 @@ done
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+if [ -n "$(find src -type f -name '__init__.py' -print -quit)" ]; then
+  printf '%s\n' 'namespace-package policy violated: __init__.py found under src/' >&2
+  find src -type f -name '__init__.py' -print | sort >&2
+  exit 1
+fi
+
 section "Core Gate"
 run_cmd uv run pytest -q
 run_cmd uv run ruff check src tests

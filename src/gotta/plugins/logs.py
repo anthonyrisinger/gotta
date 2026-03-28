@@ -5,15 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 
-from gotta.actor import require_writer, writer_name, writer_role
+from gotta.actor import require_writer, session_actor, writer_name, writer_role
+from gotta.content import session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.logs import append_log_record, log_records, logs_state_path
-from gotta import session as session_plugin
+from gotta.session import activity as session_activity
+from gotta.session import charter as session_charter
+from gotta.session import registry as session_registry
+from gotta.session import scope as session_scope
 from gotta import topology
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
-    session_plugin.add_target_args(parser)
+    session_charter.add_target_args(parser)
 
 
 def build_parser(command_name: str = "gotta logs") -> argparse.ArgumentParser:
@@ -53,7 +57,7 @@ def build_parser(command_name: str = "gotta logs") -> argparse.ArgumentParser:
 
 
 def session_access_mode(argv: list[str]) -> str:
-    positionals = session_plugin.argv_positionals(
+    positionals = session_charter.argv_positionals(
         argv,
         valued_flags=(
             "--session",
@@ -72,10 +76,10 @@ def _aggregate_logs(
     *,
     actor_name: str | None = None,
 ) -> tuple[list[str], list[dict[str, object]]]:
-    actor_ids = list(session_plugin._target_actor_ids(work_dir, actor_name))
+    actor_ids = list(session_scope._target_actor_ids(work_dir, actor_name))
     records: list[dict[str, object]] = []
     for current_actor in actor_ids:
-        actor_root = session_plugin._actor_session_dir(work_dir, current_actor)
+        actor_root = session_registry._actor_session_dir(work_dir, current_actor)
         for record in log_records(actor_root):
             if (
                 actor_root.resolve().parent.name == "actors"
@@ -88,7 +92,7 @@ def _aggregate_logs(
             payload = dict(record)
             payload.setdefault("actor", current_actor)
             payload.setdefault(
-                "label", session_plugin._actor_label(current_actor, work_dir=work_dir)
+                "label", session_registry._actor_label(current_actor, work_dir=work_dir)
             )
             records.append(payload)
     records = sorted(records, key=lambda item: str(item.get("timestamp") or ""))
@@ -101,7 +105,7 @@ def _is_exact_session_root(work_dir) -> bool:
         resolved.parent.name != "actors"
         and topology.parse_grouped_session_root(resolved) is None
         and topology.parse_shared_session_root(resolved) is None
-        and session_plugin.session_is_initialized(resolved)
+        and session_is_initialized(resolved)
     )
 
 
@@ -119,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         raise
     action = args.action or "show"
     if action == "show":
-        work_dir, scoped_actor = session_plugin._observation_scope(
+        work_dir, scoped_actor = session_scope._observation_scope(
             explicit_session=getattr(args, "session", None),
             explicit_actor=getattr(args, "actor", None),
         )
@@ -136,13 +140,13 @@ def main(argv: list[str] | None = None) -> int:
             limited = (
                 entries[-max(args.limit, 0) :] if max(args.limit, 0) > 0 else entries
             )
-            locator = session_plugin._native_surface_locator(
+            locator = session_charter._native_surface_locator(
                 "logs", actor_name=scoped_actor
             )
             payload = {
                 "state_path": str(logs_state_path(work_dir)),
                 "locator": locator,
-                "follow_command": session_plugin._native_surface_follow_command(
+                "follow_command": session_charter._native_surface_follow_command(
                     "logs",
                     actor_name=scoped_actor,
                 ),
@@ -170,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             if not _is_exact_session_root(work_dir):
                 raise SystemExit(
                     "no actors bound for this session; bind one intentionally with "
-                    + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+                    + session_registry._actor_bind_examples(prefix="gotta actor bind")
                 )
             entries = sorted(
                 log_records(work_dir), key=lambda item: str(item.get("timestamp") or "")
@@ -185,8 +189,10 @@ def main(argv: list[str] | None = None) -> int:
                 "entry_count": len(entries),
                 "entries": limited,
                 "state_path": str(logs_state_path(work_dir)),
-                "locator": session_plugin._native_surface_locator("logs"),
-                "follow_command": session_plugin._native_surface_follow_command("logs"),
+                "locator": session_charter._native_surface_locator("logs"),
+                "follow_command": session_charter._native_surface_follow_command(
+                    "logs"
+                ),
             }
             if args.output == "json":
                 print(json.dumps(payload, indent=2, sort_keys=True))
@@ -213,16 +219,18 @@ def main(argv: list[str] | None = None) -> int:
             "entries": entries,
             "state_paths": {
                 actor: str(
-                    logs_state_path(session_plugin._actor_session_dir(work_dir, actor))
+                    logs_state_path(
+                        session_registry._actor_session_dir(work_dir, actor)
+                    )
                 )
                 for actor in actor_ids
             },
             "locators": {
-                actor: session_plugin._native_surface_locator("logs", actor_name=actor)
+                actor: session_charter._native_surface_locator("logs", actor_name=actor)
                 for actor in actor_ids
             },
             "follow_commands": {
-                actor: session_plugin._native_surface_follow_command(
+                actor: session_charter._native_surface_follow_command(
                     "logs", actor_name=actor
                 )
                 for actor in actor_ids
@@ -244,13 +252,13 @@ def main(argv: list[str] | None = None) -> int:
             for continuation in message_lines[1:]:
                 print(f"  {continuation}")
         return 0
-    work_dir = session_plugin._session_dir(
+    work_dir = session_scope._session_dir(
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
     writer = writer_name()
     actor_branch = work_dir.resolve().parent.name == "actors"
-    target_actor = session_plugin.session_actor(work_dir) if actor_branch else ""
+    target_actor = session_actor(work_dir) if actor_branch else ""
     if target_actor:
         require_writer(
             work_dir,
@@ -260,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     record_actor = writer or ""
     if action == "extend":
-        entries = session_plugin._read_text_items_source(
+        entries = session_charter._read_text_items_source(
             session_root=work_dir,
             inline_items=list(args.value or []),
             from_file=args.from_file,
@@ -270,12 +278,12 @@ def main(argv: list[str] | None = None) -> int:
         for entry in entries:
             append_log_record(
                 work_dir,
-                message=session_plugin._normalize_entry_text(
+                message=session_charter._normalize_entry_text(
                     entry, input_name="log entry text"
                 ),
                 actor=record_actor,
             )
-        session_plugin._record_session_activity(
+        session_activity._record_session_activity(
             work_dir,
             plugin="logs",
             surface="logs",
@@ -286,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"extended logs entries: {len(entries)} item(s)")
         return 0
-    payload = session_plugin._read_text_source(
+    payload = session_charter._read_text_source(
         session_root=work_dir,
         inline=(args.value[0] if args.value else None),
         from_file=args.from_file,
@@ -295,12 +303,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     append_log_record(
         work_dir,
-        message=session_plugin._normalize_entry_text(
+        message=session_charter._normalize_entry_text(
             payload, input_name="log entry text"
         ),
         actor=record_actor,
     )
-    session_plugin._record_session_activity(
+    session_activity._record_session_activity(
         work_dir,
         plugin="logs",
         surface="logs",

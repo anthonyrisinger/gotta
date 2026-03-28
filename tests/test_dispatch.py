@@ -16,7 +16,7 @@ from gotta import invocation
 from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
 from gotta.plugins import read as read_plugin
-from gotta.plugins import session as session_plugin
+from gotta.plugins.session import main as session_plugin
 from gotta.searching import SearchRouteError, resolve_search_route
 
 

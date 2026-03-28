@@ -12,10 +12,11 @@ import pytest
 from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta import content
 from gotta import friction
-from gotta import session as sessionlib
 from gotta.plugins import actor
 from gotta.plugins import oops
-from gotta.plugins import session as session_plugin
+from gotta.plugins.session import main as session_plugin
+from gotta.session import registry as session_registry
+from gotta.session import scope as session_scope
 
 
 @pytest.fixture(autouse=True)
@@ -359,8 +360,8 @@ def test_oops_read_defaults_to_all_bound_actors_and_actor_filters_narrow(
 
     assert actor.main(["bind", "Claude", "Codex", "--session", str(root)]) == 0
     capsys.readouterr()
-    claude = sessionlib._resolve_bound_actor_name(root, "Claude")
-    codex = sessionlib._resolve_bound_actor_name(root, "Codex")
+    claude = session_registry._resolve_bound_actor_name(root, "Claude")
+    codex = session_registry._resolve_bound_actor_name(root, "Codex")
 
     monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
     assert (
@@ -431,9 +432,9 @@ def test_oops_read_on_actor_root_defaults_to_session_wide(
 
     assert actor.main(["bind", "Claude", "Codex", "--session", str(root)]) == 0
     capsys.readouterr()
-    claude = sessionlib._resolve_bound_actor_name(root, "Claude")
-    codex = sessionlib._resolve_bound_actor_name(root, "Codex")
-    actor_root = sessionlib._session_dir(
+    claude = session_registry._resolve_bound_actor_name(root, "Claude")
+    codex = session_registry._resolve_bound_actor_name(root, "Codex")
+    actor_root = session_scope._session_dir(
         explicit_session=str(root), explicit_actor=claude
     )
 
@@ -573,7 +574,7 @@ def test_oops_bare_and_actor_reads_ignore_closed_stdin_without_mutating(
     initialize_session(root)
     assert actor.main(["bind", "Helper", "--session", str(root)]) == 0
     capsys.readouterr()
-    helper = sessionlib._resolve_bound_actor_name(root, "helper")
+    helper = session_registry._resolve_bound_actor_name(root, "helper")
 
     assert oops.main(["append", "root friction", "--session", str(root)]) == 0
     capsys.readouterr()
@@ -587,7 +588,7 @@ def test_oops_bare_and_actor_reads_ignore_closed_stdin_without_mutating(
     capsys.readouterr()
 
     root_before = (root / "state" / "oops.jsonl").read_text(encoding="utf-8")
-    actor_root = sessionlib._session_dir(
+    actor_root = session_scope._session_dir(
         explicit_session=str(root), explicit_actor=helper
     )
     actor_before = (actor_root / "state" / "oops.jsonl").read_text(encoding="utf-8")
@@ -675,7 +676,7 @@ def test_foreign_writer_cannot_append_actor_oops(
 
     assert actor.main(["bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
-    claude = sessionlib._resolve_bound_actor_name(root, "Claude")
+    claude = session_registry._resolve_bound_actor_name(root, "Claude")
     monkeypatch.setenv(ACTOR_SPEAKER_ENV, "foreign-123")
 
     with pytest.raises(SystemExit) as excinfo:
@@ -704,7 +705,7 @@ def test_unbound_shell_cannot_append_actor_oops(
     initialize_session(root)
     assert actor.main(["bind", "Claude", "--session", str(root)]) == 0
     capsys.readouterr()
-    claude = sessionlib._resolve_bound_actor_name(root, "claude")
+    claude = session_registry._resolve_bound_actor_name(root, "claude")
     monkeypatch.delenv(ACTOR_SPEAKER_ENV, raising=False)
     monkeypatch.delenv(content.ACTOR_ID_ENV, raising=False)
     monkeypatch.delenv(content.SESSION_ACTOR_ENV, raising=False)
@@ -722,7 +723,7 @@ def test_unbound_shell_cannot_append_actor_oops(
         )
 
     assert "bind and launch a sibling actor" in str(excinfo.value)
-    actor_root = sessionlib._session_dir(
+    actor_root = session_scope._session_dir(
         explicit_session=str(root), explicit_actor=claude
     )
     assert friction.oops_records(actor_root) == []
@@ -735,8 +736,8 @@ def test_peer_actor_oops_preserves_peer_author(
     initialize_session(root)
     assert actor.main(["bind", "Claude", "Codex", "--session", str(root)]) == 0
     capsys.readouterr()
-    claude = sessionlib._resolve_bound_actor_name(root, "claude")
-    codex = sessionlib._resolve_bound_actor_name(root, "codex")
+    claude = session_registry._resolve_bound_actor_name(root, "claude")
+    codex = session_registry._resolve_bound_actor_name(root, "codex")
     monkeypatch.setenv(ACTOR_SPEAKER_ENV, codex)
 
     assert (
@@ -749,7 +750,7 @@ def test_peer_actor_oops_preserves_peer_author(
     )
     capsys.readouterr()
 
-    actor_root = sessionlib._session_dir(
+    actor_root = session_scope._session_dir(
         explicit_session=str(root), explicit_actor=claude
     )
     assert friction.oops_records(actor_root)[-1]["actor"] == codex

@@ -25,7 +25,8 @@ from gotta.content import (
     write_text_atomic,
     write_session_state,
 )
-from gotta import session as session_plugin
+from gotta.session import bootstrap as session_bootstrap
+from gotta.session import registry as session_registry
 from gotta import topology
 
 
@@ -75,7 +76,7 @@ def _update_session_metadata(session_dir: Path, *, session_id: str, actor: str) 
         actor,
         {
             "label": actor,
-            "model": session_plugin.ACTOR_DEFAULT_MODEL,
+            "model": session_registry.ACTOR_DEFAULT_MODEL,
             "resume_uuid": "",
             "template": "",
         },
@@ -100,7 +101,7 @@ def ensure_actor_session(
         resolved.parent.name == "actors"
         or topology.parse_grouped_session_root(resolved) is not None
     )
-    session_group_dir = session_plugin._group_session_root(resolved)
+    session_group_dir = session_registry._group_session_root(resolved)
     content_dir = session_group_dir / "content"
     ensure_private_dir(session_group_dir)
     ensure_private_dir(content_dir)
@@ -135,7 +136,7 @@ def ensure_actor_session(
         )
     created = not session_surface_initialized(dirs.session_dir)
     if created:
-        session_plugin.scaffold_session(dirs.session_dir)
+        session_bootstrap.scaffold_session(dirs.session_dir)
     return dirs.session_dir.resolve(), created
 
 
@@ -188,7 +189,7 @@ def _resolved_payload(root: Path) -> dict[str, str]:
     return {
         "sessionRoot": str(resolved),
         "sessionId": session_id(resolved),
-        "sessionDir": str(session_plugin._group_session_root(resolved)),
+        "sessionDir": str(session_registry._group_session_root(resolved)),
         "actor": session_actor_scope(resolved),
         "content": str(state.get(CONTENT_ENV) or (resolved / "content")),
     }

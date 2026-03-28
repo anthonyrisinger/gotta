@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from gotta.actor import require_writer, writer_name, writer_role
+from gotta.actor import require_writer, session_actor, writer_name, writer_role
 from gotta.content import (
     ContentError,
     CommonOptions,
@@ -17,7 +17,6 @@ from gotta.content import (
     stdin_has_meaningful_text,
 )
 from gotta.helptext import format_long_help, is_long_help_request
-from gotta import session as session_plugin
 from gotta import topology
 from gotta.friction import (
     append_oops_record,
@@ -26,6 +25,9 @@ from gotta.friction import (
     oops_records,
     oops_summary,
 )
+from gotta.session import charter as session_charter
+from gotta.session import registry as session_registry
+from gotta.session import scope as session_scope
 
 OOPS_ACTIONS = {"show", "append", "extend"}
 OOPS_LEGACY_READ_ACTIONS = {"list", "summary"}
@@ -182,7 +184,7 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
     )
     parser.add_argument("action", nargs="?")
     parser.add_argument("value", nargs="*")
-    session_plugin.add_target_args(parser)
+    session_charter.add_target_args(parser)
     parser.add_argument(
         "--from-file",
         help="read friction text from a UTF-8 file instead of inline text; use '-' for stdin",
@@ -219,7 +221,7 @@ def build_parser(command_name: str = "gotta oops") -> argparse.ArgumentParser:
 
 
 def session_access_mode(argv: list[str]) -> str:
-    positionals = session_plugin.argv_positionals(
+    positionals = session_charter.argv_positionals(
         argv,
         valued_flags=(
             "--session",
@@ -265,10 +267,10 @@ def _aggregate_oops_records(
     kind: str = "",
     severity: str = "",
 ) -> tuple[list[str], list[dict[str, object]]]:
-    actor_ids = list(session_plugin._target_actor_ids(work_dir, actor_name))
+    actor_ids = list(session_scope._target_actor_ids(work_dir, actor_name))
     records: list[dict[str, object]] = []
     for current_actor in actor_ids:
-        actor_root = session_plugin._actor_session_dir(work_dir, current_actor)
+        actor_root = session_registry._actor_session_dir(work_dir, current_actor)
         for record in filtered_oops_records(
             oops_records(actor_root),
             surface=surface,
@@ -287,7 +289,7 @@ def _aggregate_oops_records(
             payload = dict(record)
             payload.setdefault("actor", current_actor)
             payload.setdefault(
-                "label", session_plugin._actor_label(current_actor, work_dir=work_dir)
+                "label", session_registry._actor_label(current_actor, work_dir=work_dir)
             )
             records.append(payload)
     records = sorted(
@@ -346,27 +348,27 @@ def _read_payload(
     }
     if explicit_actor or scoped_actor:
         payload["state_path"] = str(oops_log_path(session_dir))
-        payload["locator"] = session_plugin._native_surface_locator(
+        payload["locator"] = session_charter._native_surface_locator(
             "oops",
-            actor_name=scoped_actor or session_plugin.session_actor(session_dir),
+            actor_name=scoped_actor or session_actor(session_dir),
         )
-        payload["follow_command"] = session_plugin._native_surface_follow_command(
+        payload["follow_command"] = session_charter._native_surface_follow_command(
             "oops",
-            actor_name=scoped_actor or session_plugin.session_actor(session_dir),
+            actor_name=scoped_actor or session_actor(session_dir),
         )
     else:
         payload["state_paths"] = {
             actor: str(
-                oops_log_path(session_plugin._actor_session_dir(session_dir, actor))
+                oops_log_path(session_registry._actor_session_dir(session_dir, actor))
             )
             for actor in actor_ids
         }
         payload["locators"] = {
-            actor: session_plugin._native_surface_locator("oops", actor_name=actor)
+            actor: session_charter._native_surface_locator("oops", actor_name=actor)
             for actor in actor_ids
         }
         payload["follow_commands"] = {
-            actor: session_plugin._native_surface_follow_command(
+            actor: session_charter._native_surface_follow_command(
                 "oops", actor_name=actor
             )
             for actor in actor_ids
@@ -380,7 +382,7 @@ def _is_exact_session_root(work_dir: Path) -> bool:
         resolved.parent.name != "actors"
         and topology.parse_grouped_session_root(resolved) is None
         and topology.parse_shared_session_root(resolved) is None
-        and session_plugin.session_is_initialized(resolved)
+        and session_is_initialized(resolved)
     )
 
 
@@ -414,13 +416,13 @@ def _resolved_action(args: argparse.Namespace) -> tuple[str, list[str]]:
 def cmd_oops(args: argparse.Namespace) -> int:
     action, values = _resolved_action(args)
     if action == "append":
-        session_dir = session_plugin._session_dir(
+        session_dir = session_scope._session_dir(
             explicit_session=getattr(args, "session", None),
             explicit_actor=getattr(args, "actor", None),
         )
         writer = writer_name()
         actor_branch = session_dir.resolve().parent.name == "actors"
-        target_actor = session_plugin.session_actor(session_dir) if actor_branch else ""
+        target_actor = session_actor(session_dir) if actor_branch else ""
         if target_actor:
             require_writer(
                 session_dir,
@@ -451,13 +453,13 @@ def cmd_oops(args: argparse.Namespace) -> int:
         print("appended oops entry")
         return 0
     if action == "extend":
-        session_dir = session_plugin._session_dir(
+        session_dir = session_scope._session_dir(
             explicit_session=getattr(args, "session", None),
             explicit_actor=getattr(args, "actor", None),
         )
         writer = writer_name()
         actor_branch = session_dir.resolve().parent.name == "actors"
-        target_actor = session_plugin.session_actor(session_dir) if actor_branch else ""
+        target_actor = session_actor(session_dir) if actor_branch else ""
         if target_actor:
             require_writer(
                 session_dir,
@@ -489,7 +491,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
         print(f"extended oops entries: {len(entries)} item(s)")
         return 0
 
-    session_dir, scoped_actor = session_plugin._observation_scope(
+    session_dir, scoped_actor = session_scope._observation_scope(
         explicit_session=getattr(args, "session", None),
         explicit_actor=getattr(args, "actor", None),
     )
@@ -523,7 +525,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
             if not _is_exact_session_root(session_dir):
                 raise SystemExit(
                     "no actors bound for this session; bind one intentionally with "
-                    + session_plugin._actor_bind_examples(prefix="gotta actor bind")
+                    + session_registry._actor_bind_examples(prefix="gotta actor bind")
                 )
             records = filtered_oops_records(
                 oops_records(session_dir),
@@ -539,8 +541,10 @@ def cmd_oops(args: argparse.Namespace) -> int:
                 "shown_count": len(_limited_records(records, limit=args.limit)),
                 "entries": _limited_records(records, limit=args.limit),
                 "state_path": str(oops_log_path(session_dir)),
-                "locator": session_plugin._native_surface_locator("oops"),
-                "follow_command": session_plugin._native_surface_follow_command("oops"),
+                "locator": session_charter._native_surface_locator("oops"),
+                "follow_command": session_charter._native_surface_follow_command(
+                    "oops"
+                ),
                 **oops_summary(records),
             }
             if args.output == "json":

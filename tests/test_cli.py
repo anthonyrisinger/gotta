@@ -12,10 +12,11 @@ from gotta import builtin
 from gotta import content
 from gotta import main as cli
 from gotta.notes import append_actor_note
-from gotta import session as sessionlib
 from gotta.capture import Capture
 from gotta.plugins import github
 from gotta.plugins import jira
+from gotta.session import bootstrap as session_bootstrap
+from gotta.session import registry as session_registry
 
 
 def _last_stderr_json(stderr: str) -> dict[str, object]:
@@ -37,7 +38,7 @@ def _grouped_root(
 
 
 def _actor_id(shared_root: Path, actor_ref: str) -> str:
-    return sessionlib._resolve_bound_actor_name(shared_root, actor_ref)
+    return session_registry._resolve_bound_actor_name(shared_root, actor_ref)
 
 
 def test_main_rejects_unknown_plugin_without_creating_session(
@@ -532,7 +533,7 @@ def test_main_session_analyze_emits_no_side_effect_receipt(
     dirs = content.resolve_dirs(
         content.CommonOptions(session_dir=str(root)), create=True
     )
-    sessionlib.scaffold_session(root)
+    session_bootstrap.scaffold_session(root)
     content.materialize_bytes(
         b"# Example\n\nhello world\n",
         dirs=dirs,
@@ -809,7 +810,7 @@ def test_main_exact_root_explicit_actor_targets_local_actor_surface(
     assert cli.main(["want", "--session", str(root), "--actor", "Claude"]) == 0
     output = capsys.readouterr().out
 
-    claude = sessionlib._resolve_bound_actor_name(root, "Claude")
+    claude = session_registry._resolve_bound_actor_name(root, "Claude")
     assert "Actor Want Placeholder" in output
     assert f"gotta want --actor {claude} --stdin" in output
     assert (root / "actors" / claude).is_dir()

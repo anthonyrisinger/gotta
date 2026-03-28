@@ -5,6 +5,11 @@ set -eu
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+[ -z "$(find src -type f -name '__init__.py' -print -quit)" ] || {
+  printf '%s\n' 'namespace-package policy violated: __init__.py found under src/' >&2
+  find src -type f -name '__init__.py' -print | sort >&2
+  exit 1
+}
 staged_python="$(mktemp)"
 partial_python="$(mktemp)"
 cleanup() {

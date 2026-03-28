@@ -430,9 +430,11 @@ def session_plugin() -> PluginSpec:
     return PluginSpec(
         name="session",
         description="inspect the active session-rooted content context",
-        runner=_runner("gotta.plugins.session"),
+        runner=_runner("gotta.plugins.session.main"),
         should_materialize=lambda argv: False,
-        session_access=_module_attr("gotta.plugins.session", "session_access_mode"),
+        session_access=_module_attr(
+            "gotta.plugins.session.parse", "session_access_mode"
+        ),
     )
 
 

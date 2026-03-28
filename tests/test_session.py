@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from gotta.actors import ACTOR_CALLEE_ENV, ACTOR_SPEAKER_ENV
+from gotta.compat import UTC, datetime
 from gotta import content, dispatch
 from gotta.friction import oops_records
 from gotta import leads
@@ -22,13 +23,19 @@ from gotta.notes import (
     append_actor_note,
     render_actor_notes_markdown,
 )
-from gotta import session as sessionlib
+from gotta.session import bootstrap as session_bootstrap
+from gotta.session import charter as session_charter
+from gotta.session import registry as session_registry
+from gotta.session import status as session_status
 from gotta import todo as session_todo
 from gotta.plugins import goal
 from gotta.plugins import logs
 from gotta.plugins import notes
 from gotta.plugins import actor
-from gotta.plugins import session
+from gotta.plugins.session import analyze as session_analyze
+from gotta.plugins.session import graph as session_graph
+from gotta.plugins.session import main as session_main
+from gotta.plugins.session import parse as session_parse
 from gotta.plugins import want
 
 
@@ -63,7 +70,7 @@ def initialize_session(root: Path) -> content.ResolvedDirs:
 
 
 def _init_session(root: Path, capsys) -> None:
-    assert session.main(["init", "--session", str(root)]) == 0
+    assert session_main.main(["init", "--session", str(root)]) == 0
     assert capsys.readouterr().out.strip() == str(root.resolve())
 
 
@@ -73,11 +80,11 @@ def _bind_actors(root: Path, capsys, *actors: str) -> str:
 
 
 def _actor_id(root: Path, actor_ref: str) -> str:
-    return sessionlib._resolve_bound_actor_name(root, actor_ref)
+    return session_registry._resolve_bound_actor_name(root, actor_ref)
 
 
 def _actor_root(root: Path, actor_ref: str) -> Path:
-    return sessionlib._actor_session_dir(root, _actor_id(root, actor_ref))
+    return session_registry._actor_session_dir(root, _actor_id(root, actor_ref))
 
 
 def _session_follow(session_root: Path, target: str) -> str:
@@ -96,7 +103,7 @@ def test_session_commands_require_bootstrap(
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(SystemExit) as excinfo:
-        session.main([command])
+        session_main.main([command])
 
     assert excinfo.value.code == 2
     assert "start or bind a session first" in capsys.readouterr().err
@@ -108,7 +115,7 @@ def test_session_init_bootstraps_state_env(
 ) -> None:
     root = tmp_path / "session-root"
 
-    assert session.main(["init", "--session", str(root)]) == 0
+    assert session_main.main(["init", "--session", str(root)]) == 0
 
     assert capsys.readouterr().out.strip() == str(root.resolve())
     assert (root / "state" / "env").exists()
@@ -149,7 +156,7 @@ def test_exact_root_scaffolds_local_metadata_content_and_actor_surfaces(
 
     _init_session(root, capsys)
 
-    assert session.main(["show", "--session", str(root), "--output", "json"]) == 0
+    assert session_main.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
     assert payload[content.SESSION_ENV] == str(root.resolve())
@@ -172,7 +179,7 @@ def test_exact_root_scaffolds_local_metadata_content_and_actor_surfaces(
     assert not (shared_root / "actors").exists()
     assert (root / "session.json").is_file()
 
-    assert session.main(["show", "--session", str(root), "--output", "json"]) == 0
+    assert session_main.main(["show", "--session", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload[content.SESSION_ENV] == str(root.resolve())
     assert payload[content.SESSION_ACTOR_ENV] == ""
@@ -202,7 +209,7 @@ def test_exact_root_bind_payload_and_binding_record_stay_actorless(
     _init_session(root, capsys)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
 
-    assert session.main(["bind", str(root), "--output", "json"]) == 0
+    assert session_main.main(["bind", str(root), "--output", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     binding_id = content.session_token("thread-123")
     record = topology.load_binding_record(binding_id)
@@ -285,13 +292,13 @@ def test_want_and_goal_support_explicit_stdin_rewrites(
     _init_session(root, capsys)
 
     monkeypatch.setattr(
-        sessionlib.sys, "stdin", io.StringIO("# Want\n\nStay focused.\n")
+        session_charter.sys, "stdin", io.StringIO("# Want\n\nStay focused.\n")
     )
     assert want.main(["--session", str(root), "--stdin"]) == 0
     capsys.readouterr()
 
     monkeypatch.setattr(
-        sessionlib.sys, "stdin", io.StringIO("# Goal\n\nLand one anchor.\n")
+        session_charter.sys, "stdin", io.StringIO("# Goal\n\nLand one anchor.\n")
     )
     assert goal.main(["--session", str(root), "--stdin"]) == 0
     capsys.readouterr()
@@ -368,10 +375,10 @@ def test_actor_bind_binds_grouped_actor_surfaces_without_launching(
     assert "minimal actor-local canonical state" in output
     assert "actor-local notes/logs/oops surfaces" not in output
     for actor_name in (claude, codex):
-        actor_root = sessionlib._actor_session_dir(root, actor_name)
+        actor_root = session_registry._actor_session_dir(root, actor_name)
         assert actor_root.exists()
         assert (actor_root / "state" / "todo.jsonl").is_file()
-        assert sessionlib._read_actor_state(root, actor_name)["status"] == "bound"
+        assert session_registry._read_actor_state(root, actor_name)["status"] == "bound"
 
 
 def test_actor_launch_blockers_emit_native_actor_charter_commands(
@@ -383,7 +390,7 @@ def test_actor_launch_blockers_emit_native_actor_charter_commands(
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
 
-    blockers = sessionlib._actor_launch_blockers(root, actor_name="claude")
+    blockers = session_status._actor_launch_blockers(root, actor_name="claude")
 
     assert any(
         f"gotta want --actor {claude} --stdin" in blocker for blocker in blockers
@@ -402,14 +409,14 @@ def test_actor_launch_blockers_report_linked_actor_paths(
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
 
-    blockers = sessionlib._actor_launch_blockers(root, actor_name="claude")
+    blockers = session_status._actor_launch_blockers(root, actor_name="claude")
 
     assert any(
-        str(sessionlib._actor_session_dir(root, claude) / "WANT.md") in blocker
+        str(session_registry._actor_session_dir(root, claude) / "WANT.md") in blocker
         for blocker in blockers
     )
     assert any(
-        str(sessionlib._actor_session_dir(root, claude) / "GOAL.md") in blocker
+        str(session_registry._actor_session_dir(root, claude) / "GOAL.md") in blocker
         for blocker in blockers
     )
 
@@ -438,7 +445,7 @@ def test_actor_launch_uses_isolated_copilot_config_dir(
             return None
 
     monkeypatch.setattr(
-        actor.session_plugin,
+        actor.session_status,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -493,7 +500,7 @@ def test_actor_launch_records_immediate_launcher_heartbeat(
             return None
 
     monkeypatch.setattr(
-        actor.session_plugin,
+        actor.session_status,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -513,7 +520,7 @@ def test_actor_launch_records_immediate_launcher_heartbeat(
     records = actor_notes_records(actor_root, claude)
     assert records[-1]["author"] == actor.LAUNCHER_AUTHOR
     assert records[-1]["message"] == actor.LAUNCHER_HEARTBEAT_NOTE
-    payload = sessionlib._actor_status_payload(actor_root, claude)
+    payload = session_status._actor_status_payload(actor_root, claude)
     assert payload["notes_status"] == "present"
     assert payload["voice"] == "setup"
     assert payload["launched_at"]
@@ -547,7 +554,7 @@ def test_actor_launch_records_passive_launcher_provenance(
             return None
 
     monkeypatch.setattr(
-        actor.session_plugin,
+        actor.session_status,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -565,7 +572,7 @@ def test_actor_launch_records_passive_launcher_provenance(
     assert actor.main(["launch", claude, "--session", str(root)]) == 0
     capsys.readouterr()
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
     assert payload["launched_by"] == scout
     assert payload["launched_at"]
 
@@ -613,7 +620,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
             return None
 
     monkeypatch.setattr(
-        actor.session_plugin,
+        actor.session_status,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -629,7 +636,7 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
 
     assert actor.main(["launch", claude, "--session", str(root)]) == 0
     captured = capsys.readouterr()
-    status = sessionlib._actor_status_payload(actor_root, claude)
+    status = session_status._actor_status_payload(actor_root, claude)
     activity = content.activity_events(actor_root)
 
     assert "ordinary stdout" in captured.out
@@ -639,8 +646,8 @@ def test_actor_launch_consumes_feedback_directives_and_updates_actor_state(
     rendered_notes = render_actor_notes_markdown(
         actor_root,
         claude,
-        label=sessionlib._actor_label(claude, work_dir=actor_root),
-        status_payload=sessionlib._actor_status_payload(actor_root, claude),
+        label=session_registry._actor_label(claude, work_dir=actor_root),
+        status_payload=session_status._actor_status_payload(actor_root, claude),
     )
     assert "first durable heartbeat note" in rendered_notes
     assert (
@@ -712,7 +719,7 @@ def test_actor_launch_consumes_invalid_feedback_directives_and_warns(
             return None
 
     monkeypatch.setattr(
-        actor.session_plugin,
+        actor.session_status,
         "_actor_launch_blockers",
         lambda *_args, **_kwargs: [],
     )
@@ -823,7 +830,7 @@ def test_actor_status_discovers_initialized_fingerprint_actors_missing_from_meta
             content.SESSION_ACTOR_ENV: discovered,
         },
     )
-    sessionlib.scaffold_session(actor_root)
+    session_bootstrap.scaffold_session(actor_root)
     (root / "session.json").write_text(
         json.dumps({"session_id": root.name, "members": []}) + "\n",
         encoding="utf-8",
@@ -981,7 +988,7 @@ def test_notes_show_unbound_actor_fails_without_materializing_surface(
         notes.main(["show", "--actor", "claude", "--session", str(root)])
 
     assert "claude is not bound for this session" in str(excinfo.value)
-    assert not sessionlib._actor_session_dir(root, "claude").exists()
+    assert not session_registry._actor_session_dir(root, "claude").exists()
 
 
 def test_actor_status_filters_with_actor_flag(tmp_path: Path, capsys) -> None:
@@ -1093,9 +1100,9 @@ def test_exact_root_charter_surfaces_stay_on_root_without_explicit_actor(
     root_goal.write_text("# Goal\n\nRoot-specific goal.\n", encoding="utf-8")
     root_want = root / "WANT.md"
     root_want.write_text("# Want\n\nRoot-specific want.\n", encoding="utf-8")
-    actor_goal = sessionlib._actor_session_dir(root, claude) / "GOAL.md"
+    actor_goal = session_registry._actor_session_dir(root, claude) / "GOAL.md"
     actor_goal.write_text("# Goal\n\nClaude-specific goal.\n", encoding="utf-8")
-    actor_want = sessionlib._actor_session_dir(root, codex) / "WANT.md"
+    actor_want = session_registry._actor_session_dir(root, codex) / "WANT.md"
     actor_want.write_text("# Want\n\nCodex-specific want.\n", encoding="utf-8")
 
     assert want.main(["--session", str(root)]) == 0
@@ -1124,11 +1131,11 @@ def test_charter_surfaces_on_actor_root_stay_actor_local(
     codex = _actor_id(root, "Codex")
     claude_root = _actor_root(root, "Claude")
 
-    (sessionlib._actor_session_dir(root, claude) / "GOAL.md").write_text(
+    (session_registry._actor_session_dir(root, claude) / "GOAL.md").write_text(
         "# Goal\n\nClaude-specific goal.\n",
         encoding="utf-8",
     )
-    (sessionlib._actor_session_dir(root, codex) / "GOAL.md").write_text(
+    (session_registry._actor_session_dir(root, codex) / "GOAL.md").write_text(
         "# Goal\n\nCodex-specific goal.\n",
         encoding="utf-8",
     )
@@ -1173,7 +1180,8 @@ def test_explicit_shared_session_charters_default_to_session_id_actor(
     assert "Claude sibling goal." not in goal_output
 
     assert (
-        session.main(["show", "--session", str(shared_root), "--output", "json"]) == 0
+        session_main.main(["show", "--session", str(shared_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["GOTTA_SESSION_ACTOR"] == "bacabaa8d03e"
@@ -1195,7 +1203,8 @@ def test_explicit_shared_session_actor_rooted_surfaces_require_actor_when_primar
     assert "pass `--actor <actor>` explicitly" in str(want_exc.value)
 
     assert (
-        session.main(["show", "--session", str(shared_root), "--output", "json"]) == 0
+        session_main.main(["show", "--session", str(shared_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["GOTTA_SESSION_ACTOR"] == ""
@@ -1251,7 +1260,7 @@ def test_actor_complete_stays_pending_while_runtime_is_live_and_survives_heartbe
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, claude, {"status": "active"})
+    session_registry._write_actor_state(root, claude, {"status": "active"})
 
     assert (
         actor.main(
@@ -1267,7 +1276,7 @@ def test_actor_complete_stays_pending_while_runtime_is_live_and_survives_heartbe
         == 0
     )
     capsys.readouterr()
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
     assert payload["status"] == "closing"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "completed"
@@ -1275,7 +1284,7 @@ def test_actor_complete_stays_pending_while_runtime_is_live_and_survives_heartbe
 
     assert actor.main(["heartbeat", claude, "--session", str(root)]) == 0
     capsys.readouterr()
-    heartbeat_payload = sessionlib._actor_status_payload(root, claude)
+    heartbeat_payload = session_status._actor_status_payload(root, claude)
     assert heartbeat_payload["status"] == "closing"
     assert heartbeat_payload["requested_pending"] is True
 
@@ -1288,7 +1297,7 @@ def test_actor_signoff_stays_pending_while_runtime_is_live_and_survives_heartbea
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, claude, {"status": "active"})
+    session_registry._write_actor_state(root, claude, {"status": "active"})
 
     assert (
         actor.main(
@@ -1304,7 +1313,7 @@ def test_actor_signoff_stays_pending_while_runtime_is_live_and_survives_heartbea
         == 0
     )
     capsys.readouterr()
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
     assert payload["status"] == "closing"
     assert payload["requested_pending"] is True
     assert payload["requested_status"] == "signed_off"
@@ -1312,7 +1321,7 @@ def test_actor_signoff_stays_pending_while_runtime_is_live_and_survives_heartbea
 
     assert actor.main(["heartbeat", claude, "--session", str(root)]) == 0
     capsys.readouterr()
-    heartbeat_payload = sessionlib._actor_status_payload(root, claude)
+    heartbeat_payload = session_status._actor_status_payload(root, claude)
     assert heartbeat_payload["status"] == "closing"
     assert heartbeat_payload["requested_pending"] is True
 
@@ -1325,7 +1334,7 @@ def test_actor_runtime_exit_finalizes_pending_signoff_authoritatively(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, claude, {"status": "active"})
+    session_registry._write_actor_state(root, claude, {"status": "active"})
 
     assert (
         actor.main(
@@ -1352,7 +1361,7 @@ def test_actor_runtime_exit_finalizes_pending_signoff_authoritatively(
         == 0
     )
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
     assert payload["status"] == "signed_off"
     assert payload["requested_pending"] is False
     assert payload["signoff_summary"] == "accepted by operator"
@@ -1366,7 +1375,7 @@ def test_actor_status_treats_signoff_timestamp_as_authoritative(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         claude,
         {
@@ -1377,7 +1386,7 @@ def test_actor_status_treats_signoff_timestamp_as_authoritative(
         },
     )
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
 
     assert payload["status"] == "signed_off"
     assert payload["still_running"] is False
@@ -1392,7 +1401,7 @@ def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, claude, {"status": "active"})
+    session_registry._write_actor_state(root, claude, {"status": "active"})
 
     assert (
         actor.main(
@@ -1408,7 +1417,7 @@ def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
         == 0
     )
     output = capsys.readouterr().out
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
 
     assert "authoritative status stays active" in output
     assert payload["status"] == "closing"
@@ -1417,7 +1426,7 @@ def test_actor_fail_stays_pending_while_live_and_notes_render_stop_warning(
     notes_text = render_actor_notes_markdown(
         root,
         claude,
-        label=sessionlib._actor_label(claude, work_dir=root),
+        label=session_registry._actor_label(claude, work_dir=root),
         status_payload=payload,
     )
     assert "Supervisor requested `failed` (operator stopped this run)." in notes_text
@@ -1432,7 +1441,7 @@ def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, claude, {"status": "active"})
+    session_registry._write_actor_state(root, claude, {"status": "active"})
 
     assert (
         actor.main(
@@ -1448,7 +1457,7 @@ def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
         == 0
     )
     output = capsys.readouterr().out
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
 
     assert f"recorded stop request for {claude}" in output
     assert payload["status"] == "closing"
@@ -1459,7 +1468,7 @@ def test_actor_stop_stays_pending_while_live_and_notes_render_graceful_warning(
     notes_text = render_actor_notes_markdown(
         root,
         claude,
-        label=sessionlib._actor_label(claude, work_dir=root),
+        label=session_registry._actor_label(claude, work_dir=root),
         status_payload=payload,
     )
     assert (
@@ -1479,7 +1488,7 @@ def test_notes_projection_skips_supervisor_warning_for_nonfailed_pending_request
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         claude,
         {
@@ -1491,8 +1500,8 @@ def test_notes_projection_skips_supervisor_warning_for_nonfailed_pending_request
     notes_text = render_actor_notes_markdown(
         root,
         claude,
-        label=sessionlib._actor_label(claude, work_dir=root),
-        status_payload=sessionlib._actor_status_payload(root, claude),
+        label=session_registry._actor_label(claude, work_dir=root),
+        status_payload=session_status._actor_status_payload(root, claude),
     )
     assert "Supervisor requested `failed`" not in notes_text
     assert (
@@ -1511,7 +1520,7 @@ def test_actor_bind_canonical_root_has_no_projection_files(
     capsys.readouterr()
 
     assert (
-        sessionlib._actor_status_payload(root, _actor_id(root, "claude"))["status"]
+        session_status._actor_status_payload(root, _actor_id(root, "claude"))["status"]
         == "bound"
     )
 
@@ -1524,7 +1533,7 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         claude,
         {
@@ -1533,7 +1542,7 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
             "signoff_summary": "accepted by operator",
         },
     )
-    events_path = sessionlib._actor_events_path(root, claude)
+    events_path = session_registry._actor_events_path(root, claude)
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
         "\n".join(
@@ -1619,8 +1628,8 @@ def test_actor_status_json_separates_progress_from_lifecycle(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, claude, {"status": "active"})
-    events_path = sessionlib._actor_events_path(root, claude)
+    session_registry._write_actor_state(root, claude, {"status": "active"})
+    events_path = session_registry._actor_events_path(root, claude)
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
         "\n".join(
@@ -1682,7 +1691,7 @@ def test_actor_status_reports_clean_runtime_exit_after_honoring_stop_request(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    events_path = sessionlib._actor_events_path(root, claude)
+    events_path = session_registry._actor_events_path(root, claude)
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
         "\n".join(
@@ -1735,18 +1744,16 @@ def test_actor_status_highlights_missing_heartbeat_note_for_live_actor(
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         claude,
         {
             "status": "active",
-            "started_at": sessionlib.datetime.now(tz=sessionlib.UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
+            "started_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
     assert payload["notes_status"] == "empty"
     assert "brief startup window" in payload["next_step"]
     assert "one heartbeat interval" in payload["next_step"]
@@ -1762,14 +1769,12 @@ def test_actor_status_ignores_actor_log_for_voice_before_note(
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
     actor_root = _actor_root(root, "claude")
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         claude,
         {
             "status": "active",
-            "started_at": sessionlib.datetime.now(tz=sessionlib.UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
+            "started_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
     append_log_record(
@@ -1779,7 +1784,7 @@ def test_actor_status_ignores_actor_log_for_voice_before_note(
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
 
     assert payload["notes_status"] == "empty"
     assert payload["voice"] == "missing"
@@ -1797,13 +1802,13 @@ def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progres
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Claude")
     claude = _actor_id(root, "claude")
-    stale_started = (
-        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=120)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    stale_heartbeat = (
-        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=5)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    sessionlib._write_actor_state(
+    stale_started = (datetime.now(tz=UTC) - timedelta(seconds=120)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    stale_heartbeat = (datetime.now(tz=UTC) - timedelta(seconds=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    session_registry._write_actor_state(
         root,
         claude,
         {
@@ -1821,7 +1826,7 @@ def test_actor_status_marks_live_narration_only_actor_as_low_signal_when_progres
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
 
     assert payload["still_running"] is True
     assert payload["progress_kind"] == "narration"
@@ -1841,14 +1846,12 @@ def test_actor_status_reports_pulse_after_actor_evidence_before_note(
     _bind_actors(root, capsys, "Claude")
     dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         actor_name,
         {
             "status": "active",
-            "started_at": sessionlib.datetime.now(tz=sessionlib.UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
+            "started_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
     content.materialize_bytes(
@@ -1865,7 +1868,7 @@ def test_actor_status_reports_pulse_after_actor_evidence_before_note(
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = sessionlib._actor_status_payload(root, actor_name)
+    payload = session_status._actor_status_payload(root, actor_name)
 
     assert payload["status"] == "producing_evidence"
     assert payload["notes_status"] == "empty"
@@ -1883,7 +1886,7 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
     _bind_actors(root, capsys, "Claude")
     dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, actor_name, {"status": "pending"})
+    session_registry._write_actor_state(root, actor_name, {"status": "pending"})
     content.materialize_bytes(
         b"# Evidence\n\nSomething landed.\n",
         dirs=dirs,
@@ -1898,7 +1901,7 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = sessionlib._actor_status_payload(root, actor_name)
+    payload = session_status._actor_status_payload(root, actor_name)
     assert payload["status"] == "pending"
     assert payload["artifact_count"] == 1
     assert payload["notes_status"] == "empty"
@@ -1915,7 +1918,7 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
     _bind_actors(root, capsys, "Claude")
     dirs = content.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
-    sessionlib._write_actor_state(root, actor_name, {"status": "pending"})
+    session_registry._write_actor_state(root, actor_name, {"status": "pending"})
     notes.append_actor_note(
         root,
         actor_name,
@@ -1937,7 +1940,7 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
         timestamp="2026-03-21T00:00:01Z",
     )
 
-    payload = sessionlib._actor_status_payload(root, actor_name)
+    payload = session_status._actor_status_payload(root, actor_name)
     assert payload["status"] == "pending"
     assert payload["notes_status"] == "present"
     assert payload["artifact_count"] == 1
@@ -1958,7 +1961,7 @@ def test_foreign_notes_show_records_checks_and_append_resets_feedback(
     assert notes.main(["--session", str(root), "--actor", scout]) == 0
     capsys.readouterr()
 
-    status = sessionlib._actor_status_payload(root, scout)
+    status = session_status._actor_status_payload(root, scout)
     assert status["note_checks_since_update"] == 1
     assert status["last_note_check_at"]
     assert status["last_note_check_by"] == "operator-1"
@@ -1972,7 +1975,7 @@ def test_foreign_notes_show_records_checks_and_append_resets_feedback(
     )
     capsys.readouterr()
 
-    reset_status = sessionlib._actor_status_payload(root, scout)
+    reset_status = session_status._actor_status_payload(root, scout)
     assert reset_status["note_checks_since_update"] == 0
     assert reset_status["last_note_check_at"] == ""
     assert reset_status["last_note_check_by"] == ""
@@ -1993,7 +1996,7 @@ def test_explicit_actor_notes_show_counts_cold_start_supervisor_read(
     assert notes.main(["--session", str(root), "--actor", scout]) == 0
     capsys.readouterr()
 
-    status = sessionlib._actor_status_payload(root, scout)
+    status = session_status._actor_status_payload(root, scout)
     assert status["note_checks_since_update"] == 1
     assert status["last_note_check_at"]
     assert status["last_note_check_by"]
@@ -2013,7 +2016,7 @@ def test_notes_show_does_not_count_self_reads(
     assert notes.main(["--session", str(root), "--actor", scout]) == 0
     capsys.readouterr()
 
-    status = sessionlib._actor_status_payload(root, scout)
+    status = session_status._actor_status_payload(root, scout)
     assert status["note_checks_since_update"] == 0
     assert status["last_note_check_at"] == ""
     assert status["last_note_check_by"] == ""
@@ -2035,10 +2038,12 @@ def test_session_wide_notes_show_does_not_increment_actor_note_check_counters(
 
     assert payload["actor_count"] == 2
     assert (
-        sessionlib._actor_status_payload(root, scout)["note_checks_since_update"] == 0
+        session_status._actor_status_payload(root, scout)["note_checks_since_update"]
+        == 0
     )
     assert (
-        sessionlib._actor_status_payload(root, beacon)["note_checks_since_update"] == 0
+        session_status._actor_status_payload(root, beacon)["note_checks_since_update"]
+        == 0
     )
 
 
@@ -2050,12 +2055,12 @@ def test_actor_status_preserves_note_read_pulse_when_low_signal_progress_is_acti
     _init_session(root, capsys)
     _bind_actors(root, capsys, "Scout")
     scout = _actor_id(root, "scout")
-    stale_started = (
-        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=120)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    stale_heartbeat = (
-        sessionlib.datetime.now(tz=sessionlib.UTC) - timedelta(seconds=5)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale_started = (datetime.now(tz=UTC) - timedelta(seconds=120)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    stale_heartbeat = (datetime.now(tz=UTC) - timedelta(seconds=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     append_actor_note(
         root,
         scout,
@@ -2063,7 +2068,7 @@ def test_actor_status_preserves_note_read_pulse_when_low_signal_progress_is_acti
         author=scout,
         timestamp="2026-03-21T00:00:00Z",
     )
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         scout,
         {
@@ -2077,7 +2082,7 @@ def test_actor_status_preserves_note_read_pulse_when_low_signal_progress_is_acti
         },
     )
 
-    payload = sessionlib._actor_status_payload(root, scout)
+    payload = session_status._actor_status_payload(root, scout)
 
     assert (
         "Supervisor has checked this actor's notes 2 times since the last note."
@@ -2098,8 +2103,8 @@ def test_actor_notes_projection_describes_notes_as_canonical_narration(
     rendered = render_actor_notes_markdown(
         root,
         claude,
-        label=sessionlib._actor_label(claude, work_dir=root),
-        status_payload=sessionlib._actor_status_payload(root, claude),
+        label=session_registry._actor_label(claude, work_dir=root),
+        status_payload=session_status._actor_status_payload(root, claude),
     )
 
     assert "canonical actor-authored narration surface" in rendered
@@ -2128,7 +2133,7 @@ def test_actor_recent_activity_carries_cross_actor_author(
     _bind_actors(root, capsys, "Claude", "Codex")
     claude = _actor_id(root, "claude")
     codex = _actor_id(root, "codex")
-    events_path = sessionlib._actor_events_path(root, claude)
+    events_path = session_registry._actor_events_path(root, claude)
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
         json.dumps(
@@ -2144,7 +2149,7 @@ def test_actor_recent_activity_carries_cross_actor_author(
         encoding="utf-8",
     )
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
     assert payload["recent_activity"][0]["author"] == codex
     assert payload["recent_activity"][0]["summary"] == f"{codex}: Wave 2 landed"
     assert payload["recent_lifecycle"] == []
@@ -2165,7 +2170,7 @@ def test_actor_status_ignores_foreign_note_for_voice(tmp_path: Path, capsys) -> 
         timestamp="2026-03-21T00:00:00Z",
     )
 
-    payload = sessionlib._actor_status_payload(root, claude)
+    payload = session_status._actor_status_payload(root, claude)
 
     assert payload["notes_status"] == "empty"
     assert payload["voice"] == "missing"
@@ -2349,7 +2354,7 @@ def test_session_show_works_from_initialized_session_root(
 
     monkeypatch.chdir(local_root)
 
-    assert session.main(["show"]) == 0
+    assert session_main.main(["show"]) == 0
     assert capsys.readouterr().out.strip() == str(local_root.resolve())
 
 
@@ -2371,7 +2376,7 @@ def test_session_commands_accept_explicit_root_without_ambient_activation(
 
     monkeypatch.chdir(tmp_path)
 
-    assert session.main([argv[0], "--session", str(local_root), *argv[1:]]) == 0
+    assert session_main.main([argv[0], "--session", str(local_root), *argv[1:]]) == 0
 
     output = capsys.readouterr().out
     assert output.strip()
@@ -2388,7 +2393,7 @@ def test_session_show_reports_local_state_over_default(
     monkeypatch.setattr(content, "DEFAULT_SESSION_ROOT", default_root)
     monkeypatch.chdir(local_root)
 
-    assert session.main([]) == 0
+    assert session_main.main([]) == 0
     assert capsys.readouterr().out.strip() == str(local_root.resolve())
 
 
@@ -2411,7 +2416,8 @@ def test_session_doctor_reports_live_codex_runtime_and_matching_binding(
     )
 
     assert (
-        session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["doctor", "--session", str(local_root), "--output", "json"])
+        == 0
     )
 
     payload = json.loads(capsys.readouterr().out)
@@ -2442,7 +2448,8 @@ def test_session_doctor_reports_historical_binding_when_runtime_points_elsewhere
     )
 
     assert (
-        session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["doctor", "--session", str(local_root), "--output", "json"])
+        == 0
     )
 
     payload = json.loads(capsys.readouterr().out)
@@ -2467,7 +2474,8 @@ def test_session_doctor_ignores_invalid_binding_record_instead_of_crashing(
     topology.binding_record_path_for(binding_id).write_text("{bad", encoding="utf-8")
 
     assert (
-        session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["doctor", "--session", str(local_root), "--output", "json"])
+        == 0
     )
 
     payload = json.loads(capsys.readouterr().out)
@@ -2497,7 +2505,8 @@ def test_session_doctor_matches_durable_bindings_at_shared_session_boundary(
     )
 
     assert (
-        session.main(["doctor", "--session", str(claude_root), "--output", "json"]) == 0
+        session_main.main(["doctor", "--session", str(claude_root), "--output", "json"])
+        == 0
     )
 
     payload = json.loads(capsys.readouterr().out)
@@ -2526,7 +2535,8 @@ def test_session_doctor_does_not_merge_unrelated_local_sessions_with_same_name(
     )
 
     assert (
-        session.main(["doctor", "--session", str(right_root), "--output", "json"]) == 0
+        session_main.main(["doctor", "--session", str(right_root), "--output", "json"])
+        == 0
     )
 
     payload = json.loads(capsys.readouterr().out)
@@ -2554,7 +2564,8 @@ def test_session_doctor_ignores_binding_with_missing_root_target(
     topology.binding_root_path_for(binding_id).unlink()
 
     assert (
-        session.main(["doctor", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["doctor", "--session", str(local_root), "--output", "json"])
+        == 0
     )
 
     payload = json.loads(capsys.readouterr().out)
@@ -2576,7 +2587,7 @@ def test_actor_launch_rejects_live_closing_actor(tmp_path: Path, capsys) -> None
         _actor_root(root, claude) / "GOAL.md",
     ):
         path.write_text("# Ready\n\nintentional\n", encoding="utf-8")
-    sessionlib._write_actor_state(
+    session_registry._write_actor_state(
         root,
         claude,
         {
@@ -2623,7 +2634,7 @@ def test_session_analyze_writes_summary_and_graph(
     )
     monkeypatch.chdir(local_root)
 
-    assert session.main(["analyze", "--session", str(local_root)]) == 0
+    assert session_main.main(["analyze", "--session", str(local_root)]) == 0
     captured = capsys.readouterr()
     assert captured.out.startswith("session:")
     assert captured.err == ""
@@ -2658,7 +2669,8 @@ def test_session_analyze_output_json_returns_combined_payload_by_default(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["analyze", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["analyze", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -2674,7 +2686,7 @@ def test_session_analyze_output_mermaid_requires_explicit_mode(
     capsys,
 ) -> None:
     with pytest.raises(SystemExit) as excinfo:
-        session.main(["analyze", "--output", "mermaid"])
+        session_main.main(["analyze", "--output", "mermaid"])
 
     assert excinfo.value.code == 2
     assert (
@@ -2704,7 +2716,7 @@ def test_session_analyze_output_mermaid_prints_raw_lineage_mermaid(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -2743,7 +2755,7 @@ def test_session_analyze_output_markdown_bundles_lineage_and_semantic_for_all_mo
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -2784,7 +2796,7 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -2809,12 +2821,12 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
 
 def test_session_analyze_build_parser_rejects_stdout_flag() -> None:
     with pytest.raises(SystemExit):
-        session.build_parser().parse_args(["analyze", "--stdout"])
+        session_parse.build_parser().parse_args(["analyze", "--stdout"])
 
 
 def test_session_analyze_build_parser_rejects_receipt_flag() -> None:
     with pytest.raises(SystemExit):
-        session.build_parser().parse_args(["analyze", "--receipt"])
+        session_parse.build_parser().parse_args(["analyze", "--receipt"])
 
 
 def test_session_graph_prefers_canonical_locator_for_binding(tmp_path: Path) -> None:
@@ -2847,7 +2859,7 @@ def test_session_graph_prefers_canonical_locator_for_binding(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    payload = session._graph_payload(dirs)
+    payload = session_graph.graph_payload(dirs)
 
     assert payload["sourceCount"] == 1
     assert payload["contentCount"] == 1
@@ -2888,19 +2900,20 @@ def test_session_empty_graph_and_analyze_make_empty_state_explicit(
     initialize_session(local_root)
     monkeypatch.chdir(tmp_path)
 
-    assert session.main(["graph", "--session", str(local_root)]) == 0
+    assert session_main.main(["graph", "--session", str(local_root)]) == 0
     graph_output = capsys.readouterr().out
     assert "No materialized artifacts yet." in graph_output
     assert "gotta read &lt;locator&gt;" in graph_output
 
     assert (
-        session.main(["graph", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["graph", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     graph_payload = json.loads(capsys.readouterr().out)
     assert graph_payload["empty"] is True
     assert graph_payload["nextStep"].startswith("No materialized artifacts yet.")
 
-    assert session.main(["analyze", "--session", str(local_root)]) == 0
+    assert session_main.main(["analyze", "--session", str(local_root)]) == 0
     analyze_output = capsys.readouterr().out
     assert "No materialized artifacts yet." in analyze_output
     assert "gotta read <locator>" in analyze_output
@@ -2928,7 +2941,8 @@ def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
     monkeypatch.chdir(tmp_path)
 
     assert (
-        session.main(["graph", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["graph", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     graph_payload = json.loads(capsys.readouterr().out)
     assert graph_payload["empty"] is False
@@ -2937,7 +2951,7 @@ def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
     assert graph_payload["nextStep"].startswith("Discovery artifacts are present")
     assert graph_payload["content"][0]["artifactKind"] == "discovery"
 
-    assert session.main(["analyze", "--session", str(local_root)]) == 0
+    assert session_main.main(["analyze", "--session", str(local_root)]) == 0
     analyze_output = capsys.readouterr().out
     assert (
         "Discovery artifacts are present, but no evidence artifacts exist yet."
@@ -2984,7 +2998,7 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
     monkeypatch.chdir(tmp_path)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "graph",
                 "--session",
@@ -3005,7 +3019,7 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
     assert payload["sources"][0]["locator"] == "jira:GEN-1"
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "graph",
                 "--session",
@@ -3074,14 +3088,14 @@ def test_session_manifest_and_timeline_text_surface_hotspots_first(
     )
     monkeypatch.chdir(tmp_path)
 
-    assert session.main(["manifest", "--session", str(local_root)]) == 0
+    assert session_main.main(["manifest", "--session", str(local_root)]) == 0
     manifest_output = capsys.readouterr().out
     assert "top plugins:" in manifest_output
     assert "jira: 2" in manifest_output
     assert "top actors:" in manifest_output
     assert "generic-actor: 2" in manifest_output
 
-    assert session.main(["timeline", "--session", str(local_root)]) == 0
+    assert session_main.main(["timeline", "--session", str(local_root)]) == 0
     timeline_output = capsys.readouterr().out
     assert "top plugins:" in timeline_output
     assert "jira: 2" in timeline_output
@@ -3128,7 +3142,7 @@ def test_session_analyze_defaults_to_text_overview_with_middle_sections(
     )
     monkeypatch.chdir(local_root)
 
-    assert session.main(["analyze", "--session", str(local_root)]) == 0
+    assert session_main.main(["analyze", "--session", str(local_root)]) == 0
 
     output = capsys.readouterr().out
     assert "provider clusters:" in output
@@ -3174,7 +3188,7 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3191,7 +3205,7 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
     assert "ABC-2 (source, jira;" in text_output
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3251,7 +3265,7 @@ def test_session_analyze_focus_respects_lineage_mode(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3313,7 +3327,7 @@ def test_session_analyze_focus_can_match_projected_corpus_without_label_hits(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3393,7 +3407,7 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3460,7 +3474,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3476,7 +3490,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
     assert "\n## Semantic\n\nsession:" in text_output
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3495,7 +3509,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
     assert json_payload["semantic"]["matched"] is True
 
     with pytest.raises(SystemExit) as excinfo:
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3509,7 +3523,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
     assert excinfo.value.code == 2
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3553,7 +3567,7 @@ def test_session_analyze_mode_markdown_stays_dossier_not_mermaid(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3572,7 +3586,7 @@ def test_session_analyze_mode_markdown_stays_dossier_not_mermaid(
     assert "```mermaid" not in lineage_output
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "analyze",
                 "--session",
@@ -3631,7 +3645,7 @@ def test_session_scan_searches_projected_materialized_corpus(
     )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "scan",
                 "Example",
@@ -3674,7 +3688,7 @@ def test_session_scan_rejects_invalid_regex_even_without_entries(
     initialize_session(local_root)
 
     with pytest.raises(SystemExit) as excinfo:
-        session.main(
+        session_main.main(
             [
                 "scan",
                 "[",
@@ -3707,7 +3721,7 @@ def test_session_aggregate_filters_reject_invalid_regex_even_without_entries(
     initialize_session(local_root)
 
     with pytest.raises(SystemExit) as excinfo:
-        session.main(
+        session_main.main(
             [argv[0], "--session", str(local_root), "--filter", "[", *argv[1:]]
         )
 
@@ -3743,7 +3757,9 @@ def test_session_manifest_falls_back_to_jira_visibility_when_snapshot_metadata_i
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["manifest", "--session", str(local_root), "--output", "json"])
+        session_main.main(
+            ["manifest", "--session", str(local_root), "--output", "json"]
+        )
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
@@ -3788,8 +3804,8 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    graph_payload = session._graph_payload(dirs)
-    analysis_payload = session._analysis_payload(dirs)
+    graph_payload = session_graph.graph_payload(dirs)
+    analysis_payload = session_analyze.analysis_payload(dirs)
 
     assert graph_payload["sources"][0]["collision"] is False
     assert graph_payload["sources"][0]["variant"] is True
@@ -3800,7 +3816,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
     assert analysis_payload["sources"][0]["variant"] is True
     assert analysis_payload["sources"][0]["variantCount"] == 2
 
-    mermaid = session._render_analysis_mermaid(analysis_payload)
+    mermaid = session_analyze.render_analysis_mermaid(analysis_payload)
     assert "renderings: 2" in mermaid
 
 
@@ -3838,7 +3854,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    analysis_payload = session._analysis_payload(dirs)
+    analysis_payload = session_analyze.analysis_payload(dirs)
 
     assert analysis_payload["collisionCount"] == 0
     assert analysis_payload["variantCount"] == 0
@@ -3847,7 +3863,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
     assert analysis_payload["sources"][0]["duplicateMaterialization"] is True
     assert analysis_payload["sources"][0]["contentCount"] == 2
 
-    mermaid = session._render_analysis_mermaid(analysis_payload)
+    mermaid = session_analyze.render_analysis_mermaid(analysis_payload)
     assert "materializations: 2" in mermaid
 
 
@@ -3889,9 +3905,9 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    analysis_payload = session._analysis_payload(dirs)
-    semantic_payload = session._semantic_payload(dirs)
-    analysis_mermaid = session._render_analysis_mermaid(analysis_payload)
+    analysis_payload = session_analyze.analysis_payload(dirs)
+    semantic_payload = session_analyze.semantic_payload(dirs)
+    analysis_mermaid = session_analyze.render_analysis_mermaid(analysis_payload)
 
     assert analysis_payload["leadSourceCount"] == 3
     assert any(
@@ -3973,7 +3989,7 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             ["leads", "--session", str(local_root), artifact, "--output", "json"]
         )
         == 0
@@ -4030,7 +4046,8 @@ def test_session_leads_orders_best_first_without_quality_thresholds(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["leads", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["leads", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -4096,7 +4113,7 @@ def test_session_leads_filter_filters_surviving_leads_without_reordering_them(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "leads",
                 "--session",
@@ -4141,7 +4158,7 @@ def test_session_leads_filter_no_match_guides_toward_corpus_search(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "leads",
                 "--session",
@@ -4185,7 +4202,8 @@ def test_session_leads_shows_low_signal_only_case_without_hiding_it(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["leads", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["leads", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -4236,7 +4254,8 @@ def test_session_leads_demote_low_signal_service_urls_but_keep_them_visible(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["leads", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["leads", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -4271,7 +4290,7 @@ def test_session_leads_support_offset_and_all_paging(
     )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "leads",
                 "--session",
@@ -4296,7 +4315,7 @@ def test_session_leads_support_offset_and_all_paging(
     assert len(payload["leadSources"]) == 1
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "leads",
                 "--session",
@@ -4344,7 +4363,8 @@ def test_session_leads_preserve_search_result_order_within_search_artifacts(
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["leads", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["leads", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -4383,7 +4403,8 @@ def test_session_leads_falls_back_to_same_provider_search_for_prose_heavy_conflu
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["leads", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["leads", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -4427,7 +4448,8 @@ def test_session_leads_falls_back_to_workspace_scoped_slack_search_for_semantic_
     monkeypatch.chdir(local_root)
 
     assert (
-        session.main(["leads", "--session", str(local_root), "--output", "json"]) == 0
+        session_main.main(["leads", "--session", str(local_root), "--output", "json"])
+        == 0
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -4740,7 +4762,7 @@ def test_session_manifest_has_native_summary_surface(
         timestamp="2026-03-11T00:00:00.000001Z",
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "manifest",
                 "--session",
@@ -4792,7 +4814,9 @@ def test_session_manifest_accepts_stdout_flag_for_uniformity(
         timestamp="2026-03-11T00:00:00.000001Z",
     )
     assert (
-        session.main(["manifest", "--session", str(local_root), "--output", "json"])
+        session_main.main(
+            ["manifest", "--session", str(local_root), "--output", "json"]
+        )
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
@@ -4832,7 +4856,7 @@ def test_session_manifest_filter_filters_rows_before_paging(
     )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "manifest",
                 "--session",
@@ -4871,7 +4895,7 @@ def test_session_manifest_falls_back_to_content_locator_when_canonical_missing(
         timestamp="2026-03-11T00:00:00.000001Z",
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "manifest",
                 "--session",
@@ -4932,7 +4956,9 @@ def test_session_timeline_has_native_continuity_surface(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
     assert (
-        session.main(["timeline", "--session", str(local_root), "--output", "json"])
+        session_main.main(
+            ["timeline", "--session", str(local_root), "--output", "json"]
+        )
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
@@ -4972,7 +4998,9 @@ def test_session_timeline_accepts_stdout_flag_for_uniformity(
         timestamp="2026-03-11T00:00:00.000001Z",
     )
     assert (
-        session.main(["timeline", "--session", str(local_root), "--output", "json"])
+        session_main.main(
+            ["timeline", "--session", str(local_root), "--output", "json"]
+        )
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
@@ -5012,7 +5040,7 @@ def test_session_timeline_filter_filters_events_before_paging(
     )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5063,7 +5091,7 @@ def test_session_timeline_filter_filters_coverage_gaps_in_source_modes(
     )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5104,7 +5132,7 @@ def test_session_timeline_default_limit_keeps_latest_window(
         )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5157,7 +5185,9 @@ def test_session_timeline_acquired_includes_native_local_activity(
         },
     )
     assert (
-        session.main(["timeline", "--session", str(local_root), "--output", "json"])
+        session_main.main(
+            ["timeline", "--session", str(local_root), "--output", "json"]
+        )
         == 0
     )
 
@@ -5229,7 +5259,7 @@ def test_session_timeline_merges_bound_actor_activity_logs_without_sibling_note_
     )
 
     assert (
-        session.main(
+        session_main.main(
             ["timeline", "--session", str(claude_root), "--all", "--output", "json"]
         )
         == 0
@@ -5258,7 +5288,9 @@ def test_session_timeline_labels_local_surface_snapshots_as_session(
     local_root.joinpath("GOAL.md").write_text("# Goal\n", encoding="utf-8")
 
     assert (
-        session.main(["timeline", "--session", str(local_root), "--output", "json"])
+        session_main.main(
+            ["timeline", "--session", str(local_root), "--output", "json"]
+        )
         == 0
     )
 
@@ -5303,7 +5335,7 @@ def test_session_timeline_best_effort_mode_prefers_created_and_surfaces_gaps(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5360,7 +5392,7 @@ def test_session_timeline_best_effort_includes_local_activity_with_explicit_prov
         },
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5404,7 +5436,7 @@ def test_session_timeline_created_and_updated_modes_split_cleanly(
         timestamp="2026-03-11T00:00:00.000001Z",
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5424,7 +5456,7 @@ def test_session_timeline_created_and_updated_modes_split_cleanly(
     assert created_payload["events"][0]["source_time"].startswith("2026-03-09T09:00:00")
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5488,7 +5520,7 @@ def test_session_timeline_source_mode_ignores_local_reads_and_schema_probes(
         timestamp="2026-03-11T00:00:02.000001Z",
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5539,7 +5571,7 @@ def test_session_timeline_best_effort_ignores_local_artifact_rereads(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5580,7 +5612,7 @@ def test_session_timeline_best_effort_ignores_aggregate_search_artifact_dates(
     )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5598,7 +5630,7 @@ def test_session_timeline_best_effort_ignores_aggregate_search_artifact_dates(
     assert best_effort_payload["eventCount"] == 0
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5647,7 +5679,7 @@ def test_session_timeline_supports_offset_and_reports_exhausted_pages(
     )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5672,7 +5704,7 @@ def test_session_timeline_supports_offset_and_reports_exhausted_pages(
     assert payload["events"] == []
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "timeline",
                 "--session",
@@ -5703,7 +5735,7 @@ def test_session_manifest_plugin_filter_sees_provider_attributed_read_artifacts(
         dirs=dirs,
     )
     assert (
-        session.main(
+        session_main.main(
             [
                 "manifest",
                 "--session",
@@ -5740,7 +5772,7 @@ def test_session_manifest_supports_offset_and_all_paging(
         )
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "manifest",
                 "--session",
@@ -5765,7 +5797,7 @@ def test_session_manifest_supports_offset_and_all_paging(
     assert payload["entries"][0]["preferred_name"] == "artifact-1.md"
 
     assert (
-        session.main(
+        session_main.main(
             [
                 "manifest",
                 "--session",
@@ -5811,7 +5843,9 @@ def test_session_manifest_collapses_repeated_fetches_into_one_canonical_entry(
         )
 
     assert (
-        session.main(["manifest", "--session", str(local_root), "--output", "json"])
+        session_main.main(
+            ["manifest", "--session", str(local_root), "--output", "json"]
+        )
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
@@ -5854,7 +5888,7 @@ def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    payload = session._analysis_payload(dirs)
+    payload = session_analyze.analysis_payload(dirs)
 
     assert payload["revisionEdgeCount"] == 0
     provider_sets = {tuple(item["providers"]) for item in payload["content"]}
@@ -5891,7 +5925,7 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
         timestamp="2026-03-11T00:00:01.000001Z",
     )
 
-    payload = session._analysis_payload(dirs)
+    payload = session_analyze.analysis_payload(dirs)
 
     assert payload["nameCollisionCount"] == 1
     assert payload["nameCollisions"] == ["shared-thread.md"]
@@ -5901,5 +5935,5 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
         for item in payload["content"]
     )
 
-    mermaid = session._render_analysis_mermaid(payload)
+    mermaid = session_analyze.render_analysis_mermaid(payload)
     assert "slack-thread:C1:111" in mermaid or "slack-thread:C1:222" in mermaid

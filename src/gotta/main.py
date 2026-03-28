@@ -59,7 +59,10 @@ from gotta.content import (
     write_text_atomic,
     write_session_state,
 )
-from gotta import session as session_plugin
+from gotta.session import bootstrap as session_bootstrap
+from gotta.session import registry as session_registry
+from gotta.session import scope as session_scope
+from gotta.session import status as session_status
 from gotta import topology
 from gotta import binding as binding_helpers
 
@@ -269,7 +272,7 @@ def _actor_note_check_warning(root: Path) -> str:
     if not actor_name:
         return ""
     try:
-        payload = session_plugin._actor_status_payload(root, actor_name)
+        payload = session_status._actor_status_payload(root, actor_name)
     except SystemExit:
         return ""
     return supervisor_note_check_message(actor_name, status_payload=payload)
@@ -330,7 +333,7 @@ def _create_session_root(
         resolved_root.parent.name == "actors"
         or topology.parse_grouped_session_root(resolved_root) is not None
     )
-    session_dir = session_plugin._group_session_root(resolved_root)
+    session_dir = session_registry._group_session_root(resolved_root)
     content_dir = session_dir / "content"
     ensure_private_dir(session_dir)
     ensure_private_dir(content_dir)
@@ -391,7 +394,7 @@ def _create_session_root(
             actor,
             {
                 "label": actor,
-                "model": session_plugin.ACTOR_DEFAULT_MODEL,
+                "model": session_registry.ACTOR_DEFAULT_MODEL,
                 "resume_uuid": "",
                 "template": "",
             },
@@ -504,9 +507,7 @@ def _ensure_scaffolded_session(
         )
     state = load_state_env_at_root(root)
     if state.get(SESSION_INITIALIZED_ENV, "").strip() != "1":
-        from gotta import session as sessionlib
-
-        sessionlib.scaffold_session(root)
+        session_bootstrap.scaffold_session(root)
     return root, created
 
 
@@ -696,7 +697,7 @@ def _existing_actor_root_for_session(
     *,
     preferred_identities: list[str],
 ) -> Path | None:
-    actors_dir = session_plugin._group_session_root(root) / "actors"
+    actors_dir = session_registry._group_session_root(root) / "actors"
     if not actors_dir.is_dir():
         return None
     initialized: dict[str, Path] = {}
@@ -745,7 +746,7 @@ def _is_shared_session_root(root: Path | None) -> bool:
 
 
 def _explicit_session_content_root(root: Path) -> Path:
-    return (session_plugin._group_session_root(root) / "content").resolve()
+    return (session_registry._group_session_root(root) / "content").resolve()
 
 
 def _looks_like_stored_read_target(argv: list[str], explicit_session: str) -> bool:
@@ -809,10 +810,10 @@ def _resolve_primary_actor_root(root: Path) -> Path | None:
     session_root = root.expanduser().resolve()
     if not _is_shared_session_root(session_root):
         return session_root
-    primary = session_plugin._primary_actor_name(session_root)
+    primary = session_scope._primary_actor_name(session_root)
     if not primary:
         return None
-    return session_plugin._actor_session_dir(session_root, primary)
+    return session_registry._actor_session_dir(session_root, primary)
 
 
 def _hydrate_shared_session_environment(
@@ -823,9 +824,9 @@ def _hydrate_shared_session_environment(
 ) -> None:
     session_root = root.expanduser().resolve()
     state: dict[str, object] = {}
-    primary = session_plugin._primary_actor_name(session_root) or ""
+    primary = session_scope._primary_actor_name(session_root) or ""
     if primary:
-        primary_root = session_plugin._actor_session_dir(session_root, primary)
+        primary_root = session_registry._actor_session_dir(session_root, primary)
         state = load_state_env_at_root(primary_root)
     for key, value in state.items():
         os.environ[key] = value
@@ -930,11 +931,11 @@ def main(argv: list[str] | None = None) -> int:
                     allow_missing=False,
                 )
                 if explicit_root is not None and explicit_actor:
-                    resolved_actor = session_plugin._resolve_bound_actor_name(
+                    resolved_actor = session_registry._resolve_bound_actor_name(
                         explicit_root,
                         explicit_actor,
                     )
-                    root = session_plugin._actor_session_dir(
+                    root = session_registry._actor_session_dir(
                         explicit_root, resolved_actor
                     )
                 elif explicit_root is not None:
@@ -963,11 +964,11 @@ def main(argv: list[str] | None = None) -> int:
                     "explicit actor targeting requires an existing session; run "
                     "`gotta session bind` first or pass `--session <session-id>`"
                 )
-            resolved_actor = session_plugin._resolve_bound_actor_name(
+            resolved_actor = session_registry._resolve_bound_actor_name(
                 current,
                 explicit_actor,
             )
-            root = session_plugin._actor_session_dir(current, resolved_actor)
+            root = session_registry._actor_session_dir(current, resolved_actor)
         else:
             root = _prefer_bound_session_root()
         if root is None:
