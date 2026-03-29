@@ -287,6 +287,51 @@ This file is the execution queue.
   next work that pays rent is the remaining exported session payload families,
   starting with `session manifest`, then the smaller typed-count cleanup still
   left in `session graph`.
+- [x] Typed `session manifest` payload center landed.
+  - The `session manifest` surface now has a truthful payload owner:
+    - `src/gotta/plugins/session/manifest/model.py`
+      - `ManifestVisibility`
+      - `ManifestRecord`
+      - `ManifestPayloadEntry`
+      - `ManifestPluginCountRecord`
+      - `ManifestActorCountRecord`
+      - `ManifestPayload`
+  - The manifest loader, aggregator, payload builder, and renderer now consume
+    named record and payload contracts instead of anonymous `dict[str, object]`
+    exports:
+    - `src/gotta/plugins/session/manifest/record.py`
+    - `src/gotta/plugins/session/manifest/payload.py`
+    - `src/gotta/plugins/session/manifest/render.py`
+  - Adjacent manifest consumers now depend on the typed manifest record center:
+    - `src/gotta/plugins/session/graph/payload.py`
+    - `src/gotta/plugins/session/scan/payload.py`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/plugins/session/manifest src/gotta/plugins/session/graph/payload.py src/gotta/plugins/session/scan/payload.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted the last fully anonymous exported session
+  payload family and forced the shared manifest row shape into one named
+  contract center. More cleanup of this exact species inside `session manifest`
+  would not; the next work that pays rent is the smaller typed-count and
+  payload cleanup still left in `session graph`.
+- [x] Typed `session graph` count-record seam landed.
+  - The `session graph` surface now names its exported count-record families:
+    - `src/gotta/plugins/session/graph/model.py`
+      - `GraphProviderCountRecord`
+      - `GraphArtifactKindCountRecord`
+  - The graph payload builder now emits typed count records and keeps the
+    source-visibility cache on the typed graph visibility spine:
+    - `src/gotta/plugins/session/graph/payload.py`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/plugins/session/graph`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed the last obvious anonymous exported
+  count-record leak in the session-view cluster without reopening any settled
+  boundaries. More cleanup of this exact species inside `session graph` would
+  not; the next honest move is to reassess the remaining exported anonymous
+  shapes outside the now-mostly-settled session-view cluster and then switch
+  back to provider-local monolith and algorithmic pressure.
 
 ## Current Tranche
 
@@ -308,9 +353,13 @@ This file is the execution queue.
   truthful owner.
 - [x] Type the exported `session timeline` payload family and center it in one
   truthful owner.
-- [ ] Next tranche: type the remaining exported session payload families,
-  starting with `session manifest`, then finish the smaller typed-count cleanup
-  still left in `session graph`.
+- [x] Type the exported `session manifest` payload family and center it in one
+  truthful owner.
+- [x] Finish the smaller typed-count and payload cleanup still left in
+  `session graph`.
+- [ ] Next tranche: reassess the remaining exported anonymous shapes outside
+  the now-mostly-settled session-view cluster, then cut the next real contract
+  seam instead of reopening topology churn.
 
 ## Non-Negotiable Invariants
 

@@ -22,15 +22,17 @@ from ..core import (
     top_count_records,
     topology_next_step,
 )
-from ..manifest.record import ManifestEntry, manifest_entries
+from ..manifest.model import ManifestRecord
+from ..manifest.record import manifest_entries
 from .model import GraphContent, GraphEdge, GraphPayload, GraphSource
+from .model import GraphArtifactKindCountRecord, GraphProviderCountRecord, Visibility
 
 
 def _string(value: object) -> str:
     return str(value or "").strip()
 
 
-def _source_locator(entry: ManifestEntry) -> str:
+def _source_locator(entry: ManifestRecord) -> str:
     return (
         _string(entry.get("canonical_locator"))
         or _string(entry.get("locator"))
@@ -38,7 +40,7 @@ def _source_locator(entry: ManifestEntry) -> str:
     )
 
 
-def _preferred_name(entry: ManifestEntry) -> str:
+def _preferred_name(entry: ManifestRecord) -> str:
     return _string(entry.get("preferred_name")) or "data"
 
 
@@ -90,7 +92,7 @@ def _source_record(
     *,
     source_artifact_kinds: dict[str, set[str]],
     source_variants: dict[str, set[tuple[str, str]]],
-    source_visibility: dict[str, dict[str, object]],
+    source_visibility: dict[str, Visibility],
     session_ref: str,
 ) -> GraphSource:
     artifact_kinds = sorted(source_artifact_kinds.get(locator, set()))
@@ -129,7 +131,7 @@ def graph_payload(
     content_names: dict[str, str] = {}
     source_variants: dict[str, set[tuple[str, str]]] = {}
     source_artifact_kinds: dict[str, set[str]] = {}
-    source_visibility: dict[str, dict[str, object]] = {}
+    source_visibility: dict[str, Visibility] = {}
     source_plugins: dict[str, set[str]] = {}
     source_actors: dict[str, set[str]] = {}
     content_plugins: dict[str, set[str]] = {}
@@ -157,12 +159,15 @@ def graph_payload(
             source_actors.setdefault(source, set()).add(actor)
             content_actors.setdefault(checksum, set()).add(actor)
         content_plugins.setdefault(checksum, set()).add(plugin)
-        source_visibility[source] = resolved_visibility_metadata(
-            source_visibility.get(source, {}),
-            provider=plugin,
-            plugin=plugin,
-            subcommand=_string(entry.get("subcommand")),
-            locator=source,
+        source_visibility[source] = cast(
+            Visibility,
+            resolved_visibility_metadata(
+                cast(dict[str, object], source_visibility.get(source, {})),
+                provider=plugin,
+                plugin=plugin,
+                subcommand=_string(entry.get("subcommand")),
+                locator=source,
+            ),
         )
         snapshot = snapshot_by_digest.get(checksum)
         if snapshot is not None:
@@ -257,13 +262,11 @@ def graph_payload(
     empty = not sources and not content and not edges
     discovery_count = sum(1 for item in content if item["artifactKind"] == "discovery")
     evidence_count = sum(1 for item in content if item["artifactKind"] == "evidence")
-    top_providers = top_count_records(
+    top_providers = graph_provider_count_records(
         [provider_name(item["locator"]) for item in sources],
-        key="provider",
     )
-    top_artifact_kinds = top_count_records(
+    top_artifact_kinds = graph_artifact_kind_count_records(
         [item["artifactKind"] for item in content if item["artifactKind"]],
-        key="artifactKind",
     )
     next_step = topology_next_step(
         discovery_count=discovery_count,
@@ -292,3 +295,25 @@ def graph_payload(
         "content": content,
         "edges": edges,
     }
+
+
+def graph_provider_count_records(values: list[str]) -> list[GraphProviderCountRecord]:
+    records: list[GraphProviderCountRecord] = []
+    for record in top_count_records(values, key="provider"):
+        provider = record.get("provider")
+        count = record.get("count")
+        if isinstance(provider, str) and isinstance(count, int):
+            records.append({"provider": provider, "count": count})
+    return records
+
+
+def graph_artifact_kind_count_records(
+    values: list[str],
+) -> list[GraphArtifactKindCountRecord]:
+    records: list[GraphArtifactKindCountRecord] = []
+    for record in top_count_records(values, key="artifactKind"):
+        artifact_kind = record.get("artifactKind")
+        count = record.get("count")
+        if isinstance(artifact_kind, str) and isinstance(count, int):
+            records.append({"artifactKind": artifact_kind, "count": count})
+    return records

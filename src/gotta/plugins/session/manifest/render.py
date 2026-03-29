@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Mapping
 
 from ..core import (
     MANIFEST_TEXT_PREVIEW_LIMIT,
@@ -13,6 +13,7 @@ from ..core import (
     rendered_actor,
     visibility_summary,
 )
+from .model import ManifestPayload, ManifestPayloadEntry
 
 
 def _string(value: object) -> str:
@@ -37,44 +38,37 @@ def _string_list(value: object) -> list[str]:
     return values
 
 
-def _records(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    records: list[dict[str, object]] = []
-    for item in value:
-        if isinstance(item, dict):
-            records.append({str(key): item[key] for key in item})
-    return records
-
-
 def _count_section_lines(
-    payload: Mapping[str, object],
     *,
     heading: str,
     key: str,
-    field: str,
+    records: Sequence[Mapping[str, object]],
 ) -> list[str]:
     lines: list[str] = []
     append_count_section(
         lines,
         heading=heading,
-        records=_records(payload.get(field)),
+        records=records,
         key=key,
     )
     return lines
 
 
-def _preview_heading(entries: list[dict[str, object]]) -> str:
+def _preview_heading(entries: list[ManifestPayloadEntry]) -> str:
     if len(entries) <= MANIFEST_TEXT_PREVIEW_LIMIT:
         return "entries preview:"
     preview_count = len(entries[:MANIFEST_TEXT_PREVIEW_LIMIT])
     return f"entries preview (showing {preview_count} of {len(entries)}):"
 
 
-def _preview_entry_lines(entry: dict[str, object], *, session_root: Path) -> list[str]:
+def _preview_entry_lines(
+    entry: ManifestPayloadEntry,
+    *,
+    session_root: Path,
+) -> list[str]:
     fetched_at = _string(entry.get("fetched_at")) or "unknown-time"
-    plugin_values = _string_list(entry.get("plugins"))
-    actor_values = _string_list(entry.get("actors"))
+    plugin_values = entry.get("plugins", [])
+    actor_values = entry.get("actors", [])
     plugin = (
         ", ".join(plugin_values) or _string(entry.get("plugin")) or "unknown-plugin"
     )
@@ -117,60 +111,54 @@ def _preview_entry_lines(entry: dict[str, object], *, session_root: Path) -> lis
 
 
 def render_manifest_text(
-    payload: Mapping[str, object],
+    payload: ManifestPayload,
     *,
     session_root: Path,
 ) -> str:
-    lines = [f"manifest: {_string(payload.get('manifestPath'))}"]
+    lines = [f"manifest: {payload['manifestPath']}"]
     lines.append(
         "entries: "
-        f"{_int(payload.get('entryCount'))} canonical "
-        f"(from {_int(payload.get('fetchRecordCount'))} fetches; "
-        f"showing {_int(payload.get('shownCount'))}; "
-        f"discovery {_int(payload.get('discoveryArtifactCount'))}, "
-        f"evidence {_int(payload.get('evidenceArtifactCount'))})"
-        f"{filter_suffix(payload.get('filter'))}"
+        f"{payload['entryCount']} canonical "
+        f"(from {payload['fetchRecordCount']} fetches; "
+        f"showing {payload['shownCount']}; "
+        f"discovery {payload['discoveryArtifactCount']}, "
+        f"evidence {payload['evidenceArtifactCount']})"
+        f"{filter_suffix(payload['filter'])}"
     )
     lines.append(
         paging_summary_line(
             label="page",
-            total_count=_int(payload.get("totalCount")),
-            shown_count=_int(payload.get("shownCount")),
-            offset=_int(payload.get("offset")),
-            next_offset=(
-                _int(payload["nextOffset"])
-                if payload.get("nextOffset") is not None
-                else None
-            ),
+            total_count=payload["totalCount"],
+            shown_count=payload["shownCount"],
+            offset=payload["offset"],
+            next_offset=payload["nextOffset"],
         )
     )
-    if _int(payload.get("shownCount")) == 0 and _int(payload.get("totalCount")) > 0:
+    if payload["shownCount"] == 0 and payload["totalCount"] > 0:
         lines.append("page: no results in this page window")
 
     lines.extend(
         _count_section_lines(
-            payload,
             heading="top plugins",
             key="plugin",
-            field="topPlugins",
+            records=list(payload["topPlugins"]),
         )
     )
     lines.extend(
         _count_section_lines(
-            payload,
             heading="top actors",
             key="actor",
-            field="topActors",
+            records=list(payload["topActors"]),
         )
     )
 
-    session_ref = _string(payload.get("sessionRef"))
+    session_ref = payload["sessionRef"]
     if session_ref:
         lines.append(
             f"follow: use emitted locators with `gotta read --session {session_ref} <locator>`"
         )
 
-    entries = _records(payload.get("entries"))
+    entries = payload["entries"]
     preview_entries = entries[:MANIFEST_TEXT_PREVIEW_LIMIT]
     if entries:
         lines.append(_preview_heading(entries))

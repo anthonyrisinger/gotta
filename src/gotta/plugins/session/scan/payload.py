@@ -23,6 +23,7 @@ from ..manifest.record import (
     filter_manifest_entries,
     manifest_entries,
 )
+from ..manifest.model import ManifestRecord
 from .model import ScanEntry, ScanPayload, ScanVisibility
 from .match import compile_pattern, hit_lines
 from .snippet import build_snippets
@@ -127,7 +128,7 @@ def scan_payload(
 
 
 def scan_entries(
-    entries: list[dict[str, object]],
+    entries: list[ManifestRecord],
     *,
     plugin: str = "",
     actor: str = "",

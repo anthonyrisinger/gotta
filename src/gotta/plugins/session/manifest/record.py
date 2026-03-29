@@ -4,23 +4,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+from typing import cast
 
 from gotta.content.model import ResolvedDirs
 from gotta.content.path import content_locator
 from gotta.source.visibility import best_visibility_metadata
 
 from ..core import artifact_kind, resolved_visibility_metadata
-
-ManifestEntry = dict[str, object]
+from .model import (
+    ManifestRecord,
+    ManifestVisibility,
+    apply_manifest_visibility,
+    manifest_visibility,
+)
 
 
 def _string(value: object) -> str:
     return str(value or "").strip()
 
 
+def _manifest_record(value: dict[str, object]) -> ManifestRecord:
+    return cast(ManifestRecord, value)
+
+
 @dataclass(slots=True)
 class AggregateState:
-    latest: ManifestEntry
+    latest: ManifestRecord
     fetch_count: int = 0
     first_fetched_at: str = ""
     last_fetched_at: str = ""
@@ -28,34 +37,37 @@ class AggregateState:
     actors: set[str] = field(default_factory=set)
     locators: set[str] = field(default_factory=set)
     artifact_kinds: set[str] = field(default_factory=set)
-    visibility: dict[str, object] = field(default_factory=dict)
+    visibility: ManifestVisibility = field(
+        default_factory=lambda: manifest_visibility({})
+    )
 
 
-def manifest_entries(dirs: ResolvedDirs) -> list[ManifestEntry]:
+def manifest_entries(dirs: ResolvedDirs) -> list[ManifestRecord]:
     manifest_path = dirs.content_dir / "manifest.jsonl"
     if not manifest_path.exists():
         return []
-    entries: list[ManifestEntry] = []
+    entries: list[ManifestRecord] = []
     for raw_line in manifest_path.read_text(encoding="utf-8").splitlines():
         if not raw_line.strip():
             continue
         payload = json.loads(raw_line)
         if isinstance(payload, dict):
-            entries.append(payload)
+            normalized = {str(key): value for key, value in payload.items()}
+            entries.append(_manifest_record(normalized))
     return entries
 
 
 def filter_manifest_entries(
-    entries: list[ManifestEntry],
+    entries: list[ManifestRecord],
     *,
     plugin: str = "",
     actor: str = "",
     locator: str = "",
-) -> list[ManifestEntry]:
+) -> list[ManifestRecord]:
     plugin_filter = plugin.strip()
     actor_filter = actor.strip()
     locator_filter = locator.strip()
-    filtered: list[ManifestEntry] = []
+    filtered: list[ManifestRecord] = []
     for entry in entries:
         if plugin_filter and _string(entry.get("plugin")) != plugin_filter:
             continue
@@ -70,7 +82,7 @@ def filter_manifest_entries(
     return filtered
 
 
-def manifest_entry_sort_key(entry: ManifestEntry) -> tuple[str, str, str]:
+def manifest_entry_sort_key(entry: ManifestRecord) -> tuple[str, str, str]:
     return (
         _string(entry.get("fetched_at")),
         _string(entry.get("canonical_locator")) or _string(entry.get("locator")),
@@ -78,7 +90,7 @@ def manifest_entry_sort_key(entry: ManifestEntry) -> tuple[str, str, str]:
     )
 
 
-def manifest_identity_locator(entry: ManifestEntry) -> str:
+def manifest_identity_locator(entry: ManifestRecord) -> str:
     checksum = _string(entry.get("checksum"))
     locator = _string(entry.get("canonical_locator")) or _string(entry.get("locator"))
     if locator:
@@ -86,7 +98,7 @@ def manifest_identity_locator(entry: ManifestEntry) -> str:
     return content_locator(checksum) if checksum else ""
 
 
-def aggregate_manifest_entries(entries: list[ManifestEntry]) -> list[ManifestEntry]:
+def aggregate_manifest_entries(entries: list[ManifestRecord]) -> list[ManifestRecord]:
     grouped: dict[tuple[str, str], AggregateState] = {}
     for entry in entries:
         checksum = _string(entry.get("checksum"))
@@ -118,20 +130,24 @@ def aggregate_manifest_entries(entries: list[ManifestEntry]) -> list[ManifestEnt
             state.locators.add(locator)
         if kind:
             state.artifact_kinds.add(kind)
-        state.visibility = best_visibility_metadata(
-            state.visibility,
-            resolved_visibility_metadata(
-                entry,
-                provider=plugin,
-                plugin=plugin,
-                subcommand=_string(entry.get("subcommand")),
-                locator=locator,
-            ),
+        state.visibility = manifest_visibility(
+            best_visibility_metadata(
+                state.visibility,
+                resolved_visibility_metadata(
+                    entry,
+                    provider=plugin,
+                    plugin=plugin,
+                    subcommand=_string(entry.get("subcommand")),
+                    locator=locator,
+                ),
+            )
         )
 
-    aggregated: list[ManifestEntry] = []
+    aggregated: list[ManifestRecord] = []
     for (locator, _checksum), state in grouped.items():
-        latest = dict(state.latest)
+        latest = _manifest_record(
+            {str(key): value for key, value in state.latest.items()}
+        )
         latest["canonical_locator"] = (
             _string(latest.get("canonical_locator")) or locator
         )
@@ -145,6 +161,9 @@ def aggregate_manifest_entries(entries: list[ManifestEntry]) -> list[ManifestEnt
         latest["actors"] = sorted(state.actors)
         latest["locators"] = sorted(state.locators)
         latest["artifactKinds"] = sorted(state.artifact_kinds)
-        latest.update(best_visibility_metadata(state.visibility))
+        apply_manifest_visibility(
+            latest,
+            manifest_visibility(best_visibility_metadata(state.visibility)),
+        )
         aggregated.append(latest)
     return aggregated

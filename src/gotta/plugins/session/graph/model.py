@@ -42,6 +42,16 @@ class GraphEdge(TypedDict):
     count: int
 
 
+class GraphProviderCountRecord(TypedDict):
+    provider: str
+    count: int
+
+
+class GraphArtifactKindCountRecord(TypedDict):
+    artifactKind: str
+    count: int
+
+
 class GraphPayload(TypedDict):
     sessionDir: str
     contentDir: str
@@ -52,8 +62,8 @@ class GraphPayload(TypedDict):
     edgeCount: int
     discoveryArtifactCount: int
     evidenceArtifactCount: int
-    topProviders: list[dict[str, object]]
-    topArtifactKinds: list[dict[str, object]]
+    topProviders: list[GraphProviderCountRecord]
+    topArtifactKinds: list[GraphArtifactKindCountRecord]
     empty: bool
     nextStep: str
     sources: list[GraphSource]
