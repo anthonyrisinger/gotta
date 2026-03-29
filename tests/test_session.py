@@ -2951,7 +2951,7 @@ def test_session_analyze_writes_summary_and_graph(
     assert not (local_root / "semantic-graph.json").exists()
     assert not (local_root / "semantic-graph.mmd").exists()
     assert not (local_root / "semantic-graph.mmd.md").exists()
-    assert result.data_path.name == "data"
+    assert result.layout.blob_path.name == "data"
 
 
 def test_session_analyze_output_json_returns_combined_payload_by_default(
@@ -4884,7 +4884,7 @@ def test_materialize_bytes_eagerly_writes_lead_cache(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    cache_path = result.content_dir / "leads.json"
+    cache_path = result.layout.artifact_dir / "leads.json"
 
     assert cache_path.exists()
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -4933,7 +4933,7 @@ def test_materialize_bytes_eagerly_mines_projected_display_for_leads(
     )
 
     payload = json.loads(
-        (result.content_dir / "leads.json").read_text(encoding="utf-8")
+        (result.layout.artifact_dir / "leads.json").read_text(encoding="utf-8")
     )
 
     assert {entry["canonical_locator"] for entry in payload["entries"]} == {
@@ -4962,7 +4962,7 @@ def test_materialize_bytes_records_explicit_projection_degradation(
     )
 
     payload = json.loads(
-        (result.content_dir / "leads.json").read_text(encoding="utf-8")
+        (result.layout.artifact_dir / "leads.json").read_text(encoding="utf-8")
     )
 
     assert payload["degradations"] == [
@@ -5009,7 +5009,7 @@ def test_materialize_bytes_eagerly_drops_structural_github_repo_navigation_leads
     )
 
     payload = json.loads(
-        (result.content_dir / "leads.json").read_text(encoding="utf-8")
+        (result.layout.artifact_dir / "leads.json").read_text(encoding="utf-8")
     )
     assert payload["leadCount"] == 0
     assert payload["entries"] == []
@@ -5029,7 +5029,7 @@ def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    cache_path = result.content_dir / "leads.json"
+    cache_path = result.layout.artifact_dir / "leads.json"
     cache_path.write_text(
         json.dumps({"version": 0, "entries": []}) + "\n",
         encoding="utf-8",

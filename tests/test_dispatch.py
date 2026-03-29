@@ -865,10 +865,10 @@ def test_materialize_invocation_attributes_delegated_read_to_provider(
 
     assert result is not None
     snapshot = next(item for item in content_store.scan_content_store(dirs.content_dir))
-    assert snapshot.metadata["plugin"] == "jira"
-    assert snapshot.metadata["entrypoint"] == "read"
-    assert snapshot.metadata["provider"] == "jira"
-    assert snapshot.metadata["canonical_locator"] == "jira:PROJ-1"
+    assert snapshot.artifact.metadata["plugin"] == "jira"
+    assert snapshot.artifact.metadata["entrypoint"] == "read"
+    assert snapshot.artifact.metadata["provider"] == "jira"
+    assert snapshot.artifact.metadata["canonical_locator"] == "jira:PROJ-1"
 
 
 def test_external_plugin_can_shadow_builtin(monkeypatch) -> None:
@@ -1724,9 +1724,12 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
     snapshots = content_store.scan_content_store(local_root / "content")
     assert len(snapshots) == 1
     snapshot = snapshots[0]
-    assert snapshot.metadata["canonical_locator"] == "https://github.com/acme/widgets"
-    assert snapshot.metadata["content_type"] == "application/json"
-    assert snapshot.data_path.read_bytes() == canonical
+    assert (
+        snapshot.artifact.metadata["canonical_locator"]
+        == "https://github.com/acme/widgets"
+    )
+    assert snapshot.artifact.metadata["content_type"] == "application/json"
+    assert snapshot.layout.blob_path.read_bytes() == canonical
 
 
 def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
@@ -1784,7 +1787,8 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
     snapshots = content_store.scan_content_store(local_root / "content")
     assert len(snapshots) == 1
     assert (
-        snapshots[0].metadata["canonical_locator"] == "https://github.com/acme/widgets"
+        snapshots[0].artifact.metadata["canonical_locator"]
+        == "https://github.com/acme/widgets"
     )
 
     assert (

@@ -50,7 +50,7 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
                     "timestamp": event.timestamp,
                     "digest": snapshot.digest,
                     "preferred_name": str(
-                        metadata.get("preferred_name", "") or event.link_name
+                        metadata.get("preferred_name", "") or event.alias_name
                     ),
                     "plugin": str(metadata.get("plugin", "") or "unknown"),
                     "actor": rendered_actor(

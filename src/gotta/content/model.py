@@ -69,21 +69,6 @@ class MaterializationEvent:
     blob_path: Path
     event_path: Path
 
-    @property
-    def link_name(self) -> str:
-        return self.alias_name
-
-    @property
-    def link_path(self) -> Path:
-        return self.blob_path
-
-    @property
-    def log_path(self) -> Path:
-        return self.event_path
-
-
-ContentEvent = MaterializationEvent
-
 
 @dataclass(frozen=True, slots=True)
 class ManifestEntry:
@@ -115,35 +100,6 @@ class Materialization:
     event: MaterializationEvent
 
     @property
-    def content_dir(self) -> Path:
-        return self.layout.artifact_dir
-
-    @property
-    def data_path(self) -> Path:
-        return self.layout.blob_path
-
-    @property
-    def meta_path(self) -> Path:
-        assert self.layout.metadata_path is not None
-        return self.layout.metadata_path
-
-    @property
-    def names_dir(self) -> Path:
-        return self.layout.alias_dir
-
-    @property
-    def logs_dir(self) -> Path:
-        return self.layout.event_dir
-
-    @property
-    def name_link(self) -> Path:
-        return self.alias.path
-
-    @property
-    def fetch_link(self) -> Path:
-        return self.event.event_path
-
-    @property
     def digest(self) -> str:
         return self.artifact.digest
 
@@ -162,31 +118,3 @@ class ContentSnapshot:
     @property
     def digest(self) -> str:
         return self.artifact.digest
-
-    @property
-    def content_dir(self) -> Path:
-        return self.layout.artifact_dir
-
-    @property
-    def data_path(self) -> Path:
-        return self.layout.blob_path
-
-    @property
-    def meta_path(self) -> Path | None:
-        return self.layout.metadata_path
-
-    @property
-    def names_dir(self) -> Path:
-        return self.layout.alias_dir
-
-    @property
-    def logs_dir(self) -> Path:
-        return self.layout.event_dir
-
-    @property
-    def names(self) -> list[str]:
-        return [alias.name for alias in self.aliases]
-
-    @property
-    def metadata(self) -> ArtifactMetadata:
-        return self.artifact.metadata

@@ -45,19 +45,20 @@ def test_materialize_bytes_creates_content_directory_and_manifest(
         timestamp="2026-03-11T00:00:00.000001Z",
     )
 
-    assert result.data_path.read_bytes() == b"hello world"
-    assert result.name_link.is_symlink()
-    assert result.fetch_link.is_symlink()
-    assert result.name_link.resolve() == result.data_path.resolve()
-    assert result.fetch_link.resolve() == result.data_path.resolve()
-    assert result.content_dir.name == result.digest
-    assert result.data_path.name == "data"
-    assert result.meta_path.name == "meta.json"
-    assert result.names_dir.name == "names"
-    assert result.logs_dir.name == "logs"
-    assert result.fetch_link.name == "2026-03-11T00:00:00.000001Z"
+    assert result.layout.blob_path.read_bytes() == b"hello world"
+    assert result.alias.path.is_symlink()
+    assert result.event.event_path.is_symlink()
+    assert result.alias.path.resolve() == result.layout.blob_path.resolve()
+    assert result.event.event_path.resolve() == result.layout.blob_path.resolve()
+    assert result.layout.artifact_dir.name == result.digest
+    assert result.layout.blob_path.name == "data"
+    assert result.layout.metadata_path is not None
+    assert result.layout.metadata_path.name == "meta.json"
+    assert result.layout.alias_dir.name == "names"
+    assert result.layout.event_dir.name == "logs"
+    assert result.event.event_path.name == "2026-03-11T00:00:00.000001Z"
 
-    meta = json.loads(result.meta_path.read_text(encoding="utf-8"))
+    meta = json.loads(result.layout.metadata_path.read_text(encoding="utf-8"))
     assert meta["hash"] == result.digest
     assert meta["preferred_name"] == "demo.md"
     assert meta["original_name"] == "demo.md"
@@ -72,7 +73,7 @@ def test_materialize_bytes_creates_content_directory_and_manifest(
     assert manifest["locator"] == "demo"
     assert manifest["actor"] == "ws"
     assert manifest["preferred_name"] == "demo.md"
-    assert Path(manifest["fetch_link"]).name == result.fetch_link.name
+    assert Path(manifest["fetch_link"]).name == result.event.event_path.name
     assert Path(manifest["canonical_path"]).name == "data"
 
 
@@ -97,7 +98,7 @@ def test_materialize_bytes_records_projection_degradation_in_lead_cache(
     )
 
     payload = json.loads(
-        (result.content_dir / "leads.json").read_text(encoding="utf-8")
+        (result.layout.artifact_dir / "leads.json").read_text(encoding="utf-8")
     )
 
     assert payload["degradations"] == [
@@ -138,15 +139,15 @@ def test_private_state_and_content_paths_use_private_modes(tmp_path: Path) -> No
         content_env.state_env_path(dirs.session_dir),
         content_activity.activity_log_path(dirs.session_dir),
         dirs.content_dir / "manifest.jsonl",
-        result.data_path,
-        result.meta_path,
-        result.content_dir / "leads.json",
+        result.layout.blob_path,
+        result.layout.metadata_path,
+        result.layout.artifact_dir / "leads.json",
     )
     dir_paths = (
         content_env.state_dir_path(dirs.session_dir),
-        result.content_dir,
-        result.names_dir,
-        result.logs_dir,
+        result.layout.artifact_dir,
+        result.layout.alias_dir,
+        result.layout.event_dir,
     )
 
     assert all(
@@ -174,8 +175,8 @@ def test_scan_content_store_reads_directory_layout(tmp_path: Path) -> None:
     assert len(snapshots) == 1
     snapshot = snapshots[0]
     assert snapshot.digest == result.digest
-    assert snapshot.content_dir == result.content_dir
-    assert snapshot.names == ["demo.md"]
+    assert snapshot.layout.artifact_dir == result.layout.artifact_dir
+    assert [alias.name for alias in snapshot.aliases] == ["demo.md"]
     assert [event.timestamp for event in snapshot.events] == [
         "2026-03-11T00:00:00.000001Z"
     ]
@@ -192,7 +193,7 @@ def test_scan_content_store_handles_missing_names_directory(tmp_path: Path) -> N
 
     assert len(snapshots) == 1
     assert snapshots[0].digest == digest
-    assert snapshots[0].names == []
+    assert snapshots[0].aliases == []
 
 
 def test_activity_events_round_trip(tmp_path: Path) -> None:

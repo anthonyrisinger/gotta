@@ -70,6 +70,25 @@ This file is the execution queue.
   more registry or package churn would not pay rent.
   The next work that pays rent is explicit storage contracts and continued
   demotion of filesystem-shaped truth, not more naming or file-motion passes.
+- [x] Storage-record compatibility surface deleted from the live core.
+  - Removed path-shaped and metadata/alias convenience accessors from:
+    - `MaterializationEvent`
+    - `Materialization`
+    - `ContentSnapshot`
+    in `src/gotta/content/model.py`
+  - Retargeted the affected tests to the logical record center:
+    - `artifact`
+    - `layout`
+    - `alias`
+    - `event`
+    - `aliases`
+  - The removed compatibility surface is no longer present in `src/`; it was
+    only surviving as a test-facing accommodation.
+- [x] Diminishing-returns judgment for this cycle:
+  deleting the dead compatibility layer paid rent.
+  More cleanup of the same species would not; the next work that pays rent is
+  explicit storage contracts and splitting logical ledger operations from the
+  filesystem implementation.
 
 ## Current Tranche
 
@@ -78,6 +97,8 @@ This file is the execution queue.
   and ask-family binding dispatch.
 - [x] Split the logical ledger from filesystem-shaped storage truth at the
   record layer.
+- [x] Delete the dead storage-record compatibility layer once `src/` no longer
+  depends on it.
 - [ ] Next tranche: introduce explicit storage contracts and continue
   separating logical ledger operations from the concrete filesystem
   implementation.
@@ -330,7 +351,7 @@ This file is the execution queue.
 - [ ] Introduce `LedgerStore`, `BlobStore`, `StateStore`, and `IndexStore`.
 - [ ] Continue splitting `content/store.py` into logical ledger operations and
   concrete filesystem implementation.
-- [ ] Remove remaining internal dependence on compatibility properties from the
+- [x] Remove remaining internal dependence on compatibility properties from the
   test surface, then delete those compatibility properties.
 - [ ] Type the lead kernel.
 - [ ] Type the first analyze/graph/timeline/session payload families.
