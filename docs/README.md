@@ -113,8 +113,10 @@ interrupted continuations, coverage gaps, and workflow friction worth fixing.
 ## Architecture
 
 The canonical architecture doctrine lives at
-[`ARCHITECTURE.md`](ARCHITECTURE.md), and the execution queue lives at
-[`TODO.md`](TODO.md). Together they define:
+[ARCHITECTURE.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/ARCHITECTURE.md),
+and the execution queue lives at
+[TODO.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/TODO.md).
+Together they define:
 
 - the irreducible core
 - surface bindings, provider bundles, and package boundaries
@@ -165,7 +167,9 @@ gotta ...
 ## Development
 
 If you are working on the repo locally, use the uv-managed environment above
-and read [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
+and read
+[CONTRIBUTING.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/CONTRIBUTING.md)
+for:
 
 - the blocking quality gate
 - `./scripts/study` modes and diagnostics
@@ -761,7 +765,10 @@ Use `gotta ask --help-all` to inspect installed ask surfaces recursively.
 
 ## Project Docs
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): canonical doctrine
-- [`TODO.md`](TODO.md): canonical execution queue
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): repository workflow, quality gate,
+- [ARCHITECTURE.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/ARCHITECTURE.md):
+  canonical doctrine
+- [TODO.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/TODO.md):
+  canonical execution queue
+- [CONTRIBUTING.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/CONTRIBUTING.md):
+  repository workflow, quality gate,
   study tooling, and release process

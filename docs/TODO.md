@@ -4,7 +4,7 @@ This is the top-level execution queue for the run to `gotta` 1.0.
 
 The canonical architecture document is:
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- [ARCHITECTURE.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/ARCHITECTURE.md)
 
 This file is the execution queue.
 

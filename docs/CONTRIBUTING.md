@@ -129,8 +129,10 @@ the GitHub release layer.
 ## Architecture Overview
 
 For the explicit 1.0 architecture direction, read
-[`ARCHITECTURE.md`](ARCHITECTURE.md) alongside [`TODO.md`](TODO.md). Together
-they capture the settled judgment
+[ARCHITECTURE.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/ARCHITECTURE.md)
+alongside
+[TODO.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/TODO.md).
+Together they capture the settled judgment
 about the irreducible core, surface model, artifact ledger, session model,
 backend contracts, type-system direction, and the explicit `exec` surface.
 

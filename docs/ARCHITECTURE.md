@@ -5,7 +5,7 @@ This is the singular canonical architecture document for `gotta` 1.0.
 The top-level split is:
 
 - this document: what the system is
-- [`TODO.md`](TODO.md):
+- [TODO.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/TODO.md):
   what gets built next
 - the live code: what already exists
 
@@ -697,7 +697,7 @@ These are specifically not the 1.0 direction:
 
 The canonical execution queue is:
 
-- [`TODO.md`](TODO.md)
+- [TODO.md](https://github.com/anthonyrisinger/gotta/blob/main/docs/TODO.md)
 
 That file should answer “what next?”
 
