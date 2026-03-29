@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from ..core import (
     ANALYZE_ANCHOR_PREVIEW_LIMIT,
     ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT,
@@ -15,9 +13,16 @@ from ..core import (
     mermaid_label,
     visibility_summary,
 )
+from .model import (
+    AnalysisOverviewPayload,
+    LineageFocusPayload,
+    LineagePayload,
+    SemanticFocusPayload,
+    SemanticPayload,
+)
 
 
-def render_semantic_mermaid(payload: dict[str, Any]) -> str:
+def render_semantic_mermaid(payload: SemanticPayload | SemanticFocusPayload) -> str:
     lines = [
         "---",
         "title: gotta semantic graph",
@@ -77,7 +82,7 @@ def render_semantic_mermaid(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_analysis_mermaid(payload: dict[str, Any]) -> str:
+def render_analysis_mermaid(payload: LineagePayload | LineageFocusPayload) -> str:
     lines = [
         "---",
         "title: gotta session analysis",
@@ -191,7 +196,7 @@ def render_analysis_mermaid(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_analysis_overview_text(payload: dict[str, Any]) -> str:
+def render_analysis_overview_text(payload: AnalysisOverviewPayload) -> str:
     lines = [
         f"session: {payload['sessionDir']}",
         f"content: {payload['contentDir']}",
@@ -274,7 +279,7 @@ def render_analysis_overview_text(payload: dict[str, Any]) -> str:
 
 
 def render_lineage_overview_text(
-    payload: dict[str, Any],
+    payload: LineagePayload,
     *,
     limit: int,
 ) -> str:
@@ -318,7 +323,7 @@ def render_lineage_overview_text(
     return "\n".join(lines)
 
 
-def render_semantic_overview_text(payload: dict[str, Any]) -> str:
+def render_semantic_overview_text(payload: AnalysisOverviewPayload) -> str:
     lines = [
         f"session: {payload['sessionDir']}",
         f"content: {payload['contentDir']}",
@@ -366,7 +371,7 @@ def render_semantic_overview_text(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_analysis_focus_text(payload: dict[str, Any]) -> str:
+def render_analysis_focus_text(payload: SemanticFocusPayload) -> str:
     lines = [
         f"session: {payload['sessionDir']}",
         f"focus: {payload['focus'] or '(empty)'}",
@@ -433,7 +438,7 @@ def render_analysis_focus_text(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_lineage_focus_text(payload: dict[str, Any]) -> str:
+def render_lineage_focus_text(payload: LineageFocusPayload) -> str:
     lines = [
         f"session: {payload['sessionDir']}",
         f"focus: {payload['focus'] or '(empty)'}",
@@ -511,7 +516,7 @@ def _render_markdown_list(lines: list[str], heading: str, entries: list[str]) ->
     lines.append("")
 
 
-def render_lineage_overview_markdown(payload: dict[str, Any], *, limit: int) -> str:
+def render_lineage_overview_markdown(payload: LineagePayload, *, limit: int) -> str:
     lines = [
         "# gotta session analyze",
         "",
@@ -556,7 +561,7 @@ def render_lineage_overview_markdown(payload: dict[str, Any], *, limit: int) -> 
     return "\n".join(lines) + "\n"
 
 
-def render_semantic_overview_markdown(payload: dict[str, Any]) -> str:
+def render_semantic_overview_markdown(payload: AnalysisOverviewPayload) -> str:
     lines = [
         "# gotta session analyze",
         "",
@@ -615,7 +620,7 @@ def render_semantic_overview_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_lineage_focus_markdown_section(payload: dict[str, Any]) -> list[str]:
+def render_lineage_focus_markdown_section(payload: LineageFocusPayload) -> list[str]:
     lines: list[str] = ["## Lineage Focus", ""]
     if not payload.get("matched"):
         lines.append("- Match: none")
@@ -690,7 +695,7 @@ def render_lineage_focus_markdown_section(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
-def render_semantic_focus_markdown_section(payload: dict[str, Any]) -> list[str]:
+def render_semantic_focus_markdown_section(payload: SemanticFocusPayload) -> list[str]:
     lines: list[str] = ["## Semantic Focus", ""]
     if not payload.get("matched"):
         lines.append("- Match: none")
@@ -781,8 +786,8 @@ def render_semantic_focus_markdown_section(payload: dict[str, Any]) -> list[str]
 
 def render_combined_focus_markdown(
     *,
-    lineage: dict[str, Any],
-    semantic: dict[str, Any],
+    lineage: LineageFocusPayload,
+    semantic: SemanticFocusPayload,
 ) -> str:
     focus = str(lineage.get("focus") or semantic.get("focus") or "").strip()
     lines = [
@@ -821,9 +826,9 @@ def render_single_focus_markdown(
 
 
 def render_analysis_overview_markdown(
-    overview: dict[str, Any],
+    overview: AnalysisOverviewPayload,
     *,
-    lineage: dict[str, Any],
+    lineage: LineagePayload,
     limit: int,
 ) -> str:
     lines = [

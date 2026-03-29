@@ -180,6 +180,32 @@ This file is the execution queue.
   More cleanup of this exact species would not; the next work that pays rent is
   pushing derived views toward ledger/state contracts and then typing the
   exported payload families that still move as anonymous records.
+- [x] Typed `session analyze` payload center landed.
+  - `src/gotta/plugins/session/analyze/model.py` now owns the exported payload
+    families for the analyze seam:
+    - `LineagePayload`
+    - `LineageFocusPayload`
+    - `SemanticPayload`
+    - `SemanticFocusPayload`
+    - `AnalysisOverviewPayload`
+    - `CombinedAnalysisPayload`
+  - The analyze builders, renderers, and entrypoint now consume the named
+    payload contracts instead of anonymous `dict[str, Any]` records:
+    - `src/gotta/plugins/session/analyze/focus.py`
+    - `src/gotta/plugins/session/analyze/lineage.py`
+    - `src/gotta/plugins/session/analyze/semantic.py`
+    - `src/gotta/plugins/session/analyze/overview.py`
+    - `src/gotta/plugins/session/analyze/render.py`
+    - `src/gotta/plugins/session/analyze/main.py`
+  - `src/gotta/plugins/session/analyze` no longer exports `Any` or
+    `dict[str, Any]` payload shapes.
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted a still-live anonymous payload seam in one
+  of the heaviest derived views.
+  More cleanup of this exact species inside `session analyze` would not; the
+  next work that pays rent is pushing the same named-payload discipline into the
+  remaining derived views and continuing to erase filesystem-shaped assumptions
+  there.
 
 ## Current Tranche
 
@@ -193,9 +219,12 @@ This file is the execution queue.
 - [x] Introduce explicit storage contracts and separate the contract layer from
   the concrete filesystem implementation.
 - [x] Type the artifact-pipeline records above storage.
-- [ ] Next tranche: keep pushing derived views toward ledger/state contracts
-  instead of concrete filesystem ownership, then type the exported payload
-  families that still move as anonymous records.
+- [x] Type the exported `session analyze` payload family and center it in one
+  truthful owner.
+- [ ] Next tranche: type the remaining derived-view payload families outside
+  `session analyze`, starting with `session lead`, `session scan`, and
+  `session timeline`, while continuing to erase filesystem-shaped assumptions in
+  those seams.
 
 ## Non-Negotiable Invariants
 

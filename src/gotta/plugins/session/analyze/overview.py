@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
+
+from .model import (
+    AnalysisOverviewPayload,
+    CombinedAnalysisPayload,
+    LineagePayload,
+    SemanticPayload,
+)
 
 
 def analysis_overview_payload(
-    lineage: dict[str, Any],
-    semantic: dict[str, Any],
+    lineage: LineagePayload,
+    semantic: SemanticPayload,
     *,
     limit: int,
-) -> dict[str, Any]:
+) -> AnalysisOverviewPayload:
     node_groups = Counter(
         str(node.get("group") or "")
         for node in semantic.get("nodes") or []
@@ -99,9 +105,9 @@ def analysis_overview_payload(
 def combined_analysis_payload(
     *,
     focus: str,
-    lineage: dict[str, Any],
-    semantic: dict[str, Any],
-) -> dict[str, Any]:
+    lineage: LineagePayload,
+    semantic: SemanticPayload,
+) -> CombinedAnalysisPayload:
     return {
         "mode": "all",
         "focus": focus,

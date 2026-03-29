@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any
 
 from ..parse import explicit_session_ref, require_started_session, session_dirs_for_read
 from ..scan.payload import scan_payload
 from .lineage import lineage_focus_payload, lineage_payload
+from .model import LineageFocusPayload, SemanticFocusPayload
 from .overview import (
     analysis_overview_payload,
     combined_analysis_payload,
@@ -48,8 +48,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         semantic_graph,
         limit=focus_limit,
     )
-    lineage_focus: dict[str, Any] | None = None
-    semantic_focus: dict[str, Any] | None = None
+    lineage_focus: LineageFocusPayload | None = None
+    semantic_focus: SemanticFocusPayload | None = None
     if focus_query:
         focus_scan = scan_payload(
             dirs,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
 
 from gotta.content.backend import scan_content_snapshots
 from gotta.content.model import ContentSnapshot
@@ -32,10 +31,22 @@ from ..core import (
 )
 from ..manifest.record import manifest_entries
 from .focus import focus_match_threshold, ordered_focus_scan_entries
+from .model import (
+    AnalyzeScanPayload,
+    LeadSourceSummary,
+    LineageCandidate,
+    LineageContent,
+    LineageFocusPayload,
+    LineageNeighbor,
+    LineagePayload,
+    LineageRevisionEdge,
+    LineageSource,
+    LineageSourceEdge,
+)
 
 
-def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
-    tracks: dict[tuple[str, tuple[str, str]], list[dict[str, str]]] = {}
+def _revision_edges(snapshots: list[ContentSnapshot]) -> list[LineageRevisionEdge]:
+    tracks: dict[tuple[str, tuple[str, str]], list[LineageRevisionEdge]] = {}
     for snapshot in snapshots:
         metadata = snapshot.artifact.metadata
         canonical = str(
@@ -60,9 +71,9 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
                     "rendering": render_variant_label(variant),
                 }
             )
-    edges: list[dict[str, str]] = []
+    edges: list[LineageRevisionEdge] = []
     for (locator, _variant), items in sorted(tracks.items()):
-        prior_item: dict[str, str] | None = None
+        prior_item: LineageRevisionEdge | None = None
         for item in sorted(
             items, key=lambda current: (current["timestamp"], current["digest"])
         ):
@@ -90,14 +101,14 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
     return edges
 
 
-def lineage_payload(dirs, *, session_ref: str = "") -> dict[str, Any]:
+def lineage_payload(dirs, *, session_ref: str = "") -> LineagePayload:
     snapshots = scan_content_snapshots(
         dirs.content_dir,
         session_dir=dirs.session_dir,
     )
     snapshot_by_digest = {snapshot.digest: snapshot for snapshot in snapshots}
-    entries: list[dict[str, Any]] = [dict(entry) for entry in manifest_entries(dirs)]
-    source_map: dict[str, dict[str, Any]] = {}
+    entries = [dict(entry) for entry in manifest_entries(dirs)]
+    source_map: dict[str, dict[str, object]] = {}
     edge_plugins: dict[tuple[str, str], list[str]] = {}
     edge_actors: dict[tuple[str, str], set[str]] = {}
     content_details: dict[str, dict[str, set[str]]] = {}
@@ -168,7 +179,7 @@ def lineage_payload(dirs, *, session_ref: str = "") -> dict[str, Any]:
 
     name_counts = Counter(snapshot_display_name(snapshot) for snapshot in snapshots)
 
-    content: list[dict[str, Any]] = []
+    content: list[LineageContent] = []
     for snapshot in snapshots:
         metadata = snapshot.artifact.metadata
         content.append(
@@ -212,7 +223,7 @@ def lineage_payload(dirs, *, session_ref: str = "") -> dict[str, Any]:
                 ),
             }
         )
-    sources = [
+    sources: list[LineageSource] = [
         {
             "locator": locator,
             "contentCount": len(state["content"]),
@@ -238,7 +249,7 @@ def lineage_payload(dirs, *, session_ref: str = "") -> dict[str, Any]:
         }
         for locator, state in sorted(source_map.items())
     ]
-    source_edges = [
+    source_edges: list[LineageSourceEdge] = [
         {
             "source": source,
             "checksum": checksum,
@@ -322,7 +333,7 @@ def lineage_payload(dirs, *, session_ref: str = "") -> dict[str, Any]:
     }
 
 
-def _lineage_source_candidate(item: dict[str, Any]) -> dict[str, Any]:
+def _lineage_source_candidate(item: LineageSource) -> LineageCandidate:
     return {
         "kind": "source",
         "label": str(item.get("locator") or ""),
@@ -333,7 +344,7 @@ def _lineage_source_candidate(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _lineage_content_candidate(item: dict[str, Any]) -> dict[str, Any]:
+def _lineage_content_candidate(item: LineageContent) -> LineageCandidate:
     return {
         "kind": "content",
         "label": str(item.get("preferredName") or ""),
@@ -346,7 +357,7 @@ def _lineage_content_candidate(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _lineage_lead_candidate(item: dict[str, Any]) -> dict[str, Any]:
+def _lineage_lead_candidate(item: LeadSourceSummary) -> LineageCandidate:
     return {
         "kind": "lead",
         "label": str(item.get("locator") or ""),
@@ -357,7 +368,7 @@ def _lineage_lead_candidate(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _lineage_focus_score(item: dict[str, Any], query: str) -> tuple[int, int, str]:
+def _lineage_focus_score(item: LineageCandidate, query: str) -> tuple[int, int, str]:
     query_lower = query.lower()
     candidates = [
         str(item.get("label") or ""),
@@ -382,11 +393,11 @@ def _lineage_focus_score(item: dict[str, Any], query: str) -> tuple[int, int, st
 
 
 def _empty_lineage_focus_payload(
-    payload: dict[str, Any],
+    payload: LineagePayload,
     *,
     query: str,
     next_step: str,
-) -> dict[str, Any]:
+) -> LineageFocusPayload:
     return {
         "sessionDir": payload["sessionDir"],
         "contentDir": payload["contentDir"],
@@ -410,12 +421,12 @@ def _empty_lineage_focus_payload(
 
 
 def lineage_focus_payload(
-    payload: dict[str, Any],
+    payload: LineagePayload,
     *,
     focus: str,
     limit: int,
-    scan_payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    scan_payload: AnalyzeScanPayload | None = None,
+) -> LineageFocusPayload:
     query = focus.strip()
     if not query:
         return _empty_lineage_focus_payload(
@@ -464,10 +475,10 @@ def lineage_focus_payload(
         )
     best_score = _lineage_focus_score(matches[0], query)[0] if matches else 0
     threshold = focus_match_threshold(best_score)
-    seeds: list[dict[str, Any]] = []
+    seeds: list[LineageCandidate] = []
     seen_seed_keys: set[tuple[str, str]] = set()
 
-    def add_seed(candidate: dict[str, Any]) -> None:
+    def add_seed(candidate: LineageCandidate) -> None:
         kind = str(candidate.get("kind") or "")
         if kind == "source":
             key = ("source", str(candidate.get("locator") or ""))
@@ -564,7 +575,7 @@ def lineage_focus_payload(
             selected_content.add(source_checksum)
     expand_source_and_revision_edges()
 
-    neighbor_candidates: list[dict[str, Any]] = []
+    neighbor_candidates: list[LineageNeighbor] = []
     for locator in sorted(selected_sources):
         if ("source", locator) in seen_seed_keys:
             continue

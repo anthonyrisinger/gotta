@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from .model import AnalyzeScanEntry, AnalyzeScanPayload
 
 
 def focus_match_threshold(best_score: int) -> int:
@@ -14,17 +14,13 @@ def focus_match_threshold(best_score: int) -> int:
 
 
 def ordered_focus_scan_entries(
-    scan_payload: dict[str, Any] | None,
+    scan_payload: AnalyzeScanPayload | None,
     *,
     limit: int,
-) -> list[dict[str, Any]]:
-    if not isinstance(scan_payload, dict):
+) -> list[AnalyzeScanEntry]:
+    if scan_payload is None:
         return []
-    entries = [
-        dict(entry)
-        for entry in scan_payload.get("entries") or []
-        if isinstance(entry, dict)
-    ]
+    entries = [dict(entry) for entry in scan_payload.get("entries") or []]
     ordered = sorted(
         entries,
         key=lambda entry: str(

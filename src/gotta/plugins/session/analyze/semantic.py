@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from ..core import provider_name, query_label, resource_label, topology_next_step
 from .focus import focus_match_threshold, ordered_focus_scan_entries
+from .model import (
+    AnalyzeScanPayload,
+    LineagePayload,
+    SemanticEdge,
+    SemanticFocusPayload,
+    SemanticNeighbor,
+    SemanticNode,
+    SemanticPayload,
+)
 
 
-def semantic_payload(lineage: dict[str, Any]) -> dict[str, Any]:
-    nodes: dict[str, dict[str, Any]] = {}
+def semantic_payload(lineage: LineagePayload) -> SemanticPayload:
+    nodes: dict[str, SemanticNode] = {}
     edges: set[tuple[str, str, str]] = set()
 
     def add_node(node_id: str, *, label: str, kind: str, group: str) -> None:
@@ -136,6 +143,10 @@ def semantic_payload(lineage: dict[str, Any]) -> dict[str, Any]:
     empty = not nodes and not edges
     discovery_count = int(lineage.get("discoveryArtifactCount") or 0)
     evidence_count = int(lineage.get("evidenceArtifactCount") or 0)
+    semantic_edges: list[SemanticEdge] = [
+        {"source": source, "target": target, "label": label}
+        for source, target, label in sorted(edges)
+    ]
     return {
         "sessionDir": lineage["sessionDir"],
         "contentDir": lineage["contentDir"],
@@ -150,17 +161,14 @@ def semantic_payload(lineage: dict[str, Any]) -> dict[str, Any]:
             evidence_count=evidence_count,
         ),
         "nodes": sorted(nodes.values(), key=lambda item: (item["kind"], item["label"])),
-        "edges": [
-            {"source": source, "target": target, "label": label}
-            for source, target, label in sorted(edges)
-        ],
+        "edges": semantic_edges,
     }
 
 
 def _semantic_node_follow_command(
-    node: dict[str, Any],
+    node: SemanticNode,
     *,
-    lineage: dict[str, Any],
+    lineage: LineagePayload,
 ) -> str:
     kind = str(node.get("kind") or "")
     node_id = str(node.get("id") or "")
@@ -178,9 +186,7 @@ def _semantic_node_follow_command(
     return ""
 
 
-def _semantic_focus_score(
-    node: dict[str, Any], query: str
-) -> tuple[int, int, int, str]:
+def _semantic_focus_score(node: SemanticNode, query: str) -> tuple[int, int, int, str]:
     query_lower = query.lower()
     label = str(node.get("label") or "")
     node_id = str(node.get("id") or "")
@@ -201,7 +207,7 @@ def _semantic_focus_score(
 
 
 def _semantic_neighbor_sort_key(
-    node: dict[str, Any],
+    node: SemanticNode,
     *,
     relation_labels: list[str],
 ) -> tuple[int, int, int, str, str]:
@@ -220,11 +226,11 @@ def _semantic_neighbor_sort_key(
 
 
 def _empty_semantic_focus_payload(
-    semantic: dict[str, Any],
+    semantic: SemanticPayload,
     *,
     query: str,
     next_step: str,
-) -> dict[str, Any]:
+) -> SemanticFocusPayload:
     return {
         "sessionDir": semantic["sessionDir"],
         "contentDir": semantic["contentDir"],
@@ -243,13 +249,13 @@ def _empty_semantic_focus_payload(
 
 
 def semantic_focus_payload(
-    lineage: dict[str, Any],
-    semantic: dict[str, Any],
+    lineage: LineagePayload,
+    semantic: SemanticPayload,
     *,
     focus: str,
     limit: int,
-    scan_payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    scan_payload: AnalyzeScanPayload | None = None,
+) -> SemanticFocusPayload:
     query = focus.strip()
     if not query:
         return _empty_semantic_focus_payload(
@@ -400,7 +406,7 @@ def semantic_focus_payload(
             and str(edge.get("target") or "") in selected_node_ids
         )
     ]
-    neighbor_records = []
+    neighbor_records: list[SemanticNeighbor] = []
     for neighbor_id in selected_neighbor_ids:
         node = dict(node_index[neighbor_id])
         node["followCommand"] = _semantic_node_follow_command(
