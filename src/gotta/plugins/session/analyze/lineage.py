@@ -37,9 +37,9 @@ from .focus import focus_match_threshold, ordered_focus_scan_entries
 def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
     tracks: dict[tuple[str, tuple[str, str]], list[dict[str, str]]] = {}
     for snapshot in snapshots:
+        metadata = snapshot.artifact.metadata
         canonical = str(
-            snapshot.metadata.get("canonical_locator", "")
-            or snapshot.metadata.get("locator", "")
+            metadata.get("canonical_locator", "") or metadata.get("locator", "")
         ).strip()
         if not canonical:
             continue
@@ -50,12 +50,12 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
                     "timestamp": event.timestamp,
                     "digest": snapshot.digest,
                     "preferred_name": str(
-                        snapshot.metadata.get("preferred_name", "") or event.link_name
+                        metadata.get("preferred_name", "") or event.link_name
                     ),
-                    "plugin": str(snapshot.metadata.get("plugin", "") or "unknown"),
+                    "plugin": str(metadata.get("plugin", "") or "unknown"),
                     "actor": rendered_actor(
-                        snapshot.metadata.get("actor"),
-                        session_root=snapshot.content_dir.parent.parent,
+                        metadata.get("actor"),
+                        session_root=snapshot.layout.artifact_dir.parent.parent,
                     ),
                     "rendering": render_variant_label(variant),
                 }
@@ -165,42 +165,50 @@ def lineage_payload(dirs, *, session_ref: str = "") -> dict[str, Any]:
 
     name_counts = Counter(snapshot_display_name(snapshot) for snapshot in snapshots)
 
-    content = [
-        {
-            "checksum": snapshot.digest,
-            "preferredName": snapshot_display_name(snapshot),
-            "artifactKind": artifact_kind(snapshot.metadata.get("artifact_kind")),
-            "contentLocator": content_locator(snapshot.digest),
-            "artifactLocator": snapshot_artifact_locator(snapshot),
-            "followCommand": session_read_command(
-                snapshot_artifact_locator(snapshot),
-                session_ref=session_ref,
-            ),
-            "nameCollision": name_counts[snapshot_display_name(snapshot)] > 1,
-            "nameCount": len(snapshot.names),
-            "fetchCount": len(snapshot.events),
-            "names": snapshot.names,
-            "firstFetchedAt": snapshot.events[0].timestamp if snapshot.events else "",
-            "lastFetchedAt": snapshot.events[-1].timestamp if snapshot.events else "",
-            "providers": sorted(
-                content_details.get(snapshot.digest, {}).get("providers", set())
-            ),
-            "actors": sorted(
-                content_details.get(snapshot.digest, {}).get("actors", set())
-            ),
-            "resourceHints": sorted(
-                content_details.get(snapshot.digest, {}).get("resource_hints", set())
-            ),
-            **resolved_visibility_metadata(
-                dict(snapshot.metadata),
-                provider=str(snapshot.metadata.get("plugin") or ""),
-                plugin=str(snapshot.metadata.get("plugin") or ""),
-                subcommand=str(snapshot.metadata.get("subcommand") or ""),
-                locator=str(snapshot_locator(snapshot)),
-            ),
-        }
-        for snapshot in snapshots
-    ]
+    content: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        metadata = snapshot.artifact.metadata
+        content.append(
+            {
+                "checksum": snapshot.digest,
+                "preferredName": snapshot_display_name(snapshot),
+                "artifactKind": artifact_kind(metadata.get("artifact_kind")),
+                "contentLocator": content_locator(snapshot.digest),
+                "artifactLocator": snapshot_artifact_locator(snapshot),
+                "followCommand": session_read_command(
+                    snapshot_artifact_locator(snapshot),
+                    session_ref=session_ref,
+                ),
+                "nameCollision": name_counts[snapshot_display_name(snapshot)] > 1,
+                "nameCount": len(snapshot.aliases),
+                "fetchCount": len(snapshot.events),
+                "names": [alias.name for alias in snapshot.aliases],
+                "firstFetchedAt": snapshot.events[0].timestamp
+                if snapshot.events
+                else "",
+                "lastFetchedAt": snapshot.events[-1].timestamp
+                if snapshot.events
+                else "",
+                "providers": sorted(
+                    content_details.get(snapshot.digest, {}).get("providers", set())
+                ),
+                "actors": sorted(
+                    content_details.get(snapshot.digest, {}).get("actors", set())
+                ),
+                "resourceHints": sorted(
+                    content_details.get(snapshot.digest, {}).get(
+                        "resource_hints", set()
+                    )
+                ),
+                **resolved_visibility_metadata(
+                    dict(metadata),
+                    provider=str(metadata.get("plugin") or ""),
+                    plugin=str(metadata.get("plugin") or ""),
+                    subcommand=str(metadata.get("subcommand") or ""),
+                    locator=str(snapshot_locator(snapshot)),
+                ),
+            }
+        )
     sources = [
         {
             "locator": locator,

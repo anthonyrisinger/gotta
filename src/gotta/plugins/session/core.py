@@ -368,10 +368,10 @@ def argv_output(argv: object) -> str:
 
 
 def render_variant(snapshot: ContentSnapshot) -> tuple[str, str]:
-    raw_subcommand = str(snapshot.metadata.get("subcommand", "")).strip()
+    metadata = snapshot.artifact.metadata
+    raw_subcommand = str(metadata.get("subcommand", "")).strip()
     locator = str(
-        snapshot.metadata.get("canonical_locator", "")
-        or snapshot.metadata.get("locator", "")
+        metadata.get("canonical_locator", "") or metadata.get("locator", "")
     ).strip()
     if raw_subcommand in {"search", "jql", "cql", "get", "status", "sql", "sync"}:
         subcommand = raw_subcommand
@@ -383,9 +383,9 @@ def render_variant(snapshot: ContentSnapshot) -> tuple[str, str]:
         subcommand = "cql"
     else:
         subcommand = "default"
-    output = argv_output(snapshot.metadata.get("argv"))
+    output = argv_output(metadata.get("argv"))
     if not output:
-        name = str(snapshot.metadata.get("preferred_name", "")).strip().lower()
+        name = str(metadata.get("preferred_name", "")).strip().lower()
         extension = Path(name).suffix.lower()
         output = {
             ".summary": "summary",
@@ -395,7 +395,7 @@ def render_variant(snapshot: ContentSnapshot) -> tuple[str, str]:
             ".html": "html",
             ".csv": "csv",
         }.get(extension, "")
-    content_type = str(snapshot.metadata.get("content_type", "")).strip().lower()
+    content_type = str(metadata.get("content_type", "")).strip().lower()
     flavor = output or content_type or "default"
     return (subcommand, flavor)
 

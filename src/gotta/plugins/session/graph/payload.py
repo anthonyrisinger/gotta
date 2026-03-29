@@ -52,7 +52,7 @@ def _content_record(
 ) -> GraphContent:
     preferred_name = content_names.get(checksum, "data")
     snapshot = snapshot_by_digest.get(checksum)
-    metadata = dict(snapshot.metadata) if snapshot is not None else {}
+    metadata = dict(snapshot.artifact.metadata) if snapshot is not None else {}
     plugin = _string(metadata.get("plugin"))
     content: GraphContent = {
         "checksum": checksum,

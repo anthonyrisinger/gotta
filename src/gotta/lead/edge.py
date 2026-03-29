@@ -60,7 +60,7 @@ def materialized_target_visibility(
 ) -> dict[str, object]:
     return best_visibility_metadata(
         *[
-            snapshot_by_digest[digest].metadata
+            snapshot_by_digest[digest].artifact.metadata
             for digest in sorted(source_index.get(locator, set()))
             if digest in snapshot_by_digest
         ]

@@ -41,14 +41,46 @@ This file is the execution queue.
   additional topology churn is still past diminishing returns.
   The work that is paying rent now is contract-first collapse, not more file
   motion.
+- [x] Logical ledger record tranche landed.
+  - `src/gotta/content/model.py` now centers:
+    - `ArtifactMetadata`
+    - `StoredArtifactLayout`
+    - `ArtifactRecord`
+    - `AliasRecord`
+    - `MaterializationEvent`
+    - `ManifestEntry`
+  - `Materialization` and `ContentSnapshot` now center logical records and
+    layout, with path-shaped compatibility exposed only as derived properties.
+  - `src/gotta/content/store.py` now produces logical ledger records instead of
+    exporting raw path bundles as the semantic center.
+  - First downstream consumers now read `artifact`, `layout`, `aliases`, and
+    `events` directly:
+    - `src/gotta/resolve/locate.py`
+    - `src/gotta/lead/resolve.py`
+    - `src/gotta/lead/cache.py`
+    - `src/gotta/lead/edge.py`
+    - `src/gotta/plugins/session/core.py`
+    - `src/gotta/plugins/session/timeline/stamp.py`
+    - `src/gotta/plugins/session/timeline/source.py`
+    - `src/gotta/plugins/session/analyze/lineage.py`
+    - `src/gotta/plugins/session/graph/payload.py`
+    - `src/gotta/plugins/session/lead/payload.py`
+    - `src/gotta/plugins/session/scan/payload.py`
+- [x] Diminishing-returns judgment for this cycle:
+  more registry or package churn would not pay rent.
+  The next work that pays rent is explicit storage contracts and continued
+  demotion of filesystem-shaped truth, not more naming or file-motion passes.
 
 ## Current Tranche
 
 - [x] Freeze the registry vocabulary in executable code.
 - [x] Push that vocabulary through top-level dispatch, help, route discovery,
   and ask-family binding dispatch.
-- [ ] Next tranche: split the logical ledger from filesystem-shaped storage
-  truth.
+- [x] Split the logical ledger from filesystem-shaped storage truth at the
+  record layer.
+- [ ] Next tranche: introduce explicit storage contracts and continue
+  separating logical ledger operations from the concrete filesystem
+  implementation.
 
 ## Non-Negotiable Invariants
 
@@ -80,7 +112,7 @@ This file is the execution queue.
 
 - [x] Replace the flat `PluginSpec` registry center with explicit code-level
   registry and binding kinds.
-- [ ] Stop exporting filesystem-shaped ledger truth from:
+- [x] Stop centering exported ledger truth on raw filesystem-shaped records in:
   - `src/gotta/content/model.py`
   - `src/gotta/content/store.py`
 - [ ] Remove runner/stdout fallback capture from federated `search` in
@@ -127,11 +159,11 @@ This file is the execution queue.
   - `StateStore`
   - `IndexStore`
 - [ ] Type the ledger records first:
-  - `ArtifactRecord`
-  - `ArtifactMetadata`
-  - `AliasRecord`
-  - `MaterializationEvent`
-  - `ManifestEntry`
+  - [x] `ArtifactRecord`
+  - [x] `ArtifactMetadata`
+  - [x] `AliasRecord`
+  - [x] `MaterializationEvent`
+  - [x] `ManifestEntry`
   - `SessionBindingRecord`
   - `ActorStateRecord`
   - `StateChannelRecord`
@@ -291,10 +323,15 @@ This file is the execution queue.
 
 ## Concrete Near-Term Queue
 
-- [ ] Implement `SurfaceBinding` and command-path declaration in the registry.
-- [ ] Introduce the first real ledger record types.
-- [ ] Start extracting logical ledger operations from `content/store.py`.
-- [ ] Replace filesystem-shaped exported records in `content/model.py`.
+- [x] Implement `SurfaceBinding` and command-path declaration in the registry.
+- [x] Introduce the first real ledger record types.
+- [x] Start extracting logical ledger operations from `content/store.py`.
+- [x] Replace filesystem-shaped exported records in `content/model.py`.
+- [ ] Introduce `LedgerStore`, `BlobStore`, `StateStore`, and `IndexStore`.
+- [ ] Continue splitting `content/store.py` into logical ledger operations and
+  concrete filesystem implementation.
+- [ ] Remove remaining internal dependence on compatibility properties from the
+  test surface, then delete those compatibility properties.
 - [ ] Type the lead kernel.
 - [ ] Type the first analyze/graph/timeline/session payload families.
 - [ ] Replace anonymous manifest and lead aggregate records with named types.

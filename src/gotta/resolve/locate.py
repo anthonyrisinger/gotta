@@ -103,7 +103,9 @@ def resolve_session_artifact_name(
     if not root.exists():
         return None
     matches = [
-        snapshot for snapshot in scan_content_store(root) if target in snapshot.names
+        snapshot
+        for snapshot in scan_content_store(root)
+        if any(alias.name == target for alias in snapshot.aliases)
     ]
     if not matches:
         return None
@@ -116,7 +118,7 @@ def resolve_session_artifact_name(
             f"use `artifact:{sanitize_name(target)}@<digest12>` or `content:<digest>` instead. "
             f"matching artifact locators: {suggestions}"
         )
-    return matches[0].data_path
+    return matches[0].layout.blob_path
 
 
 def resolve_artifact_locator(target: str, *, content_root: str = "") -> Path | None:
@@ -139,7 +141,7 @@ def resolve_artifact_locator(target: str, *, content_root: str = "") -> Path | N
     matches = [
         snapshot
         for snapshot in scan_content_store(root)
-        if desired_name in snapshot.names
+        if any(alias.name == desired_name for alias in snapshot.aliases)
         and (not digest_hint or snapshot.digest.startswith(digest_hint))
     ]
     if not matches:
@@ -152,7 +154,7 @@ def resolve_artifact_locator(target: str, *, content_root: str = "") -> Path | N
             f"ambiguous artifact locator '{target}' in the active session content store; "
             f"disambiguate with one of: {suggestions}"
         )
-    return matches[0].data_path
+    return matches[0].layout.blob_path
 
 
 def url_name(target: str) -> str:

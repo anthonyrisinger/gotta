@@ -43,12 +43,12 @@ def _strip_read_view_flags(locator: str) -> str:
 
 
 def aggregate_source_snapshot(snapshot: ContentSnapshot) -> bool:
-    subcommand = str(snapshot.metadata.get("subcommand") or "").strip().lower()
+    metadata = snapshot.artifact.metadata
+    subcommand = str(metadata.get("subcommand") or "").strip().lower()
     if subcommand in AGGREGATE_SOURCE_SUBCOMMANDS:
         return True
     locator = str(
-        snapshot.metadata.get("canonical_locator", "")
-        or snapshot.metadata.get("locator", "")
+        metadata.get("canonical_locator", "") or metadata.get("locator", "")
     ).strip()
     if any(
         token in locator
@@ -102,10 +102,10 @@ def _source_timestamp_for_mode(
 def counts_as_source_coverage_gap(snapshot: ContentSnapshot) -> bool:
     if aggregate_source_snapshot(snapshot):
         return False
-    plugin = str(snapshot.metadata.get("plugin", "")).strip() or "unknown-plugin"
+    metadata = snapshot.artifact.metadata
+    plugin = str(metadata.get("plugin", "")).strip() or "unknown-plugin"
     locator = str(
-        snapshot.metadata.get("canonical_locator", "")
-        or snapshot.metadata.get("locator", "")
+        metadata.get("canonical_locator", "") or metadata.get("locator", "")
     ).strip()
     if plugin == "read":
         base = _strip_read_view_flags(locator)
@@ -134,22 +134,21 @@ def source_timeline_events(
     events: list[dict[str, object]] = []
     coverage_gap_count = 0
     for snapshot in snapshots:
+        metadata = snapshot.artifact.metadata
         locator = str(
-            snapshot.metadata.get("canonical_locator", "")
-            or snapshot.metadata.get("locator", "")
+            metadata.get("canonical_locator", "") or metadata.get("locator", "")
         ).strip()
         source_payload = {
-            "plugin": str(snapshot.metadata.get("plugin", "")).strip()
-            or "unknown-plugin",
+            "plugin": str(metadata.get("plugin", "")).strip() or "unknown-plugin",
             "actor": rendered_actor(
-                snapshot.metadata.get("actor"),
+                metadata.get("actor"),
                 session_root=dirs.session_dir,
             ),
-            "target_actor": str(snapshot.metadata.get("target_actor") or "").strip(),
+            "target_actor": str(metadata.get("target_actor") or "").strip(),
             "locator": locator,
             "preferred_name": (
-                str(snapshot.metadata.get("preferred_name") or "").strip()
-                or (snapshot.names[0] if snapshot.names else "data")
+                snapshot.artifact.preferred_name.strip()
+                or (snapshot.aliases[0].name if snapshot.aliases else "data")
             ),
             "event_kind": "source",
         }
@@ -180,11 +179,10 @@ def source_timeline_events(
                 "source_updated_at": source_timestamps.get("source_updated_at", ""),
                 "source_published_at": source_timestamps.get("source_published_at", ""),
                 "checksum": snapshot.digest,
-                "artifactKind": artifact_kind(snapshot.metadata.get("artifact_kind")),
+                "artifactKind": artifact_kind(metadata.get("artifact_kind")),
                 "content_locator": content_locator(snapshot.digest),
                 "artifact_locator": artifact_human_locator(
-                    str(snapshot.metadata.get("preferred_name") or "").strip()
-                    or "data",
+                    snapshot.artifact.preferred_name.strip() or "data",
                     snapshot.digest,
                 ),
                 "fetched_at": fetched_at,
@@ -195,10 +193,10 @@ def source_timeline_events(
                 ),
                 **source_payload,
                 **resolved_visibility_metadata(
-                    dict(snapshot.metadata),
-                    provider=str(snapshot.metadata.get("plugin") or ""),
-                    plugin=str(snapshot.metadata.get("plugin") or ""),
-                    subcommand=str(snapshot.metadata.get("subcommand") or ""),
+                    dict(metadata),
+                    provider=str(metadata.get("plugin") or ""),
+                    plugin=str(metadata.get("plugin") or ""),
+                    subcommand=str(metadata.get("subcommand") or ""),
                     locator=locator,
                 ),
             }

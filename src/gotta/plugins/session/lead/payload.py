@@ -114,6 +114,7 @@ def leads_payload(
     artifacts: list[dict[str, object]] = []
     if lead_sources:
         for snapshot in selected:
+            metadata = snapshot.artifact.metadata
             edges = sorted(
                 selected_edges_by_checksum.get(snapshot.digest, []),
                 key=edge_best_first_sort_key,
@@ -131,9 +132,7 @@ def leads_payload(
                 {
                     "checksum": snapshot.digest,
                     "preferredName": snapshot_display_name(snapshot),
-                    "artifactKind": artifact_kind(
-                        snapshot.metadata.get("artifact_kind")
-                    ),
+                    "artifactKind": artifact_kind(metadata.get("artifact_kind")),
                     "sourceLocator": snapshot_locator(snapshot),
                     "artifactLocator": snapshot_artifact_locator(snapshot),
                     "contentLocator": content_locator(snapshot.digest),
@@ -141,10 +140,10 @@ def leads_payload(
                     "leadCount": len(edges),
                     "leads": edges[: max(limit, 0)],
                     **resolved_visibility_metadata(
-                        dict(snapshot.metadata),
-                        provider=str(snapshot.metadata.get("plugin") or ""),
-                        plugin=str(snapshot.metadata.get("plugin") or ""),
-                        subcommand=str(snapshot.metadata.get("subcommand") or ""),
+                        dict(metadata),
+                        provider=str(metadata.get("plugin") or ""),
+                        plugin=str(metadata.get("plugin") or ""),
+                        subcommand=str(metadata.get("subcommand") or ""),
                         locator=str(snapshot_locator(snapshot)),
                     ),
                 }

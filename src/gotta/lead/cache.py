@@ -67,7 +67,7 @@ def lead_mentions_for_snapshot(snapshot: ContentSnapshot) -> list[LeadMention]:
     cached = _read_lead_cache(snapshot)
     if cached is not None:
         return cached
-    text, degradations = _lead_text_for_path(snapshot.data_path)
+    text, degradations = _lead_text_for_path(snapshot.layout.blob_path)
     if not text.strip() and not degradations:
         return []
     mentions = filter_explicit_mentions(
@@ -82,7 +82,7 @@ def lead_mentions_for_snapshot(snapshot: ContentSnapshot) -> list[LeadMention]:
                 provider=snapshot_provider(snapshot),
             )
         )
-    _write_lead_cache(snapshot.content_dir, mentions, degradations=degradations)
+    _write_lead_cache(snapshot.layout.artifact_dir, mentions, degradations=degradations)
     return mentions
 
 
@@ -169,7 +169,7 @@ def _write_lead_cache(
 
 
 def _read_lead_cache(snapshot: ContentSnapshot) -> list[LeadMention] | None:
-    path = lead_cache_path(snapshot.content_dir)
+    path = lead_cache_path(snapshot.layout.artifact_dir)
     payload = _load_lead_cache_payload(path)
     if payload is None:
         return None

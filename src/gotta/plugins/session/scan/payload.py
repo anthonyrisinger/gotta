@@ -214,7 +214,7 @@ def matched_entry(
 
 
 def scan_display_text(snapshot: ContentSnapshot) -> str:
-    rendered = stored.stored_display(snapshot.data_path)
+    rendered = stored.stored_display(snapshot.layout.blob_path)
     return rendered.data.decode("utf-8", errors="replace")
 
 

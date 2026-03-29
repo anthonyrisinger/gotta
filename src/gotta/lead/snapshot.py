@@ -9,19 +9,19 @@ from .canon import provider_for_locator
 
 
 def snapshot_display_name(snapshot: ContentSnapshot) -> str:
-    preferred = str(snapshot.metadata.get("preferred_name", "")).strip()
+    preferred = snapshot.artifact.preferred_name.strip()
     if preferred:
         return preferred
-    if snapshot.names:
-        return snapshot.names[0]
+    if snapshot.aliases:
+        return snapshot.aliases[0].name
     return "data"
 
 
 def snapshot_locator(snapshot: ContentSnapshot) -> str:
+    metadata = snapshot.artifact.metadata
     return (
         str(
-            snapshot.metadata.get("canonical_locator", "")
-            or snapshot.metadata.get("locator", "")
+            metadata.get("canonical_locator", "") or metadata.get("locator", "")
         ).strip()
         or "unknown"
     )
@@ -62,7 +62,7 @@ def is_search_like_locator(locator: str) -> bool:
 
 
 def snapshot_is_search_like(snapshot: ContentSnapshot) -> bool:
-    metadata = snapshot.metadata
+    metadata = snapshot.artifact.metadata
     for key in ("canonical_locator", "locator"):
         if is_search_like_locator(str(metadata.get(key) or "")):
             return True
@@ -82,11 +82,13 @@ def snapshot_provider(snapshot: ContentSnapshot) -> str:
     provider = provider_for_locator(locator)
     if provider != "external":
         return provider
-    return str(snapshot.metadata.get("plugin") or "").strip()
+    return str(snapshot.artifact.metadata.get("plugin") or "").strip()
 
 
 def snapshot_subcommand(snapshot: ContentSnapshot) -> str:
-    raw_subcommand = str(snapshot.metadata.get("subcommand") or "").strip().casefold()
+    raw_subcommand = (
+        str(snapshot.artifact.metadata.get("subcommand") or "").strip().casefold()
+    )
     if raw_subcommand in {"search", "jql", "cql"}:
         return raw_subcommand
     locator = snapshot_locator(snapshot).casefold()
@@ -96,7 +98,7 @@ def snapshot_subcommand(snapshot: ContentSnapshot) -> str:
         return "jql"
     if ":cql " in locator:
         return "cql"
-    argv = snapshot.metadata.get("argv")
+    argv = snapshot.artifact.metadata.get("argv")
     if isinstance(argv, list) and argv:
         first = str(argv[0] or "").strip().casefold()
         if first in {"search", "jql", "cql"}:

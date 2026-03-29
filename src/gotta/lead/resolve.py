@@ -50,7 +50,8 @@ def resolve_lead_snapshots(
     name_matches = [
         snapshot
         for snapshot in ordered
-        if requested == snapshot_display_name(snapshot) or requested in snapshot.names
+        if requested == snapshot_display_name(snapshot)
+        or any(alias.name == requested for alias in snapshot.aliases)
     ]
     if len(name_matches) == 1:
         return name_matches

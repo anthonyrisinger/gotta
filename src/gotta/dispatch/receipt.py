@@ -53,9 +53,7 @@ def _receipt_payload(
             payload["emittedLines"] = emitted.emitted_lines
     if result is not None:
         payload["artifactKind"] = str(result.artifact_kind or "").strip() or "content"
-        payload["artifactLocator"] = artifact_locator(
-            result.name_link.name, result.digest
-        )
+        payload["artifactLocator"] = artifact_locator(result.alias.name, result.digest)
         payload["contentLocator"] = content_locator(result.digest)
         payload["followCommand"] = _result_follow_command(result)
     if extra:

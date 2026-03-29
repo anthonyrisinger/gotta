@@ -31,7 +31,7 @@ def _parse_source_timestamp(raw: str) -> str | None:
 
 
 def _source_timestamps(snapshot: ContentSnapshot) -> dict[str, str]:
-    metadata = snapshot.metadata
+    metadata = snapshot.artifact.metadata
     aliases = (
         ("source_published_at", "source_published_at"),
         ("source_updated_at", "source_updated_at"),
