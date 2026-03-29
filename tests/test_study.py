@@ -220,7 +220,7 @@ def test_select_pytest_targets_uses_unmapped_source_fallback() -> None:
 def test_select_pytest_targets_reports_no_changed_test_targets_for_docs_only() -> None:
     driver = _load_driver()
 
-    selection = driver.select_pytest_targets(("README.md",), REPO_ROOT)
+    selection = driver.select_pytest_targets(("docs/README.md",), REPO_ROOT)
 
     assert selection.reason == "no changed test targets"
     assert selection.targets == ()

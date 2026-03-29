@@ -49,14 +49,14 @@ For regular study and maintenance work, use the repo wrapper:
 ./scripts/study --types
 ```
 
-`./scripts/study` now defaults to the quick working-tree loop: namespace
+`./scripts/study` defaults to the quick working-tree loop: namespace
 policy, python-residue hygiene, full-tree `ruff check`, full-tree `ruff format
 --check`, and a deterministic targeted pytest slice derived from the current
-working tree. Treat that quick pass as squeeze-loop signal, not branch health.
-`--quick` is the explicit alias for that same mode.
+working tree. Treat that quick pass as local edit-loop signal, not branch
+health. `--quick` is the explicit alias for that same mode.
 
-`./scripts/study --discover` is the next-cut discovery surface. It is designed
-for selecting the next squeeze rather than validating one local edit: it
+`./scripts/study --discover` is the discovery surface. It is designed for
+exploratory diagnosis rather than validating one local edit: it
 summarizes slow tests, live complexity hotspots, pyright file pressure,
 import-linter contract status, and semgrep rule counts in one pass.
 
@@ -68,8 +68,8 @@ as `cloc`, `ctags`, and `ast-grep` when they are installed. `--deep` and
 and `--types` adds a source-only `pyright` pass as a pressure map.
 
 Quick and full modes both treat generated `__pycache__/` directories and
-`*.pyc` files under `src/` as residue. The study runner now scrubs that
-existing residue before the gate starts and suppresses new bytecode emission
+`*.pyc` files under `src/` as residue. The study runner scrubs existing
+residue before the gate starts and suppresses new bytecode emission
 in its subprocesses so the gate itself does not leave new source-tree exhaust
 behind.
 
@@ -128,9 +128,22 @@ the GitHub release layer.
 
 ## Architecture Overview
 
-`gotta` is a plugin-based CLI where the core orchestrates session lifecycle,
-content materialization, and actor coordination. Plugins provide the
-domain-specific surfaces.
+For the explicit 1.0 architecture direction, read
+[`ARCHITECTURE.md`](ARCHITECTURE.md) alongside [`TODO.md`](TODO.md). Together
+they capture the settled judgment
+about the irreducible core, surface model, artifact ledger, session model,
+backend contracts, type-system direction, and the explicit `exec` surface.
+
+`gotta` is a surface-oriented CLI where the core orchestrates session
+lifecycle, content materialization, and actor coordination. The live
+implementation routes many surfaces through a flat `PluginSpec` registry. The
+canonical 1.0 split is:
+
+- surface binding
+- distribution package
+- provider bundle
+- capability
+- backend
 
 ### How A Command Flows
 
@@ -138,8 +151,8 @@ domain-specific surfaces.
 gotta jira search "retry budget"
   │
   ├─ cli/             normalize argv, bind/discover session, hydrate context
-  ├─ builtin.py        discover plugin via entry points (gotta.plugins group)
-  ├─ dispatch/main.py   orchestrate plugin runtime over dispatch phases
+  ├─ builtin.py        registry shim for surfaces via entry points
+  ├─ dispatch/main.py   orchestrate surface runtime over dispatch phases
   ├─ resolve/           resolve read/search targets and invocation metadata
   ├─ content/           materialize captured output to content store
   └─ stdout             emit receipt with artifact and content locators
@@ -150,13 +163,12 @@ gotta jira search "retry budget"
 Core infrastructure:
 
 - **`cli/`** — CLI kernel package. `entry.py` owns top-level orchestration,
-  `argv.py` owns help/version and plugin extraction, `bind.py` owns session
+  `argv.py` owns help/version and surface extraction, `bind.py` owns session
   root creation/binding, `select.py` owns root-selection policy, `env.py`
   owns session environment hydration, and `notice.py` owns operator-facing
   receipts and warnings.
-- **`builtin.py`** — Plugin contract (`PluginSpec`), discovery via setuptools
-  entry points, core plugin factory registrations. Plugins declare a runner,
-  session access mode, and optional routing/materialization/naming callbacks.
+- **`builtin.py`** — Extension registry shim (`PluginSpec`), discovery
+  via setuptools entry points, and core surface registrations.
 - **`dispatch/`** — Dispatch kernel package. `main.py` orchestrates plugin
   runtime, `option.py` owns shared flag stripping, `stream.py` owns captured
   stdout/stderr, `budget.py` owns interactive output truncation, `metadata.py`
@@ -183,24 +195,6 @@ Core infrastructure:
   `payload.py`, `todo.py`, and `bind.py`), and `charter.py` owns want/goal
   text surfaces. The package itself is the `gotta.session` import boundary;
   there are no `__init__.py` files under `src/`.
-
-### Current Pressure Points
-
-The hottest responsibility concentrations are currently:
-
-- `src/gotta/plugins/session/`
-- `src/gotta/plugins/slack.py`
-- `src/gotta/plugins/jira.py`
-- `src/gotta/plugins/github/`
-- `src/gotta/session/`
-- `src/gotta/dispatch/`
-- `src/gotta/resolve/`
-- `src/gotta/lead/`
-- `src/gotta/cli/`
-
-Treat those as supernodes. Read them by function and contract, not as flat
-files. `radon`, `lizard`, `pyan3`, and `pyright` all converge on the same
-pressure map.
 
 ### Study Tooling
 
@@ -257,9 +251,12 @@ Utilities:
   and formats long-form help with boilerplate stripping.
 - **`compat.py`** — Python version compatibility shims.
 
-### Plugin Contract
+### Live Extension Contract
 
-A plugin is a `PluginSpec` (defined in `builtin.py`) with:
+An installable extension is registered as a `PluginSpec` in `builtin.py`. That
+is the live registration shim, not the final 1.0 doctrine.
+
+In the live codebase, a `PluginSpec` has:
 
 - **`runner`** — the callable that executes the command (`main(argv) -> int`)
 - **`session_access`** — `"none"`, `"read"`, or `"write"` (controls whether a
@@ -269,9 +266,10 @@ A plugin is a `PluginSpec` (defined in `builtin.py`) with:
 - **`canonical_locator`** / **`preferred_name`** / **`infer_content_type`** —
   optional callbacks for materialization metadata
 
-Plugins register through the `gotta.plugins` entry-point group in
-`pyproject.toml`. Core plugins are defined in `builtin.py`; external plugins
-in separate distributions shadow core plugins only if explicitly prioritized.
+Extensions register through the `gotta.plugins` entry-point group in
+`pyproject.toml`. Core surface registrations are defined in `builtin.py`;
+external extensions in separate distributions shadow core registrations only if
+explicitly prioritized.
 
 ### Testing Patterns
 

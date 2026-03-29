@@ -6,9 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "gotta"
 version = "0.46.1"
 description = "Session-rooted CLI for remote discovery, evidence acquisition, durable operator memory, and actor-coordinated workflows"
-readme = "README.md"
+readme = "docs/README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["docs/LICENSE.txt"]
 dependencies = [
     "platformdirs>=4.3",
     "tomli>=2.0; python_version < '3.11'",
@@ -47,7 +48,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/anthonyrisinger/gotta"
-Documentation = "https://github.com/anthonyrisinger/gotta#readme"
+Documentation = "https://github.com/anthonyrisinger/gotta/blob/main/docs/README.md"
 Repository = "https://github.com/anthonyrisinger/gotta"
 Issues = "https://github.com/anthonyrisinger/gotta/issues"
 Releases = "https://github.com/anthonyrisinger/gotta/releases"
