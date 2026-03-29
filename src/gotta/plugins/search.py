@@ -45,6 +45,28 @@ def die(message: str, code: int = 2) -> int:
     return code
 
 
+def _search_capture(provider: str):
+    from gotta.builtin import get_surface
+
+    surface = get_surface(provider)
+    if surface is None or surface.capture is None:
+        raise RuntimeError(
+            f"`gotta search {provider}:...` requires `{provider}` to define an explicit search capture hook"
+        )
+    return surface.capture
+
+
+def _search_project(provider: str):
+    from gotta.builtin import get_surface
+
+    surface = get_surface(provider)
+    if surface is None or surface.project is None:
+        raise RuntimeError(
+            f"`gotta search {provider}:...` requires `{provider}` to define an explicit search projection hook"
+        )
+    return surface.project
+
+
 def canonical_locator(argv: list[str]) -> str:
     if not argv or any(token in {"-h", "--help", "--help-all"} for token in argv):
         return "search:help"
@@ -79,38 +101,13 @@ def content_type(argv: list[str], name: str) -> str:
 
 def capture(argv: list[str], options: object):
     route = resolve_search_route(argv)
-    from gotta.builtin import get_surface
-    from gotta.capture import Capture
-    from gotta.dispatch.stream import capture_stdout
-
-    surface = get_surface(route.provider)
-    if surface and surface.capture is not None:
-        return surface.capture(route.provider_argv, options)
-    previous = os.environ.get(SUPPRESS_RECEIPTS_ENV)
-    os.environ[SUPPRESS_RECEIPTS_ENV] = "1"
-    try:
-        with capture_stdout() as captured:
-            code = load_surface_runner(route.provider)(route.provider_argv)
-    finally:
-        if previous is None:
-            os.environ.pop(SUPPRESS_RECEIPTS_ENV, None)
-        else:
-            os.environ[SUPPRESS_RECEIPTS_ENV] = previous
-    if code != 0:
-        detail = captured.getvalue().decode("utf-8", errors="replace").strip()
-        raise RuntimeError(detail or f"`{route.provider}` search capture failed")
-    return Capture(data=captured.getvalue())
+    return _search_capture(route.provider)(route.provider_argv, options)
 
 
 def project(argv: list[str], capture):
     route = resolve_search_route(argv)
-    from gotta.builtin import get_surface
-    from gotta.projection import projection_for_capture
-
-    surface = get_surface(route.provider)
-    if surface and surface.project is not None:
-        return surface.project(route.provider_argv, capture)
-    return projection_for_capture(capture, capture.data)
+    _search_capture(route.provider)
+    return _search_project(route.provider)(route.provider_argv, capture)
 
 
 def main(argv: list[str]) -> int:

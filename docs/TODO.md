@@ -332,6 +332,24 @@ This file is the execution queue.
   not; the next honest move is to reassess the remaining exported anonymous
   shapes outside the now-mostly-settled session-view cluster and then switch
   back to provider-local monolith and algorithmic pressure.
+- [x] Removed runner/stdout fallback capture from federated `search`.
+  - Top-level `gotta search` now routes materialization only through explicit
+    provider search hooks instead of buffering provider stdout and pretending it
+    is canonical capture:
+    - `src/gotta/plugins/search.py`
+  - The federated search surface now requires both halves of the provider
+    contract:
+    - explicit search capture hook
+    - explicit search projection hook
+  - Regression coverage now pins the dead fallback path and the explicit-hook
+    requirement:
+    - `tests/test_dispatch.py`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed a live contract violation from a federated
+  core surface. More cleanup of this exact species inside `search` would not;
+  the next honest move is to type the remaining actor/runtime status payload
+  cluster and `session doctor`, then reassess whether core-collapse is actually
+  done and provider-local pressure should take over.
 
 ## Current Tranche
 
@@ -357,9 +375,10 @@ This file is the execution queue.
   truthful owner.
 - [x] Finish the smaller typed-count and payload cleanup still left in
   `session graph`.
-- [ ] Next tranche: reassess the remaining exported anonymous shapes outside
-  the now-mostly-settled session-view cluster, then cut the next real contract
-  seam instead of reopening topology churn.
+- [x] Remove runner/stdout fallback capture from federated `search`.
+- [ ] Next tranche: type the remaining actor/runtime status payload cluster and
+  `session doctor`, then reassess whether the next real seam is still core
+  contract work or provider-local monolith pressure.
 
 ## Non-Negotiable Invariants
 
@@ -394,10 +413,17 @@ This file is the execution queue.
 - [x] Stop centering exported ledger truth on raw filesystem-shaped records in:
   - `src/gotta/content/model.py`
   - `src/gotta/content/store.py`
-- [ ] Remove runner/stdout fallback capture from federated `search` in
+- [x] Remove runner/stdout fallback capture from federated `search` in
   `src/gotta/plugins/search.py`.
-- [ ] Eliminate anonymous `dict`-shaped exported payloads in manifest, lead,
-  timeline, graph, analyze, and session-status surfaces.
+- [x] Eliminate anonymous `dict`-shaped exported payloads in the settled
+  session-view cluster:
+  - manifest
+  - lead
+  - timeline
+  - graph
+  - analyze
+- [ ] Type the remaining actor/runtime status payload cluster and `session
+  doctor`.
 
 ## Phase 0: Freeze The Vocabulary In Code
 

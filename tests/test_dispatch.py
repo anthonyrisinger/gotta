@@ -26,6 +26,7 @@ from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
 from gotta.projection import projection_bytes
 from gotta.plugins import read as read_plugin
+from gotta.plugins import search as search_plugin
 from gotta.plugins.session import main as session_plugin
 from gotta.resolve.search import SearchRouteError, resolve_search_route
 
@@ -291,6 +292,58 @@ def test_search_resolve_invocation_accepts_explicit_search_alias() -> None:
 
     assert resolved.resolved_plugin == "slack"
     assert resolved.resolved_argv == ["search", "ABC reboot"]
+
+
+def test_top_level_search_capture_requires_explicit_provider_capture_hook(
+    monkeypatch,
+) -> None:
+    original_get_surface = plugin_api.get_surface
+
+    monkeypatch.setattr(
+        search_plugin,
+        "load_surface_runner",
+        lambda *_args, **_kwargs: pytest.fail("runner fallback should be dead"),
+    )
+    monkeypatch.setattr(
+        plugin_api,
+        "get_surface",
+        lambda provider: (
+            SimpleNamespace(capture=None, project=lambda *_args: None)
+            if provider == "jira"
+            else original_get_surface(provider)
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"requires `jira` to define an explicit search capture hook",
+    ):
+        search_plugin.capture(["jira:Architecture"], object())
+
+
+def test_top_level_search_project_requires_explicit_provider_projection_hook(
+    monkeypatch,
+) -> None:
+    original_get_surface = plugin_api.get_surface
+
+    monkeypatch.setattr(
+        plugin_api,
+        "get_surface",
+        lambda provider: (
+            SimpleNamespace(
+                capture=lambda *_args: Capture(data=b"{}"),
+                project=None,
+            )
+            if provider == "jira"
+            else original_get_surface(provider)
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"requires `jira` to define an explicit search projection hook",
+    ):
+        search_plugin.project(["jira:Architecture"], Capture(data=b"{}"))
 
 
 def test_search_resolve_route_rejects_extra_unquoted_query_terms() -> None:
