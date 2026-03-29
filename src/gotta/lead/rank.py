@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .canon import low_signal_url_penalty
+from .model import LeadEdgeRecord, LeadSourceSummary
 
 FIRST_PARTY_LEAD_PROVIDERS = {
     "jira",
@@ -26,7 +27,7 @@ def is_first_party_target(*, provider: str, kind: str) -> bool:
     return provider in FIRST_PARTY_LEAD_PROVIDERS or kind != "url"
 
 
-def edge_best_first_sort_key(item: dict[str, object]) -> tuple[object, ...]:
+def edge_best_first_sort_key(item: LeadEdgeRecord) -> tuple[object, ...]:
     raw_examples = [str(value) for value in item.get("rawExamples") or [] if str(value)]
     query = raw_examples[0] if raw_examples else str(item.get("targetLocator") or "")
     source_rank = int(item.get("sourceRank") or 0)
@@ -46,7 +47,7 @@ def edge_best_first_sort_key(item: dict[str, object]) -> tuple[object, ...]:
     )
 
 
-def lead_source_best_first_sort_key(item: dict[str, object]) -> tuple[object, ...]:
+def lead_source_best_first_sort_key(item: LeadSourceSummary) -> tuple[object, ...]:
     artifact_count = int(item.get("artifactCount") or 0)
     search_like_source_count = int(item.get("searchLikeSourceCount") or 0)
     query = str(item.get("exampleRaw") or item.get("locator") or "")
@@ -94,7 +95,7 @@ def _search_seed_signal_sort_key(query: str) -> tuple[object, ...]:
     )
 
 
-def _lead_signal_penalty(item: dict[str, object]) -> int:
+def _lead_signal_penalty(item: LeadEdgeRecord | LeadSourceSummary) -> int:
     if bool(item.get("materialized")):
         return 0
     locator = str(item.get("locator") or item.get("targetLocator") or "").strip()

@@ -9,6 +9,7 @@ from gotta.source.visibility import (
     classify_visibility_metadata,
 )
 
+from .model import LeadEdgeRecord
 from .cache import lead_mentions_for_snapshot
 from .rank import edge_best_first_sort_key, is_first_party_target
 from .snapshot import (
@@ -72,16 +73,16 @@ def build_lead_edge_records(
     manifest_entries: list[dict[str, object]],
     *,
     classify_kind,
-) -> list[dict[str, object]]:
+) -> list[LeadEdgeRecord]:
     snapshot_by_digest = {snapshot.digest: snapshot for snapshot in snapshots}
     source_index = materialized_source_index(manifest_entries, snapshot_by_digest)
-    rendered: list[dict[str, object]] = []
+    rendered: list[LeadEdgeRecord] = []
     for snapshot in sorted(snapshots, key=snapshot_sort_key, reverse=True):
         source_locator = snapshot_locator(snapshot)
         source_search_like = snapshot_is_search_like(snapshot)
         source_provider = snapshot_provider(snapshot)
         source_subcommand = snapshot_subcommand(snapshot)
-        edge_state: dict[str, dict[str, object]] = {}
+        edge_state: dict[str, LeadEdgeRecord] = {}
         for mention in lead_mentions_for_snapshot(snapshot):
             target_locator = mention.canonical_locator.strip()
             if not target_locator or target_locator == source_locator:
@@ -106,6 +107,11 @@ def build_lead_edge_records(
                     "sourceProvider": source_provider,
                     "sourceSubcommand": source_subcommand,
                     "sourceRank": mention.ordinal if source_search_like else 0,
+                    "materialized": False,
+                    "targetArtifactLocators": [],
+                    "targetContentLocators": [],
+                    "firstParty": False,
+                    "searchSeed": False,
                 },
             )
             state["occurrenceCount"] = int(state["occurrenceCount"]) + 1
@@ -152,7 +158,15 @@ def build_lead_edge_records(
                 kind=str(state["kind"]),
             )
             state["searchSeed"] = str(state["kind"]).endswith("-search")
-            state.update(target_visibility)
+            for key in (
+                "visibility_level",
+                "visibility_boundary",
+                "visibility_confidence",
+                "visibility_basis",
+            ):
+                value = target_visibility.get(key)
+                if value:
+                    state[key] = value
             rendered.append(state)
     return sorted(
         rendered,

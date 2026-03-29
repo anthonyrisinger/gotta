@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 from ..core import (
     append_count_section,
     filter_suffix,
@@ -13,29 +11,20 @@ from ..core import (
     stored_target_locators,
     visibility_summary,
 )
+from .model import LeadsPayload
 
 
 def _int_value(value: object) -> int:
     return value if isinstance(value, int) else 0
 
 
-def _object_records(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, Iterable) or isinstance(value, (str, bytes, dict)):
-        return []
-    records: list[dict[str, object]] = []
-    for item in value:
-        if isinstance(item, dict):
-            records.append(item)
-    return records
-
-
 def _string_items(value: object) -> list[str]:
-    if not isinstance(value, Iterable) or isinstance(value, (str, bytes, dict)):
+    if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item)]
 
 
-def render_leads_text(payload: dict[str, object]) -> str:
+def render_leads_text(payload: LeadsPayload) -> str:
     lines = [
         f"session: {payload['sessionDir']}",
         f"target: {payload['target'] or '(session-wide)'}",
@@ -73,7 +62,7 @@ def render_leads_text(payload: dict[str, object]) -> str:
     append_count_section(
         top_providers_lines,
         heading="top providers",
-        records=_object_records(payload.get("topProviders")),
+        records=payload.get("topProviders") or [],
         key="provider",
     )
     lines.extend(top_providers_lines)
@@ -81,7 +70,7 @@ def render_leads_text(payload: dict[str, object]) -> str:
     append_count_section(
         top_relation_lines,
         heading="top relations",
-        records=_object_records(payload.get("topRelations")),
+        records=payload.get("topRelations") or [],
         key="relation",
     )
     lines.extend(top_relation_lines)
@@ -89,7 +78,7 @@ def render_leads_text(payload: dict[str, object]) -> str:
         lines.append(f"next: {payload['nextStep']}")
     if payload["bestOverall"]:
         lines.append("best leads:")
-        for lead in _object_records(payload.get("bestOverall")):
+        for lead in payload.get("bestOverall") or []:
             relation = ", ".join(
                 value for value in _string_items(lead.get("relationKinds")) if value
             )
@@ -115,7 +104,7 @@ def render_leads_text(payload: dict[str, object]) -> str:
                 lines.append(f"    context: {contexts[0]}")
     if payload["providerHighlights"]:
         lines.append("provider highlights:")
-        for lead in _object_records(payload.get("providerHighlights")):
+        for lead in payload.get("providerHighlights") or []:
             relation = ", ".join(
                 value for value in _string_items(lead.get("relationKinds")) if value
             )
@@ -126,7 +115,7 @@ def render_leads_text(payload: dict[str, object]) -> str:
             lines.append(f"    follow: `{lead['followCommand']}`")
     if payload["artifacts"] and (payload["target"] or payload["artifactCount"] == 1):
         lines.append("source context:")
-        for artifact in _object_records(payload.get("artifacts")):
+        for artifact in payload.get("artifacts") or []:
             lines.append(
                 f"- {artifact['preferredName']} ({str(artifact['checksum'])[:12]})"
             )
@@ -144,7 +133,7 @@ def render_leads_text(payload: dict[str, object]) -> str:
             if not artifact["leads"]:
                 lines.append("  leads: none")
                 continue
-            for lead in _object_records(artifact.get("leads")):
+            for lead in artifact.get("leads") or []:
                 lines.append(
                     f"  - [{'; '.join(lead_signal_labels(lead, aggregated=False))}] "
                     f"{lead['targetLocator']} ({lead['provider']}, {lead['relation']})"

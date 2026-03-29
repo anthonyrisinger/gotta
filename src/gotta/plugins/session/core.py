@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping, Sequence
 import hashlib
 from pathlib import Path
 import re
+from typing import TypeVar
 import urllib.parse
 import uuid
 
@@ -41,6 +43,7 @@ LEADS_PROVIDER_HIGHLIGHT_LIMIT = 4
 ANALYZE_ANCHOR_PREVIEW_LIMIT = 4
 ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT = 4
 ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT = 8
+_ItemT = TypeVar("_ItemT")
 
 TIMELINE_MODE_HELP = "chronology mode: acquired, created, updated, or best-effort"
 
@@ -133,14 +136,22 @@ def filter_suffix(raw_query: object) -> str:
     return f"; filter {query!r}" if query else ""
 
 
+def _list_value(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def _int_value(value: object) -> int:
+    return value if isinstance(value, int) else 0
+
+
 def paginate_items(
-    items: list[dict[str, object]] | list[dict[str, str]],
+    items: Sequence[_ItemT],
     *,
     limit: int,
     offset: int,
     include_all: bool,
     default_tail_window: bool = False,
-) -> tuple[list[dict[str, object]] | list[dict[str, str]], dict[str, object]]:
+) -> tuple[list[_ItemT], dict[str, object]]:
     total_count = len(items)
     normalized_limit = max(limit, 0)
     explicit_offset = max(offset, 0)
@@ -153,10 +164,10 @@ def paginate_items(
     ):
         applied_offset = max(total_count - normalized_limit, 0)
     if include_all:
-        paged = items[applied_offset:]
+        paged = list(items[applied_offset:])
         applied_limit: int | None = None
     else:
-        paged = items[applied_offset : applied_offset + normalized_limit]
+        paged = list(items[applied_offset : applied_offset + normalized_limit])
         applied_limit = normalized_limit
     shown_count = len(paged)
     next_offset = applied_offset + shown_count
@@ -208,8 +219,8 @@ def artifact_human_locator(preferred_name: str, checksum: str) -> str:
     return artifact_locator(preferred_name or "data", checksum)
 
 
-def visibility_summary(payload: dict[str, object] | dict[str, str]) -> str:
-    visibility = normalize_visibility_metadata(payload)
+def visibility_summary(payload: Mapping[str, object]) -> str:
+    visibility = normalize_visibility_metadata(dict(payload))
     if not visibility:
         return ""
     return (
@@ -219,14 +230,14 @@ def visibility_summary(payload: dict[str, object] | dict[str, str]) -> str:
 
 
 def resolved_visibility_metadata(
-    payload: dict[str, object] | dict[str, str],
+    payload: Mapping[str, object],
     *,
     provider: str = "",
     plugin: str = "",
     subcommand: str = "",
     locator: str = "",
 ) -> dict[str, object]:
-    existing = normalize_visibility_metadata(payload)
+    existing = normalize_visibility_metadata(dict(payload))
     classification_payload = {
         key: value
         for key, value in payload.items()
@@ -279,14 +290,14 @@ def append_count_section(
     lines: list[str],
     *,
     heading: str,
-    records: list[dict[str, object]],
+    records: Sequence[Mapping[str, object]],
     key: str,
 ) -> None:
     if not records:
         return
     lines.append(f"{heading}:")
     for record in records:
-        lines.append(f"  - {record[key]}: {int(record['count'])}")
+        lines.append(f"  - {record[key]}: {_int_value(record.get('count'))}")
 
 
 def append_preview_heading(
@@ -486,7 +497,7 @@ def lead_kind(locator: str, provider: str) -> str:
     return f"{provider or 'external'}-reference"
 
 
-def lead_signal_labels(lead: dict[str, object], *, aggregated: bool) -> list[str]:
+def lead_signal_labels(lead: Mapping[str, object], *, aggregated: bool) -> list[str]:
     labels = [
         "native" if bool(lead.get("firstParty")) else "web",
         "materialized" if bool(lead.get("materialized")) else "unmaterialized",
@@ -494,10 +505,10 @@ def lead_signal_labels(lead: dict[str, object], *, aggregated: bool) -> list[str
     if bool(lead.get("searchSeed")):
         labels.append("search seed")
     if aggregated:
-        labels.append(f"artifacts {int(lead.get('artifactCount') or 0)}")
-    labels.append(f"mentions {int(lead.get('occurrenceCount') or 0)}")
-    search_like_source_count = int(lead.get("searchLikeSourceCount") or 0)
-    artifact_count = int(lead.get("artifactCount") or 0)
+        labels.append(f"artifacts {_int_value(lead.get('artifactCount'))}")
+    labels.append(f"mentions {_int_value(lead.get('occurrenceCount'))}")
+    search_like_source_count = _int_value(lead.get("searchLikeSourceCount"))
+    artifact_count = _int_value(lead.get("artifactCount"))
     if search_like_source_count:
         if artifact_count and search_like_source_count >= artifact_count:
             labels.append("search/listing only")
@@ -506,22 +517,24 @@ def lead_signal_labels(lead: dict[str, object], *, aggregated: bool) -> list[str
     return labels
 
 
-def stored_target_locators(lead: dict[str, object]) -> list[str]:
+def stored_target_locators(lead: Mapping[str, object]) -> list[str]:
     return [
         str(value)
         for value in (
-            list(lead.get("artifactLocators") or [])
-            + list(lead.get("contentLocators") or [])
-            + list(lead.get("targetArtifactLocators") or [])
-            + list(lead.get("targetContentLocators") or [])
+            _list_value(lead.get("artifactLocators"))
+            + _list_value(lead.get("contentLocators"))
+            + _list_value(lead.get("targetArtifactLocators"))
+            + _list_value(lead.get("targetContentLocators"))
         )
         if str(value)
     ]
 
 
-def render_search_origins(lead: dict[str, object]) -> str:
+def render_search_origins(lead: Mapping[str, object]) -> str:
     origins = [
-        origin for origin in lead.get("searchOrigins") or [] if isinstance(origin, dict)
+        origin
+        for origin in _list_value(lead.get("searchOrigins"))
+        if isinstance(origin, dict)
     ]
     parts: list[str] = []
     for origin in origins[:3]:

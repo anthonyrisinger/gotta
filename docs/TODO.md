@@ -206,6 +206,35 @@ This file is the execution queue.
   next work that pays rent is pushing the same named-payload discipline into the
   remaining derived views and continuing to erase filesystem-shaped assumptions
   there.
+- [x] Typed `session lead` payload center landed.
+  - Shared cross-package lead records now live in:
+    - `src/gotta/lead/model.py`
+      - `LeadEdgeRecord`
+      - `LeadSourceSummary`
+      - `LeadSearchOrigin`
+  - The `session leads` surface now has a truthful payload owner:
+    - `src/gotta/plugins/session/lead/model.py`
+      - `LeadArtifact`
+      - `LeadsPayload`
+      - `ProviderCountRecord`
+      - `RelationCountRecord`
+  - The lead builders, ranking helpers, and session renderer now consume the
+    named payload contracts instead of anonymous `dict[str, object]` exports:
+    - `src/gotta/lead/edge.py`
+    - `src/gotta/lead/aggregate.py`
+    - `src/gotta/lead/rank.py`
+    - `src/gotta/plugins/session/core.py`
+    - `src/gotta/plugins/session/lead/payload.py`
+    - `src/gotta/plugins/session/lead/render.py`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/lead src/gotta/plugins/session/lead src/gotta/plugins/session/core.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted another still-live anonymous derived-view
+  seam and forced the shared lead records to become first-class contracts.
+  More cleanup of this exact species inside `session lead` would not; the next
+  work that pays rent is the remaining derived-view payload families outside
+  `analyze` and `lead`, especially `session scan` and `session timeline`.
 
 ## Current Tranche
 
@@ -221,8 +250,10 @@ This file is the execution queue.
 - [x] Type the artifact-pipeline records above storage.
 - [x] Type the exported `session analyze` payload family and center it in one
   truthful owner.
+- [x] Type the exported `session lead` payload family and promote shared lead
+  edge/summary records into a cross-package model center.
 - [ ] Next tranche: type the remaining derived-view payload families outside
-  `session analyze`, starting with `session lead`, `session scan`, and
+  `session analyze` and `session lead`, starting with `session scan` and
   `session timeline`, while continuing to erase filesystem-shaped assumptions in
   those seams.
 

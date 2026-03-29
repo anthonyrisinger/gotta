@@ -7,6 +7,7 @@ from gotta.content.model import ResolvedDirs
 from gotta.content.path import content_locator
 from gotta.lead.aggregate import aggregate_lead_sources
 from gotta.lead.edge import build_lead_edge_records
+from gotta.lead.model import LeadEdgeRecord, LeadSourceSummary
 from gotta.lead.rank import edge_best_first_sort_key
 from gotta.lead.resolve import resolve_lead_snapshots
 from gotta.lead.snapshot import (
@@ -32,12 +33,52 @@ from ..core import (
     topology_next_step,
 )
 from ..manifest.record import manifest_entries
+from .model import LeadArtifact, LeadsPayload, ProviderCountRecord, RelationCountRecord
 
 
 def _string_items(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _provider_count_records(values: list[str]) -> list[ProviderCountRecord]:
+    rendered: list[ProviderCountRecord] = []
+    for record in top_count_records(values, key="provider"):
+        count = record.get("count")
+        provider_record: ProviderCountRecord = {
+            "provider": str(record.get("provider") or ""),
+            "count": count if isinstance(count, int) else 0,
+        }
+        rendered.append(provider_record)
+    return rendered
+
+
+def _relation_count_records(values: list[str]) -> list[RelationCountRecord]:
+    rendered: list[RelationCountRecord] = []
+    for record in top_count_records(values, key="relation"):
+        count = record.get("count")
+        relation_record: RelationCountRecord = {
+            "relation": str(record.get("relation") or ""),
+            "count": count if isinstance(count, int) else 0,
+        }
+        rendered.append(relation_record)
+    return rendered
+
+
+def _paging_int(paging: dict[str, object], key: str) -> int:
+    value = paging.get(key)
+    return value if isinstance(value, int) else 0
+
+
+def _paging_next_offset(paging: dict[str, object]) -> int | None:
+    value = paging.get("nextOffset")
+    return value if isinstance(value, int) or value is None else None
+
+
+def _paging_bool(paging: dict[str, object], key: str) -> bool:
+    value = paging.get(key)
+    return value if isinstance(value, bool) else False
 
 
 def leads_payload(
@@ -49,7 +90,7 @@ def leads_payload(
     offset: int = 0,
     include_all: bool = False,
     session_ref: str = "",
-) -> dict[str, object]:
+) -> LeadsPayload:
     snapshots = scan_content_snapshots(
         dirs.content_dir,
         session_dir=dirs.session_dir,
@@ -103,7 +144,7 @@ def leads_payload(
         for lead in lead_sources
         if str(lead.get("locator") or "").strip()
     }
-    selected_edges_by_checksum: dict[str, list[dict[str, object]]] = {}
+    selected_edges_by_checksum: dict[str, list[LeadEdgeRecord]] = {}
     for edge in edge_records:
         if (
             selected_lead_locators
@@ -114,7 +155,7 @@ def leads_payload(
         selected_edges_by_checksum.setdefault(str(edge["sourceChecksum"]), []).append(
             edge
         )
-    artifacts: list[dict[str, object]] = []
+    artifacts: list[LeadArtifact] = []
     if lead_sources:
         for snapshot in selected:
             metadata = snapshot.artifact.metadata
@@ -131,29 +172,42 @@ def leads_payload(
                         target_locator,
                         session_ref=session_ref,
                     )
-            artifacts.append(
-                {
-                    "checksum": snapshot.digest,
-                    "preferredName": snapshot_display_name(snapshot),
-                    "artifactKind": artifact_kind(metadata.get("artifact_kind")),
-                    "sourceLocator": snapshot_locator(snapshot),
-                    "artifactLocator": snapshot_artifact_locator(snapshot),
-                    "contentLocator": content_locator(snapshot.digest),
-                    "lastFetchedAt": snapshot_last_fetched_at(snapshot),
-                    "leadCount": len(edges),
-                    "leads": edges[: max(limit, 0)],
-                    **resolved_visibility_metadata(
-                        dict(metadata),
-                        provider=str(metadata.get("plugin") or ""),
-                        plugin=str(metadata.get("plugin") or ""),
-                        subcommand=str(metadata.get("subcommand") or ""),
-                        locator=str(snapshot_locator(snapshot)),
-                    ),
-                }
+            artifact_visibility = resolved_visibility_metadata(
+                dict(metadata),
+                provider=str(metadata.get("plugin") or ""),
+                plugin=str(metadata.get("plugin") or ""),
+                subcommand=str(metadata.get("subcommand") or ""),
+                locator=str(snapshot_locator(snapshot)),
             )
+            artifact: LeadArtifact = {
+                "checksum": snapshot.digest,
+                "preferredName": snapshot_display_name(snapshot),
+                "artifactKind": artifact_kind(metadata.get("artifact_kind")),
+                "sourceLocator": snapshot_locator(snapshot),
+                "artifactLocator": snapshot_artifact_locator(snapshot),
+                "contentLocator": content_locator(snapshot.digest),
+                "lastFetchedAt": snapshot_last_fetched_at(snapshot),
+                "leadCount": len(edges),
+                "leads": edges[: max(limit, 0)],
+            }
+            visibility_level = artifact_visibility.get("visibility_level")
+            if isinstance(visibility_level, str) and visibility_level:
+                artifact["visibility_level"] = visibility_level
+            visibility_boundary = artifact_visibility.get("visibility_boundary")
+            if isinstance(visibility_boundary, str) and visibility_boundary:
+                artifact["visibility_boundary"] = visibility_boundary
+            visibility_confidence = artifact_visibility.get("visibility_confidence")
+            if isinstance(visibility_confidence, str) and visibility_confidence:
+                artifact["visibility_confidence"] = visibility_confidence
+            visibility_basis = artifact_visibility.get("visibility_basis")
+            if isinstance(visibility_basis, list) and visibility_basis:
+                artifact["visibility_basis"] = [
+                    str(value) for value in visibility_basis if str(value)
+                ]
+            artifacts.append(artifact)
     best_overall = lead_sources[:LEADS_BEST_OVERALL_LIMIT]
     best_locators = {str(item.get("locator") or "").strip() for item in best_overall}
-    provider_highlights: list[dict[str, object]] = []
+    provider_highlights: list[LeadSourceSummary] = []
     highlighted_providers = {
         str(item.get("provider") or "").strip()
         for item in best_overall
@@ -183,18 +237,16 @@ def leads_payload(
         1 for item in artifacts if item.get("artifactKind") == "evidence"
     )
     empty = not artifacts and not lead_sources
-    top_providers = top_count_records(
+    top_providers = _provider_count_records(
         [str(source.get("provider") or "").strip() for source in lead_sources],
-        key="provider",
     )
-    top_relations = top_count_records(
+    top_relations = _relation_count_records(
         [
             str(relation).strip()
             for source in lead_sources
             for relation in _string_items(source.get("relationKinds"))
             if str(relation).strip()
         ],
-        key="relation",
     )
     next_step = (
         topology_next_step(
@@ -209,7 +261,12 @@ def leads_payload(
             else ""
         )
     )
-    return {
+    payload_offset: int = _paging_int(paging, "offset")
+    payload_total: int = _paging_int(paging, "totalCount")
+    payload_shown: int = _paging_int(paging, "shownCount")
+    payload_next: int | None = _paging_next_offset(paging)
+    payload_truncated: bool = _paging_bool(paging, "truncated")
+    payload: LeadsPayload = {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "target": target.strip(),
@@ -221,7 +278,11 @@ def leads_payload(
         "topProviders": top_providers,
         "topRelations": top_relations,
         "leadCount": len(lead_sources),
-        **paging,
+        "totalCount": payload_total,
+        "shownCount": payload_shown,
+        "offset": payload_offset,
+        "nextOffset": payload_next,
+        "truncated": payload_truncated,
         "materializedLeadCount": materialized_count,
         "unmaterializedLeadCount": len(lead_sources) - materialized_count,
         "leadSources": paged_sources,
@@ -231,3 +292,4 @@ def leads_payload(
         "empty": empty,
         "nextStep": next_step,
     }
+    return payload
