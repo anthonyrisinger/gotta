@@ -13,6 +13,7 @@ from gotta.capture import Capture
 from gotta.content.env import CONTENT_ENV, SESSION_ENV
 from gotta.content.model import CommonOptions, ContentError, ResolvedDirs
 from gotta.content.scope import resolve_dirs, session_is_initialized
+from gotta.projection import Projection
 from gotta.resolve.invoke import ResolvedInvocation
 
 
@@ -57,7 +58,7 @@ def _captured_execution(
     surface: str,
     argv: list[str],
     options: CommonOptions,
-) -> tuple[Capture, bytes]:
+) -> tuple[Capture, Projection]:
     binding = get_binding(surface)
     if binding is None or binding.capture is None or binding.project is None:
         raise RuntimeError(f"surface `{surface}` does not support canonical capture")

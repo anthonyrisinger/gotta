@@ -24,6 +24,7 @@ from gotta.dispatch.main import run_plugin
 from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
 from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
+from gotta.projection import Projection, projection_bytes, projection_for_capture
 from gotta.resolve.intent import SUPPRESS_MATERIALIZATION_ENV
 from gotta.resolve.read import build_parser, parse_args, resolve_read_target
 from gotta.project import html_markdown, looks_text, pretty_json
@@ -393,36 +394,43 @@ def _canonical_remote_name(target: str, content_type: str) -> str:
     return f"{raw_name}.bin"
 
 
-def _project_html(data: bytes) -> bytes:
+def _project_html(data: bytes) -> Projection:
     try:
         markdown = html_markdown(data)
     except RuntimeError:
         markdown = None
-    return markdown if markdown is not None else data
+    if markdown is None:
+        return projection_bytes(data, content_type="text/html")
+    return projection_bytes(markdown, content_type="text/markdown")
 
 
-def _project_canonical(capture: Capture) -> bytes:
-    content_type = capture.type.split(";", 1)[0].strip().lower()
+def _project_canonical(capture: Capture) -> Projection:
+    content_type = capture.content_type.split(";", 1)[0].strip().lower()
     if content_type == "text/html":
         return _project_html(capture.data)
     if content_type in {"application/json", "text/json"}:
-        return pretty_json(capture.data)
+        return projection_bytes(
+            pretty_json(capture.data), content_type="application/json"
+        )
     if content_type.startswith("text/") or looks_text(capture.data):
-        return capture.data
+        return projection_for_capture(capture, capture.data)
     lines = [
         "# Binary Content",
         "",
-        f"- Content Type: `{capture.type or 'application/octet-stream'}`",
+        f"- Content Type: `{capture.content_type or 'application/octet-stream'}`",
         f"- Bytes: {len(capture.data)}",
         "",
         "Use the provider-native surface or a raw file tool if you need the uninterpreted bytes.",
         "",
     ]
-    return "\n".join(lines).encode("utf-8")
+    return projection_bytes(
+        "\n".join(lines).encode("utf-8"),
+        content_type="text/markdown",
+    )
 
 
-def _display_projection(capture: Capture) -> bytes:
-    stored_projector = str(capture.meta.get("projector") or "").strip()
+def _display_projection(capture: Capture) -> Projection:
+    stored_projector = str(capture.metadata.get("projector") or "").strip()
     if stored_projector:
         spec = get_plugin(stored_projector)
         if spec and spec.project is not None:
@@ -463,15 +471,15 @@ def capture(argv: list[str], options: object) -> Capture:
             _emit_truncation_note()
         return Capture(
             data=data,
-            name=_canonical_remote_name(target, content_type),
-            type=content_type or "application/octet-stream",
+            preferred_name=_canonical_remote_name(target, content_type),
+            content_type=content_type or "application/octet-stream",
         )
     raise RuntimeError(
         f"read target kind `{resolved.kind}` does not support canonical acquisition"
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
+def project(argv: list[str], capture: Capture) -> Projection:
     request = parse_args(argv)
     try:
         resolved = resolve_read_target(
@@ -489,15 +497,18 @@ def project(argv: list[str], capture: Capture) -> bytes:
         if spec and spec.project is not None:
             projected = spec.project(resolved.routed_argv, capture)
         else:
-            projected = capture.data
+            projected = projection_for_capture(capture, capture.data)
     else:
         projected = _project_canonical(capture)
     if request.head > 0 or request.tail > 0 or request.section:
-        return _view_bytes(
-            projected,
-            head=max(0, request.head),
-            tail=max(0, request.tail),
-            section=request.section,
+        return projection_bytes(
+            _view_bytes(
+                projected.data,
+                head=max(0, request.head),
+                tail=max(0, request.tail),
+                section=request.section,
+            ),
+            content_type=projected.content_type,
         )
     return projected
 
@@ -514,7 +525,7 @@ def execute_materializing_read(argv: list[str]) -> ReadExecution:
     return ReadExecution(
         code=0,
         canonical_bytes=captured.data,
-        display_bytes=project(argv, captured),
+        display_bytes=project(argv, captured).data,
     )
 
 
@@ -623,24 +634,30 @@ def main(argv: list[str]) -> int:
             return die(str(exc), code=1)
         if truncated:
             _emit_truncation_note()
-        display = _display_projection(
-            Capture(data=data, type=content_type or "application/octet-stream")
+        projection = _display_projection(
+            Capture(
+                data=data,
+                content_type=content_type or "application/octet-stream",
+            )
         )
         language = guess_lang_from_content_type(content_type) or guess_lang_from_path(
             target.split("?", 1)[0]
         )
-        if _remote_content_type(content_type) == "text/html" and display != data:
+        if (
+            _remote_content_type(content_type) == "text/html"
+            and projection.data != data
+        ):
             language = "markdown"
         if request.head > 0 or request.tail > 0 or request.section:
             _render_viewed_bytes(
-                display,
+                projection.data,
                 language=language or "txt",
                 head=max(0, request.head),
                 tail=max(0, request.tail),
                 section=request.section,
             )
             return 0
-        render_bytes(display, language or "txt")
+        render_bytes(projection.data, language or "txt")
         return 0
 
     path = resolved.path

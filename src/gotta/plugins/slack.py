@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
@@ -1162,14 +1163,14 @@ def _fetch_slack_doc(
 
 def _doc_meta_from_capture(capture: Capture) -> dict[str, Any]:
     return {
-        "workspace": str(capture.meta.get("workspace") or ""),
+        "workspace": str(capture.metadata.get("workspace") or ""),
         "kind": "doc",
-        "teamId": str(capture.meta.get("team_id") or ""),
-        "docId": str(capture.meta.get("doc_id") or ""),
-        "url": str(capture.meta.get("url") or ""),
-        "contentType": str(capture.meta.get("content_type") or ""),
+        "teamId": str(capture.metadata.get("team_id") or ""),
+        "docId": str(capture.metadata.get("doc_id") or ""),
+        "url": str(capture.metadata.get("url") or ""),
+        "contentType": str(capture.metadata.get("content_type") or ""),
         "retrieval": str(
-            capture.meta.get("retrieval") or "live_auth_files_info_download"
+            capture.metadata.get("retrieval") or "live_auth_files_info_download"
         ),
     }
 
@@ -3933,9 +3934,9 @@ def capture(argv: list[str], _options: object) -> Capture:
             )
             return Capture(
                 data=payload,
-                name=preferred_name(argv, object()),
-                type="application/json",
-                meta={
+                preferred_name=preferred_name(argv, object()),
+                content_type="application/json",
+                metadata={
                     "projector": "slack",
                     "slack_kind": "search",
                 },
@@ -3946,9 +3947,11 @@ def capture(argv: list[str], _options: object) -> Capture:
         html_bytes, meta = _fetch_slack_doc(ref, interactive_ok=is_interactive())
         return Capture(
             data=html_bytes,
-            name=f"{ref.doc_id}.html" if ref.doc_id else preferred_name(argv, object()),
-            type="text/html",
-            meta={
+            preferred_name=f"{ref.doc_id}.html"
+            if ref.doc_id
+            else preferred_name(argv, object()),
+            content_type="text/html",
+            metadata={
                 "projector": "slack",
                 "slack_kind": "doc",
                 "workspace": ref.workspace,
@@ -3976,9 +3979,9 @@ def capture(argv: list[str], _options: object) -> Capture:
     envelope = json.loads(captured.getvalue().decode("utf-8"))
     return Capture(
         data=captured.getvalue(),
-        name=name,
-        type="application/json",
-        meta={
+        preferred_name=name,
+        content_type="application/json",
+        metadata={
             "projector": "slack",
             "source_created_at": str(
                 envelope.get("firstTsIso") or envelope.get("firstTs") or ""
@@ -3990,53 +3993,95 @@ def capture(argv: list[str], _options: object) -> Capture:
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("slack_kind") or "get").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("slack_kind") or "get").strip()
     if kind == "search":
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
-            return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != "search":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
+            return projection_bytes(
+                pretty_json(capture.data),
+                content_type="application/json",
+            )
         if args.output == "titles":
-            return render_search_titles(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_titles(payload).encode("utf-8"),
+                content_type="text/plain",
+            )
         if args.output == "links":
-            return render_search_links(payload).encode("utf-8")
-        return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_links(payload).encode("utf-8"),
+                content_type="text/plain",
+            )
+        return projection_bytes(
+            render_search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
     if kind == "doc":
         if not argv:
-            return _render_doc_markdown(capture.data)
+            return projection_bytes(
+                _render_doc_markdown(capture.data),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != "get":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output in {"json", "meta"}:
-            return json_bytes(_doc_meta_from_capture(capture))
+            return projection_bytes(
+                json_bytes(_doc_meta_from_capture(capture)),
+                content_type="application/json",
+            )
         if args.output == "messages":
             raise ToolError(
                 "`gotta slack get ... --output messages` is only supported for channel and thread reads; "
                 "Slack docs support markdown, text, json, or meta."
             )
         if args.output == "markdown":
-            return _render_doc_markdown(capture.data)
-        return html_text(capture.data)
+            return projection_bytes(
+                _render_doc_markdown(capture.data),
+                content_type="text/markdown",
+            )
+        return projection_bytes(html_text(capture.data), content_type="text/plain")
     envelope = json.loads(capture.data.decode("utf-8"))
     if not argv:
-        return render_markdown(envelope).encode("utf-8")
+        return projection_bytes(
+            render_markdown(envelope).encode("utf-8"),
+            content_type="text/markdown",
+        )
     args = _parse_cli(argv)
     if args.command != "get":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "json":
-        return pretty_json(capture.data)
+        return projection_bytes(
+            pretty_json(capture.data),
+            content_type="application/json",
+        )
     if args.output == "meta":
-        return json_bytes(envelope_meta(envelope))
+        return projection_bytes(
+            json_bytes(envelope_meta(envelope)),
+            content_type="application/json",
+        )
     if args.output == "messages":
-        return json_bytes(envelope.get("messages"))
+        return projection_bytes(
+            json_bytes(envelope.get("messages")),
+            content_type="application/json",
+        )
     if args.output == "markdown":
-        return render_markdown(envelope).encode("utf-8")
-    return render_text(envelope).encode("utf-8")
+        return projection_bytes(
+            render_markdown(envelope).encode("utf-8"),
+            content_type="text/markdown",
+        )
+    return projection_bytes(
+        render_text(envelope).encode("utf-8"),
+        content_type="text/plain",
+    )
 
 
 def cmd_search(args: argparse.Namespace) -> int:

@@ -70,7 +70,7 @@ This file is the execution queue.
   more registry or package churn would not pay rent.
   The next work that pays rent is explicit storage contracts and continued
   demotion of filesystem-shaped truth, not more naming or file-motion passes.
-- [x] Storage-record compatibility surface deleted from the live core.
+- [x] Dead storage-record legacy surface deleted from the live core.
   - Removed path-shaped and metadata/alias convenience accessors from:
     - `MaterializationEvent`
     - `Materialization`
@@ -84,7 +84,7 @@ This file is the execution queue.
     - `aliases`
   - The removed surface is no longer present in `src/` or the test surface.
 - [x] Diminishing-returns judgment for this cycle:
-  deleting the dead compatibility layer paid rent.
+  deleting the dead legacy layer paid rent.
   More cleanup of the same species would not; the next work that pays rent is
   explicit storage contracts and splitting logical ledger operations from the
   filesystem implementation.
@@ -113,6 +113,29 @@ This file is the execution queue.
   More cleanup of this exact species would not; the next work that pays rent is
   typing the artifact-pipeline records above storage and driving derived views
   toward ledger/state contracts instead of concrete filesystem ownership.
+- [x] Artifact-pipeline tranche landed.
+  - `src/gotta/capture.py` now centers:
+    - `Capture`
+    - `ArtifactKind`
+  - `src/gotta/projection.py` now centers:
+    - `Projection`
+    - `projection_bytes(...)`
+    - `projection_for_capture(...)`
+  - Provider project hooks in the touched seam now return `Projection` instead
+    of raw bytes.
+  - The touched providers now consume canonical capture fields:
+    - `preferred_name`
+    - `content_type`
+    - `metadata`
+    - `view_data`
+  - The dispatch/materialization seam now treats `artifact_kind` as
+    `ArtifactKind | None` instead of carrying the dead empty-string sentinel.
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it made the capture/project seam real in code and
+  deleted dead sentinels instead of preserving them.
+  More cleanup of this exact species would not; the next work that pays rent is
+  pushing derived views toward ledger/state contracts and then typing the
+  exported payload families that still move as anonymous records.
 
 ## Current Tranche
 
@@ -121,13 +144,14 @@ This file is the execution queue.
   and ask-family binding dispatch.
 - [x] Split the logical ledger from filesystem-shaped storage truth at the
   record layer.
-- [x] Delete the dead storage-record compatibility layer once `src/` no longer
-  depends on it.
+- [x] Delete the dead storage-record legacy layer once `src/` no longer depends
+  on it.
 - [x] Introduce explicit storage contracts and separate the contract layer from
   the concrete filesystem implementation.
-- [ ] Next tranche: type the artifact-pipeline records above storage and keep
-  pushing derived views toward ledger/state contracts instead of concrete
-  filesystem ownership.
+- [x] Type the artifact-pipeline records above storage.
+- [ ] Next tranche: keep pushing derived views toward ledger/state contracts
+  instead of concrete filesystem ownership, then type the exported payload
+  families that still move as anonymous records.
 
 ## Non-Negotiable Invariants
 
@@ -215,9 +239,9 @@ This file is the execution queue.
   - `ActorStateRecord`
   - `StateChannelRecord`
 - [ ] Type the artifact-pipeline records that sit above storage:
-  - `Capture`
-  - `Projection`
-  - `ArtifactKind`
+  - [x] `Capture`
+  - [x] `Projection`
+  - [x] `ArtifactKind`
 - [ ] Demote filesystem-shaped exported truth in `src/gotta/content/model.py`.
   Stop treating fields like:
   - `canonical_path`
@@ -377,9 +401,9 @@ This file is the execution queue.
 - [x] Introduce `LedgerStore`, `BlobStore`, `StateStore`, and `IndexStore`.
 - [x] Split `content/store.py` into storage contracts and concrete filesystem
   implementation.
-- [x] Remove remaining internal dependence on compatibility properties from the
-  test surface, then delete those compatibility properties.
-- [ ] Type the artifact-pipeline records above storage:
+- [x] Remove remaining internal dependence on dead legacy properties from the
+  test surface, then delete those properties.
+- [x] Type the artifact-pipeline records above storage:
   - `Capture`
   - `Projection`
   - `ArtifactKind`

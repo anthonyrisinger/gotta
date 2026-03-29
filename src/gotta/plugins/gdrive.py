@@ -16,6 +16,7 @@ import sys
 import urllib.parse
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.drawio import DRAWIO_MIME, render_drawio_summary_markdown
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
@@ -175,9 +176,9 @@ def capture(argv: list[str], _options: object) -> Capture:
             )
             return Capture(
                 data=payload,
-                name=preferred_name(argv, object()),
-                type="application/json",
-                meta={
+                preferred_name=preferred_name(argv, object()),
+                content_type="application/json",
+                metadata={
                     "projector": "gdrive",
                     "gdrive_kind": "search",
                 },
@@ -201,83 +202,106 @@ def capture(argv: list[str], _options: object) -> Capture:
         canonical_type = mime_type or "application/octet-stream"
     return Capture(
         data=data,
-        name=_capture_name(file_id, meta, canonical_type),
-        type=canonical_type,
-        meta=_capture_meta(file_id, meta),
-        view={"meta": meta},
+        preferred_name=_capture_name(file_id, meta, canonical_type),
+        content_type=canonical_type,
+        metadata=_capture_meta(file_id, meta),
+        view_data={"meta": meta},
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("gdrive_kind") or "get").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("gdrive_kind") or "get").strip()
     if kind == "search":
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
-            return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != "search":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
-        return render_search_markdown(payload).encode("utf-8")
-    meta = capture.view.get("meta")
+            return projection_bytes(
+                pretty_json(capture.data), content_type="application/json"
+            )
+        return projection_bytes(
+            render_search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
+    meta = capture.view_data.get("meta")
     if not isinstance(meta, dict):
         meta = {
-            "id": capture.meta.get("file_id") or "",
-            "name": capture.meta.get("source_title") or "",
-            "webViewLink": capture.meta.get("source_url") or "",
-            "mimeType": capture.meta.get("source_mime") or "",
-            "size": capture.meta.get("source_size") or "",
-            "createdTime": capture.meta.get("source_created_at") or "",
-            "modifiedTime": capture.meta.get("source_updated_at") or "",
+            "id": capture.metadata.get("file_id") or "",
+            "name": capture.metadata.get("source_title") or "",
+            "webViewLink": capture.metadata.get("source_url") or "",
+            "mimeType": capture.metadata.get("source_mime") or "",
+            "size": capture.metadata.get("source_size") or "",
+            "createdTime": capture.metadata.get("source_created_at") or "",
+            "modifiedTime": capture.metadata.get("source_updated_at") or "",
             "owners": [
                 {"displayName": item}
-                for item in capture.meta.get("source_owners") or []
+                for item in capture.metadata.get("source_owners") or []
                 if isinstance(item, str)
             ],
         }
-    source_mime = str(capture.meta.get("source_mime") or meta.get("mimeType") or "")
-    canonical_type = capture.type.split(";", 1)[0].strip().lower()
+    source_mime = str(capture.metadata.get("source_mime") or meta.get("mimeType") or "")
+    canonical_type = capture.content_type.split(";", 1)[0].strip().lower()
     if not argv:
         if source_mime == GOOGLE_DOC_MIME or canonical_type == "text/html":
             rendered = html_markdown(capture.data)
-            return rendered if rendered is not None else html_text(capture.data)
+            return projection_bytes(
+                rendered if rendered is not None else html_text(capture.data),
+                content_type="text/markdown" if rendered is not None else "text/plain",
+            )
         if source_mime == DRAWIO_MIME:
-            return drawio_summary(capture.data, meta).encode("utf-8")
+            return projection_bytes(
+                drawio_summary(capture.data, meta).encode("utf-8"),
+                content_type="text/markdown",
+            )
         if is_textlike_mime_type(source_mime) or canonical_type.startswith("text/"):
-            return capture.data
-        return drive_file_summary(meta).encode("utf-8")
+            return projection_bytes(capture.data, content_type=capture.content_type)
+        return projection_bytes(
+            drive_file_summary(meta).encode("utf-8"),
+            content_type="text/markdown",
+        )
     args = _parse_cli(argv)
     if args.command != "get":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output in {"json", "meta"}:
-        return json_bytes(meta)
+        return projection_bytes(json_bytes(meta), content_type="application/json")
     if args.output == "raw":
         if source_mime == GOOGLE_DOC_MIME:
             raise RuntimeError(
                 "raw download is not available for native Google Docs; use "
                 "--output markdown, text, html, meta, or json"
             )
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if source_mime == GOOGLE_DOC_MIME:
         if args.output == "html":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "text":
-            return html_text(capture.data)
+            return projection_bytes(html_text(capture.data), content_type="text/plain")
         rendered = html_markdown(capture.data)
-        return rendered if rendered is not None else html_text(capture.data)
+        return projection_bytes(
+            rendered if rendered is not None else html_text(capture.data),
+            content_type="text/markdown" if rendered is not None else "text/plain",
+        )
     if source_mime == DRAWIO_MIME:
         if args.output == "raw":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "html":
             raise RuntimeError(
                 "draw.io mxfile content is not exportable as html; "
                 "use --output markdown, text, raw, meta, or json"
             )
-        return drawio_summary(capture.data, meta).encode("utf-8")
+        return projection_bytes(
+            drawio_summary(capture.data, meta).encode("utf-8"),
+            content_type="text/markdown",
+        )
     if args.output == "html":
         if canonical_type == "text/html":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         raise RuntimeError(
             f"{source_mime or 'this file'} is not exportable as html; "
             "use --output raw, meta, json, or markdown"
@@ -287,14 +311,20 @@ def project(argv: list[str], capture: Capture) -> bytes:
     ):
         if args.output == "markdown" and canonical_type == "text/html":
             rendered = html_markdown(capture.data)
-            return rendered if rendered is not None else html_text(capture.data)
-        return capture.data
+            return projection_bytes(
+                rendered if rendered is not None else html_text(capture.data),
+                content_type="text/markdown" if rendered is not None else "text/plain",
+            )
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "text":
         raise RuntimeError(
             f"{source_mime or 'this file'} is not directly readable as text; "
             "use --output raw, meta, json, or markdown"
         )
-    return drive_file_summary(meta).encode("utf-8")
+    return projection_bytes(
+        drive_file_summary(meta).encode("utf-8"),
+        content_type="text/markdown",
+    )
 
 
 def route_target(target: str) -> list[str] | None:

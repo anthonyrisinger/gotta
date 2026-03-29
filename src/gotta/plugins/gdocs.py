@@ -15,6 +15,7 @@ import sys
 import urllib.parse
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.resolve.route import query_route, strip_http_url_fragment
@@ -264,9 +265,9 @@ def capture(argv: list[str], _options: object) -> Capture:
             )
             return Capture(
                 data=payload,
-                name=preferred_name(argv, object()),
-                type="application/json",
-                meta={
+                preferred_name=preferred_name(argv, object()),
+                content_type="application/json",
+                metadata={
                     "projector": "gdocs",
                     "gdocs_kind": "search",
                 },
@@ -284,57 +285,74 @@ def capture(argv: list[str], _options: object) -> Capture:
     html = _canonicalize_export_html(drive_export(access_token, doc_id, "text/html"))
     return Capture(
         data=html,
-        name=f"{doc_id}.html",
-        type="text/html",
-        meta=_capture_meta(doc_id, meta),
-        view={"meta": meta, "document": document},
+        preferred_name=f"{doc_id}.html",
+        content_type="text/html",
+        metadata=_capture_meta(doc_id, meta),
+        view_data={"meta": meta, "document": document},
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("gdocs_kind") or "get").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("gdocs_kind") or "get").strip()
     if kind == "search":
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
-            return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != "search":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
-        return render_search_markdown(payload).encode("utf-8")
-    meta = capture.view.get("meta")
+            return projection_bytes(
+                pretty_json(capture.data), content_type="application/json"
+            )
+        return projection_bytes(
+            render_search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
+    meta = capture.view_data.get("meta")
     if not isinstance(meta, dict):
         meta = {
-            "title": capture.meta.get("source_title") or "",
-            "url": capture.meta.get("source_url") or "",
-            "revisionId": capture.meta.get("source_revision") or "",
-            "owners": capture.meta.get("source_owners") or [],
-            "createdTime": capture.meta.get("source_created_at") or "",
-            "modifiedTime": capture.meta.get("source_updated_at") or "",
+            "title": capture.metadata.get("source_title") or "",
+            "url": capture.metadata.get("source_url") or "",
+            "revisionId": capture.metadata.get("source_revision") or "",
+            "owners": capture.metadata.get("source_owners") or [],
+            "createdTime": capture.metadata.get("source_created_at") or "",
+            "modifiedTime": capture.metadata.get("source_updated_at") or "",
         }
-    doc_id = str(capture.meta.get("doc_id") or "").strip()
+    doc_id = str(capture.metadata.get("doc_id") or "").strip()
     if not argv:
         rendered = html_markdown(capture.data)
         body = rendered if rendered is not None else html_text(capture.data)
-        return _markdown_prelude(doc_id, meta) + body
+        return projection_bytes(
+            _markdown_prelude(doc_id, meta) + body,
+            content_type="text/markdown",
+        )
     args = _parse_cli(argv)
     if args.command != "get":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "html":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "json":
-        document = capture.view.get("document")
+        document = capture.view_data.get("document")
         if isinstance(document, dict):
-            return json_bytes(document)
-        return json_bytes(meta)
+            return projection_bytes(
+                json_bytes(document),
+                content_type="application/json",
+            )
+        return projection_bytes(json_bytes(meta), content_type="application/json")
     if args.output == "meta":
-        return json_bytes(meta)
+        return projection_bytes(json_bytes(meta), content_type="application/json")
     if args.output == "text":
-        return html_text(capture.data)
+        return projection_bytes(html_text(capture.data), content_type="text/plain")
     rendered = html_markdown(capture.data)
     body = rendered if rendered is not None else html_text(capture.data)
-    return _markdown_prelude(doc_id, meta) + body
+    return projection_bytes(
+        _markdown_prelude(doc_id, meta) + body,
+        content_type="text/markdown",
+    )
 
 
 def normalize_search_result(

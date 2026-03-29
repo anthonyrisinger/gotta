@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.config import set_provider_env_values
 from gotta.drawio import DRAWIO_MIME, summarize_drawio
 from gotta.helptext import is_long_help_request, print_long_help
@@ -1741,9 +1742,9 @@ def _content_capture_name(kind: str, content: dict[str, Any], fallback: str) -> 
 
 
 def _markdown_from_capture(capture: Capture) -> bytes:
-    kind = str(capture.meta.get("content_kind") or "page")
+    kind = str(capture.metadata.get("content_kind") or "page")
     session: Session | None = None
-    base_url = str(capture.meta.get("source_base_url") or "").strip()
+    base_url = str(capture.metadata.get("source_base_url") or "").strip()
     if base_url:
         try:
             session = load_session(PageRef(base_url=base_url))
@@ -1754,13 +1755,13 @@ def _markdown_from_capture(capture: Capture) -> bytes:
         session=session,
     )
     title = str(
-        capture.meta.get("source_title")
+        capture.metadata.get("source_title")
         or ("Confluence Comment" if kind == "comment" else "(untitled)")
     )
     lines = [f"# {title}", ""]
-    url = str(capture.meta.get("source_url") or "")
-    content_id = str(capture.meta.get("content_id") or "")
-    page_id = str(capture.meta.get("page_id") or "")
+    url = str(capture.metadata.get("source_url") or "")
+    content_id = str(capture.metadata.get("content_id") or "")
+    page_id = str(capture.metadata.get("page_id") or "")
     if url:
         lines.append(f"- URL: {url}")
     if kind == "comment":
@@ -1771,14 +1772,14 @@ def _markdown_from_capture(capture: Capture) -> bytes:
     else:
         if content_id:
             lines.append(f"- Page ID: {content_id}")
-        if capture.meta.get("source_space_id"):
-            lines.append(f"- Space ID: {capture.meta.get('source_space_id')}")
-    if capture.meta.get("source_created_at"):
-        lines.append(f"- Created: {capture.meta.get('source_created_at')}")
-    if capture.meta.get("source_updated_at"):
-        lines.append(f"- Updated: {capture.meta.get('source_updated_at')}")
-    if capture.meta.get("source_version"):
-        lines.append(f"- Version: {capture.meta.get('source_version')}")
+        if capture.metadata.get("source_space_id"):
+            lines.append(f"- Space ID: {capture.metadata.get('source_space_id')}")
+    if capture.metadata.get("source_created_at"):
+        lines.append(f"- Created: {capture.metadata.get('source_created_at')}")
+    if capture.metadata.get("source_updated_at"):
+        lines.append(f"- Updated: {capture.metadata.get('source_updated_at')}")
+    if capture.metadata.get("source_version"):
+        lines.append(f"- Version: {capture.metadata.get('source_version')}")
     if _projection_is_lossy(body):
         lines.append(
             f"- Projection: approximate markdown; use `gotta confluence get {content_id or page_id} --output body` "
@@ -1800,9 +1801,9 @@ def capture(argv: list[str], _options: object) -> Capture:
             )
             return Capture(
                 data=payload,
-                name=preferred_name(argv, object()),
-                type="application/json",
-                meta={
+                preferred_name=preferred_name(argv, object()),
+                content_type="application/json",
+                metadata={
                     "projector": "confluence",
                     "confluence_kind": args.command,
                 },
@@ -1820,70 +1821,96 @@ def capture(argv: list[str], _options: object) -> Capture:
     )
     return Capture(
         data=body.encode("utf-8"),
-        name=_content_capture_name(content_kind, content, fallback),
-        type="text/html",
-        meta=_content_capture_meta(session, content_kind, content),
-        view={"content": content, "content_kind": content_kind},
+        preferred_name=_content_capture_name(content_kind, content, fallback),
+        content_type="text/html",
+        metadata=_content_capture_meta(session, content_kind, content),
+        view_data={"content": content, "content_kind": content_kind},
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("confluence_kind") or "get").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("confluence_kind") or "get").strip()
     if kind in {"search", "cql"}:
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
-            return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != kind:
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
-        return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                pretty_json(capture.data), content_type="application/json"
+            )
+        return projection_bytes(
+            render_search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
     if not argv:
-        return _markdown_from_capture(capture)
+        return projection_bytes(
+            _markdown_from_capture(capture), content_type="text/markdown"
+        )
     args = _parse_cli(argv)
     if args.command != "get":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "body":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "markdown":
-        return _markdown_from_capture(capture)
-    content = capture.view.get("content")
+        return projection_bytes(
+            _markdown_from_capture(capture), content_type="text/markdown"
+        )
+    content = capture.view_data.get("content")
     if args.output == "meta":
         if isinstance(content, dict):
-            kind = str(capture.meta.get("content_kind") or "page")
+            kind = str(capture.metadata.get("content_kind") or "page")
             if kind == "comment":
-                return json_bytes(
+                return projection_bytes(
+                    json_bytes(
+                        {
+                            "id": content.get("id"),
+                            "type": "comment",
+                            "pageId": content.get("pageId"),
+                            "version": content.get("version"),
+                            "status": content.get("status"),
+                        }
+                    ),
+                    content_type="application/json",
+                )
+            return projection_bytes(
+                json_bytes(
                     {
                         "id": content.get("id"),
-                        "type": "comment",
-                        "pageId": content.get("pageId"),
+                        "type": kind,
+                        "title": content.get("title"),
                         "version": content.get("version"),
                         "status": content.get("status"),
+                        "spaceId": content.get("spaceId"),
                     }
-                )
-            return json_bytes(
-                {
-                    "id": content.get("id"),
-                    "type": kind,
-                    "title": content.get("title"),
-                    "version": content.get("version"),
-                    "status": content.get("status"),
-                    "spaceId": content.get("spaceId"),
-                }
+                ),
+                content_type="application/json",
             )
-        return json_bytes(capture.meta)
+        return projection_bytes(
+            json_bytes(capture.metadata),
+            content_type="application/json",
+        )
     if isinstance(content, dict):
-        return json_bytes(content)
-    return json_bytes(
-        {
-            "id": capture.meta.get("content_id") or capture.meta.get("page_id") or "",
-            "type": capture.meta.get("content_kind") or "page",
-            "title": capture.meta.get("source_title") or "",
-            "body": {
-                "storage": {"value": capture.data.decode("utf-8", errors="replace")}
-            },
-        }
+        return projection_bytes(json_bytes(content), content_type="application/json")
+    return projection_bytes(
+        json_bytes(
+            {
+                "id": capture.metadata.get("content_id")
+                or capture.metadata.get("page_id")
+                or "",
+                "type": capture.metadata.get("content_kind") or "page",
+                "title": capture.metadata.get("source_title") or "",
+                "body": {
+                    "storage": {"value": capture.data.decode("utf-8", errors="replace")}
+                },
+            }
+        ),
+        content_type="application/json",
     )
 
 

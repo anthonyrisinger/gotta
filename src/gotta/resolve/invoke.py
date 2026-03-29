@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from gotta.capture import ArtifactKind
 from gotta.content.model import CommonOptions
 from gotta.resolve.canon import canonical_locator as derive_canonical_locator
 from gotta.resolve.canon import invocation_locator as derive_invocation_locator
@@ -29,13 +30,13 @@ class ResolvedInvocation:
     preferred_name: str
     content_type: str
     artifact_intent: ArtifactIntent
-    artifact_kind: str
+    artifact_kind: ArtifactKind | None
     should_materialize: bool
     provider: str
 
 
-def _artifact_kind(intent: ArtifactIntent) -> str:
-    return "" if intent == "none" else intent
+def _artifact_kind(intent: ArtifactIntent) -> ArtifactKind | None:
+    return None if intent == "none" else intent
 
 
 def resolve_invocation(
@@ -59,7 +60,7 @@ def resolve_invocation(
             preferred_name=preferred,
             content_type=derive_content_type(plugin, argv, preferred),
             artifact_intent="none",
-            artifact_kind="",
+            artifact_kind=None,
             should_materialize=False,
             provider=plugin,
         )
@@ -78,7 +79,7 @@ def resolve_invocation(
                 preferred_name=preferred,
                 content_type=derive_content_type("read", resolved_argv, preferred),
                 artifact_intent="none",
-                artifact_kind="",
+                artifact_kind=None,
                 should_materialize=False,
                 provider="read",
             )
@@ -123,7 +124,7 @@ def resolve_invocation(
                 preferred_name=preferred,
                 content_type="text/markdown",
                 artifact_intent="none",
-                artifact_kind="",
+                artifact_kind=None,
                 should_materialize=False,
                 provider="search",
             )

@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.config import (
     extract_provider_env,
     load_config,
@@ -1333,9 +1334,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
             )
             return Capture(
                 data=payload,
-                name=preferred_name(argv, object()),
-                type="application/json",
-                meta={
+                preferred_name=preferred_name(argv, object()),
+                content_type="application/json",
+                metadata={
                     "projector": "grafana",
                     "grafana_kind": "search",
                 },
@@ -1344,9 +1345,9 @@ def capture(argv: list[str], _options: Any) -> Capture:
     payload = _dashboard_payload(args)
     return Capture(
         data=json_bytes(payload),
-        name=f"{_dashboard_uid_from_ref(args.ref) or 'grafana-dashboard'}.json",
-        type="application/json",
-        meta={
+        preferred_name=f"{_dashboard_uid_from_ref(args.ref) or 'grafana-dashboard'}.json",
+        content_type="application/json",
+        metadata={
             "projector": "grafana",
             "source_created_at": str(payload.get("createdAt") or ""),
             "source_updated_at": str(payload.get("updatedAt") or ""),
@@ -1354,31 +1355,55 @@ def capture(argv: list[str], _options: Any) -> Capture:
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("grafana_kind") or "get").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("grafana_kind") or "get").strip()
     if kind == "search":
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
-            return _search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                _search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != "search":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
+            return projection_bytes(
+                pretty_json(capture.data),
+                content_type="application/json",
+            )
         if args.output == "summary":
-            return (_search_summary(payload) + "\n").encode("utf-8")
-        return _search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                (_search_summary(payload) + "\n").encode("utf-8"),
+                content_type="text/plain",
+            )
+        return projection_bytes(
+            _search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
     payload = json.loads(capture.data.decode("utf-8"))
     if not argv:
-        return _dashboard_markdown(payload).encode("utf-8")
+        return projection_bytes(
+            _dashboard_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
     args = _parse_cli(argv)
     if args.command != "get":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "json":
-        return pretty_json(capture.data)
+        return projection_bytes(
+            pretty_json(capture.data),
+            content_type="application/json",
+        )
     if args.output == "summary":
-        return (_dashboard_summary(payload) + "\n").encode("utf-8")
-    return _dashboard_markdown(payload).encode("utf-8")
+        return projection_bytes(
+            (_dashboard_summary(payload) + "\n").encode("utf-8"),
+            content_type="text/plain",
+        )
+    return projection_bytes(
+        _dashboard_markdown(payload).encode("utf-8"),
+        content_type="text/markdown",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

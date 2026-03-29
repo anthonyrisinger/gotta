@@ -19,6 +19,7 @@ import gotta.cli.entry as cli
 import gotta.plugins.github.main as github
 from gotta.notes.file import append_actor_note
 from gotta.capture import Capture
+from gotta.projection import projection_bytes
 from gotta.plugins import jira
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import registry as session_registry
@@ -317,15 +318,15 @@ def test_main_ambient_provider_search_materializes_discovery_in_bound_session(
         assert argv == ["search", "platform"]
         return Capture(
             data=canonical,
-            name="github-search-platform.json",
-            type="application/json",
-            meta={"projector": "github", "github_kind": "search"},
+            preferred_name="github-search-platform.json",
+            content_type="application/json",
+            metadata={"projector": "github", "github_kind": "search"},
         )
 
-    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+    def fake_github_project(argv: list[str], capture: Capture):
         assert argv == ["search", "platform"]
         assert capture.data == canonical
-        return b"# Search Results\n\n- one\n"
+        return projection_bytes(b"# Search Results\n\n- one\n")
 
     monkeypatch.setattr(github, "capture", fake_github_capture)
     monkeypatch.setattr(github, "project", fake_github_project)
@@ -362,15 +363,15 @@ def test_main_read_routed_provider_search_preserves_discovery_artifact_kind(
         assert argv == ["search", "platform"]
         return Capture(
             data=canonical,
-            name="github-search-platform.json",
-            type="application/json",
-            meta={"projector": "github", "github_kind": "search"},
+            preferred_name="github-search-platform.json",
+            content_type="application/json",
+            metadata={"projector": "github", "github_kind": "search"},
         )
 
-    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+    def fake_github_project(argv: list[str], capture: Capture):
         assert argv == ["search", "platform"]
         assert capture.data == canonical
-        return b"# Search Results\n\n- one\n"
+        return projection_bytes(b"# Search Results\n\n- one\n")
 
     monkeypatch.setattr(github, "capture", fake_github_capture)
     monkeypatch.setattr(github, "project", fake_github_project)
@@ -406,15 +407,15 @@ def test_main_top_level_search_materializes_discovery_in_bound_session(
         assert argv == ["search", "platform"]
         return Capture(
             data=canonical,
-            name="github-search-platform.json",
-            type="application/json",
-            meta={"projector": "github", "github_kind": "search"},
+            preferred_name="github-search-platform.json",
+            content_type="application/json",
+            metadata={"projector": "github", "github_kind": "search"},
         )
 
-    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+    def fake_github_project(argv: list[str], capture: Capture):
         assert argv == ["search", "platform"]
         assert capture.data == canonical
-        return b"# Search Results\n\n- one\n"
+        return projection_bytes(b"# Search Results\n\n- one\n")
 
     monkeypatch.setattr(github, "capture", fake_github_capture)
     monkeypatch.setattr(github, "project", fake_github_project)
@@ -450,14 +451,16 @@ def test_main_top_level_search_accepts_explicit_search_alias(
         assert argv == ["search", "platform"]
         return Capture(
             data=canonical,
-            name="github-search-platform.json",
-            type="application/json",
-            meta={"projector": "github", "github_kind": "search"},
+            preferred_name="github-search-platform.json",
+            content_type="application/json",
+            metadata={"projector": "github", "github_kind": "search"},
         )
 
     monkeypatch.setattr(github, "capture", fake_github_capture)
     monkeypatch.setattr(
-        github, "project", lambda argv, capture: b"# Search Results\n\n- one\n"
+        github,
+        "project",
+        lambda argv, capture: projection_bytes(b"# Search Results\n\n- one\n"),
     )
 
     assert cli.main(["search", "github:search platform"]) == 0
@@ -531,13 +534,15 @@ def test_main_quiet_suppresses_success_receipt(
         "capture",
         lambda argv, _options: Capture(
             data=canonical,
-            name="github-search-platform.json",
-            type="application/json",
-            meta={"projector": "github", "github_kind": "search"},
+            preferred_name="github-search-platform.json",
+            content_type="application/json",
+            metadata={"projector": "github", "github_kind": "search"},
         ),
     )
     monkeypatch.setattr(
-        github, "project", lambda argv, capture: b"# Search Results\n\n- one\n"
+        github,
+        "project",
+        lambda argv, capture: projection_bytes(b"# Search Results\n\n- one\n"),
     )
 
     assert cli.main(["search", "github:platform", "--quiet"]) == 0
@@ -595,14 +600,14 @@ def test_main_ambient_provider_get_honors_explicit_actor_attribution(
     def fake_github_capture(argv: list[str], _options: object) -> Capture:
         return Capture(
             data=canonical,
-            name="widgets.json",
-            type="application/json",
-            meta={"projector": "github", "github_kind": "repo"},
+            preferred_name="widgets.json",
+            content_type="application/json",
+            metadata={"projector": "github", "github_kind": "repo"},
         )
 
-    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+    def fake_github_project(argv: list[str], capture: Capture):
         assert capture.data == canonical
-        return b"# Repo\n\nmain body\n"
+        return projection_bytes(b"# Repo\n\nmain body\n")
 
     monkeypatch.setattr(github, "capture", fake_github_capture)
     monkeypatch.setattr(github, "project", fake_github_project)
@@ -655,14 +660,14 @@ def test_main_rejects_foreign_actor_attributed_materialization(
     def fake_github_capture(argv: list[str], _options: object) -> Capture:
         return Capture(
             data=canonical,
-            name="widgets.json",
-            type="application/json",
-            meta={"projector": "github", "github_kind": "repo"},
+            preferred_name="widgets.json",
+            content_type="application/json",
+            metadata={"projector": "github", "github_kind": "repo"},
         )
 
-    def fake_github_project(argv: list[str], capture: Capture) -> bytes:
+    def fake_github_project(argv: list[str], capture: Capture):
         assert capture.data == canonical
-        return b"# Repo\n\nmain body\n"
+        return projection_bytes(b"# Repo\n\nmain body\n")
 
     monkeypatch.setattr(github, "capture", fake_github_capture)
     monkeypatch.setattr(github, "project", fake_github_project)

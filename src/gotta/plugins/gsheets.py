@@ -15,6 +15,7 @@ from typing import Any
 import urllib.parse
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.resolve.route import query_route, strip_http_url_fragment
@@ -257,9 +258,9 @@ def capture(argv: list[str], _options: object) -> Capture:
             )
             return Capture(
                 data=payload,
-                name=preferred_name(argv, object()),
-                type="application/json",
-                meta={
+                preferred_name=preferred_name(argv, object()),
+                content_type="application/json",
+                metadata={
                     "projector": "gsheets",
                     "gsheets_kind": "search",
                 },
@@ -282,24 +283,33 @@ def capture(argv: list[str], _options: object) -> Capture:
     )
     return Capture(
         data=json_bytes(bundle),
-        name=f"{spreadsheet_id}.json",
-        type="application/json",
-        meta=_capture_meta(spreadsheet_id, bundle),
+        preferred_name=f"{spreadsheet_id}.json",
+        content_type="application/json",
+        metadata=_capture_meta(spreadsheet_id, bundle),
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("gsheets_kind") or "get").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("gsheets_kind") or "get").strip()
     if kind == "search":
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
-            return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != "search":
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
-        return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                pretty_json(capture.data),
+                content_type="application/json",
+            )
+        return projection_bytes(
+            render_search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
     bundle = json.loads(capture.data.decode("utf-8"))
     meta = bundle.get("meta")
     if not isinstance(meta, dict):
@@ -308,14 +318,20 @@ def project(argv: list[str], capture: Capture) -> bytes:
     if not isinstance(previews, list):
         previews = []
     if not argv:
-        return render_previews_markdown(meta, previews).encode("utf-8")
+        return projection_bytes(
+            render_previews_markdown(meta, previews).encode("utf-8"),
+            content_type="text/markdown",
+        )
     args = _parse_cli(argv)
     if args.command != "get":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "meta":
-        return json_bytes(meta)
+        return projection_bytes(json_bytes(meta), content_type="application/json")
     if args.output == "json":
-        return pretty_json(capture.data)
+        return projection_bytes(
+            pretty_json(capture.data),
+            content_type="application/json",
+        )
     if args.output == "csv":
         if len(previews) != 1:
             raise RuntimeError(
@@ -324,8 +340,14 @@ def project(argv: list[str], capture: Capture) -> bytes:
         values = previews[0].get("values")
         if not isinstance(values, list):
             values = []
-        return _csv_text(values).encode("utf-8")
-    return render_previews_markdown(meta, previews).encode("utf-8")
+        return projection_bytes(
+            _csv_text(values).encode("utf-8"),
+            content_type="text/csv",
+        )
+    return projection_bytes(
+        render_previews_markdown(meta, previews).encode("utf-8"),
+        content_type="text/markdown",
+    )
 
 
 def normalize_search_result(

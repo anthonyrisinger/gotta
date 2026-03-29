@@ -24,6 +24,7 @@ import gotta.dispatch.materialize as dispatch_materialize
 import gotta.resolve.invoke as invocation
 from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
+from gotta.projection import projection_bytes
 from gotta.plugins import read as read_plugin
 from gotta.plugins.session import main as session_plugin
 from gotta.resolve.search import SearchRouteError, resolve_search_route
@@ -355,7 +356,7 @@ def test_search_resolve_invocation_disables_materialization_on_invalid_target() 
             "slack",
             ["status", "--workspace", "demo", "--output", "summary"],
             "none",
-            "",
+            None,
             False,
         ),
         (
@@ -363,7 +364,7 @@ def test_search_resolve_invocation_disables_materialization_on_invalid_target() 
             "grafana",
             ["status"],
             "none",
-            "",
+            None,
             False,
         ),
     ],
@@ -373,7 +374,7 @@ def test_read_resolve_invocation_preserves_routed_provider_artifact_intent(
     expected_plugin: str,
     expected_args: list[str],
     expected_intent: str,
-    expected_kind: str,
+    expected_kind: str | None,
     expected_materialize: bool,
 ) -> None:
     resolved = dispatch.resolve_invocation("read", argv, content_model.CommonOptions())
@@ -1707,13 +1708,13 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
     def fake_capture(argv: list[str], _options: object) -> Capture:
         return Capture(
             data=canonical,
-            name="widgets.json",
-            type="application/json",
+            preferred_name="widgets.json",
+            content_type="application/json",
         )
 
-    def fake_project(argv: list[str], capture: Capture) -> bytes:
+    def fake_project(argv: list[str], capture: Capture):
         assert capture.data == canonical
-        return b"# Title\n\nline 1\nline 2\n"
+        return projection_bytes(b"# Title\n\nline 1\nline 2\n")
 
     monkeypatch.setattr(
         read_plugin,
@@ -1764,13 +1765,13 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
     def fake_capture(argv: list[str], _options: object) -> Capture:
         return Capture(
             data=canonical,
-            name="widgets.json",
-            type="application/json",
+            preferred_name="widgets.json",
+            content_type="application/json",
         )
 
-    def fake_project(argv: list[str], capture: Capture) -> bytes:
+    def fake_project(argv: list[str], capture: Capture):
         assert capture.data == canonical
-        return b"# Title\n\nline 1\nline 2\n"
+        return projection_bytes(b"# Title\n\nline 1\nline 2\n")
 
     monkeypatch.setattr(
         read_plugin,

@@ -5,16 +5,19 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 import json
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+
+
+ArtifactKind = Literal["discovery", "evidence"]
 
 
 @dataclass(frozen=True, slots=True)
 class Capture:
     data: bytes
-    name: str = ""
-    type: str = ""
-    meta: dict[str, Any] = field(default_factory=dict)
-    view: dict[str, Any] = field(default_factory=dict)
+    preferred_name: str = ""
+    content_type: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    view_data: dict[str, Any] = field(default_factory=dict)
 
 
 def json_bytes(payload: Any) -> bytes:
@@ -37,3 +40,11 @@ def capture_json_command(
         message = captured.getvalue().decode("utf-8", errors="replace").strip()
         raise RuntimeError(message or detail)
     return captured.getvalue()
+
+
+__all__ = [
+    "ArtifactKind",
+    "Capture",
+    "capture_json_command",
+    "json_bytes",
+]

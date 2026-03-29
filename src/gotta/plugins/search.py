@@ -105,11 +105,12 @@ def capture(argv: list[str], options: object):
 def project(argv: list[str], capture):
     route = resolve_search_route(argv)
     from gotta.builtin import get_plugin
+    from gotta.projection import projection_for_capture
 
     spec = get_plugin(route.provider)
     if spec and spec.project is not None:
         return spec.project(route.provider_argv, capture)
-    return capture.data
+    return projection_for_capture(capture, capture.data)
 
 
 def main(argv: list[str]) -> int:

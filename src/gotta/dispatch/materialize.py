@@ -74,7 +74,6 @@ def _materialize_invocation(
         "tool": "gotta",
         "plugin": materialize_plugin,
         "provider": resolved.provider,
-        "artifact_kind": resolved.artifact_kind,
         "subcommand": materialize_argv[0] if materialize_argv else "",
         "argv": materialize_argv,
         "locator": invocation_locator(materialize_plugin, materialize_argv),
@@ -82,13 +81,15 @@ def _materialize_invocation(
         "source_kind": "stdin"
         if resolved.entry_plugin == "read" and resolved.entry_argv == ["-"]
         else "render",
-        "content_type": capture.type
-        if capture is not None and capture.type
+        "content_type": capture.content_type
+        if capture is not None and capture.content_type
         else resolved.content_type,
         "session_dir": str(dirs.session_dir),
         "content_dir": str(dirs.content_dir),
         "actor": actor,
     }
+    if resolved.artifact_kind is not None:
+        metadata["artifact_kind"] = resolved.artifact_kind
     if resolved.entry_plugin != materialize_plugin:
         metadata["entrypoint"] = resolved.entry_plugin
         metadata["entry_argv"] = resolved.entry_argv
@@ -111,10 +112,14 @@ def _materialize_invocation(
         )
     )
     if capture is not None:
-        metadata.update(capture.meta)
+        metadata.update(capture.metadata)
     preferred_name = resolved.preferred_name
-    if capture is not None and capture.name and not (options and options.save_as):
-        preferred_name = capture.name
+    if (
+        capture is not None
+        and capture.preferred_name
+        and not (options and options.save_as)
+    ):
+        preferred_name = capture.preferred_name
     return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
         payload,
         preferred_name=preferred_name,

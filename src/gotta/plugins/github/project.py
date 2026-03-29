@@ -6,6 +6,7 @@ import base64
 import json
 
 from gotta.capture import Capture, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.project import looks_text, pretty_json
 
 from .parse import ParsedArgs, parse_args
@@ -51,7 +52,7 @@ def _blob_json_payload(
 def _blob_payload(
     capture: Capture, *, owner: str, repo: str, ref: str, path: str
 ) -> bytes:
-    payload = capture.view.get("payload")
+    payload = capture.view_data.get("payload")
     if isinstance(payload, dict):
         return json_bytes(payload)
     return json_bytes(
@@ -143,8 +144,8 @@ def _project_tree(
             path=str(payload.get("path") or ""),
             entries=entries,
         ).encode("utf-8")
-    hinted_path = capture.view.get("hinted_path")
-    hinted_blob = capture.view.get("hinted_blob")
+    hinted_path = capture.view_data.get("hinted_path")
+    hinted_blob = capture.view_data.get("hinted_blob")
     if isinstance(hinted_path, str) and isinstance(hinted_blob, bytes):
         if looks_text(hinted_blob):
             return hinted_blob
@@ -181,9 +182,11 @@ def _project_repo(
     if not isinstance(entries, list):
         entries = []
     if not argv:
-        if capture.view.get("hinted_path") and capture.view.get("hinted_blob"):
-            hinted_path = str(capture.view["hinted_path"])
-            hinted_blob = capture.view["hinted_blob"]
+        if capture.view_data.get("hinted_path") and capture.view_data.get(
+            "hinted_blob"
+        ):
+            hinted_path = str(capture.view_data["hinted_path"])
+            hinted_blob = capture.view_data["hinted_blob"]
             if isinstance(hinted_blob, bytes) and looks_text(hinted_blob):
                 return hinted_blob
             return markdown_binary_blob(
@@ -208,9 +211,9 @@ def _project_repo(
         return pretty_json(capture.data)
     if parsed.output == "summary":
         return markdown_repo(repo_payload).encode("utf-8")
-    if capture.view.get("hinted_path") and capture.view.get("hinted_blob"):
-        hinted_path = str(capture.view["hinted_path"])
-        hinted_blob = capture.view["hinted_blob"]
+    if capture.view_data.get("hinted_path") and capture.view_data.get("hinted_blob"):
+        hinted_path = str(capture.view_data["hinted_path"])
+        hinted_blob = capture.view_data["hinted_blob"]
         if isinstance(hinted_blob, bytes) and looks_text(hinted_blob):
             return hinted_blob
         return markdown_binary_blob(
@@ -302,21 +305,30 @@ def _project_object(
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("github_kind") or "").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("github_kind") or "").strip()
     if kind == "search":
-        return _project_search(argv, capture)
-    owner = str(capture.meta.get("github_owner") or "").strip()
-    repo = str(capture.meta.get("github_repo") or "").strip()
-    ref = str(capture.meta.get("github_ref") or "").strip()
-    path = str(capture.meta.get("github_path") or "").strip()
+        return projection_bytes(
+            _project_search(argv, capture), content_type="text/markdown"
+        )
+    owner = str(capture.metadata.get("github_owner") or "").strip()
+    repo = str(capture.metadata.get("github_repo") or "").strip()
+    ref = str(capture.metadata.get("github_ref") or "").strip()
+    path = str(capture.metadata.get("github_path") or "").strip()
     if kind == "blob":
-        return _project_blob(argv, capture, owner=owner, repo=repo, ref=ref, path=path)
+        data = _project_blob(argv, capture, owner=owner, repo=repo, ref=ref, path=path)
+        return projection_bytes(data, content_type="text/markdown")
     payload = json.loads(capture.data.decode("utf-8"))
     if kind == "tree":
-        return _project_tree(argv, capture, payload, owner=owner, repo=repo, ref=ref)
+        return projection_bytes(
+            _project_tree(argv, capture, payload, owner=owner, repo=repo, ref=ref),
+            content_type="text/markdown",
+        )
     if kind == "repo":
-        return _project_repo(argv, capture, payload, owner=owner, repo=repo, ref=ref)
+        return projection_bytes(
+            _project_repo(argv, capture, payload, owner=owner, repo=repo, ref=ref),
+            content_type="text/markdown",
+        )
     if kind in {
         "issue",
         "pr",
@@ -327,13 +339,16 @@ def project(argv: list[str], capture: Capture) -> bytes:
         "workflow_run",
         "workflow_job",
     }:
-        return _project_object(
-            argv,
-            capture,
-            _dict_payload(payload),
-            kind=kind,
-            owner=owner,
-            repo=repo,
-            ref=ref,
+        return projection_bytes(
+            _project_object(
+                argv,
+                capture,
+                _dict_payload(payload),
+                kind=kind,
+                owner=owner,
+                repo=repo,
+                ref=ref,
+            ),
+            content_type="text/markdown",
         )
-    return capture.data
+    return projection_bytes(capture.data, content_type=capture.content_type)

@@ -465,11 +465,11 @@ def test_capture_and_project_support_workflow_job_urls(monkeypatch) -> None:
         object(),
     )
 
-    assert capture.meta["github_kind"] == "workflow_job"
+    assert capture.metadata["github_kind"] == "workflow_job"
     rendered = github.project(
         ["https://github.com/acme/widgets/actions/runs/123456789/job/987654321"],
         capture,
-    ).decode("utf-8")
+    ).data.decode("utf-8")
     assert "# acme/widgets workflow job 987654321: Generic Job" in rendered
     assert "Generic Step" in rendered
 

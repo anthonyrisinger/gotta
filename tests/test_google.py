@@ -694,16 +694,16 @@ def test_gdrive_project_summarizes_drawio_mxfile() -> None:
     ).encode("utf-8")
     capture = gdrive.Capture(
         data=mxfile,
-        name="diagram.mxfile",
-        type="application/vnd.jgraph.mxfile",
-        meta={
+        preferred_name="diagram.mxfile",
+        content_type="application/vnd.jgraph.mxfile",
+        metadata={
             "projector": "gdrive",
             "file_id": "file-123",
             "source_title": "Generic Diagram",
             "source_url": "https://drive.google.com/file/d/file-123/view",
             "source_mime": "application/vnd.jgraph.mxfile",
         },
-        view={
+        view_data={
             "meta": {
                 "id": "file-123",
                 "name": "Generic Diagram",
@@ -714,7 +714,7 @@ def test_gdrive_project_summarizes_drawio_mxfile() -> None:
 
     rendered = gdrive.project(
         ["get", "--output", "markdown", "file-123"], capture
-    ).decode("utf-8")
+    ).data.decode("utf-8")
 
     assert "# Generic Diagram" in rendered
     assert "- **Pages:** 1" in rendered

@@ -9,6 +9,7 @@ import sys
 from typing import Any
 
 from gotta.capture import Capture
+from gotta.projection import Projection
 
 from .api import (
     default_branch_name,
@@ -102,45 +103,50 @@ def capture(argv: list[str], options: Any) -> Capture:
     return github_capture(argv, options, deps=_capture_deps())
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
+def project(argv: list[str], capture: Capture) -> Projection:
     return github_project(argv, capture)
 
 
 def _projected_content_path(
     capture: Capture,
-    data: bytes,
+    projection: Projection,
     *,
     parsed: ParsedArgs,
 ) -> str:
     if parsed.output != "markdown":
         return ""
-    kind = str(capture.meta.get("github_kind") or "").strip()
-    if kind == "blob" and data == capture.data and looks_text(capture.data):
-        return str(capture.meta.get("github_path") or "")
+    kind = str(capture.metadata.get("github_kind") or "").strip()
+    if kind == "blob" and projection.data == capture.data and looks_text(capture.data):
+        return str(capture.metadata.get("github_path") or "")
     if kind not in {"repo", "tree"}:
         return ""
-    hinted_path = capture.view.get("hinted_path")
-    hinted_blob = capture.view.get("hinted_blob")
+    hinted_path = capture.view_data.get("hinted_path")
+    hinted_blob = capture.view_data.get("hinted_blob")
     if (
         isinstance(hinted_path, str)
         and isinstance(hinted_blob, bytes)
-        and data == hinted_blob
+        and projection.data == hinted_blob
         and looks_text(hinted_blob)
     ):
         return hinted_path
     return ""
 
 
-def _emit_projection(data: bytes, *, capture: Capture, parsed: ParsedArgs) -> None:
-    content_path = _projected_content_path(capture, data, parsed=parsed)
+def _emit_projection(
+    projection: Projection,
+    *,
+    capture: Capture,
+    parsed: ParsedArgs,
+) -> None:
+    content_path = _projected_content_path(capture, projection, parsed=parsed)
     if content_path:
-        render_content(data, content_path)
+        render_content(projection.data, content_path)
         return
     if parsed.output == "json":
-        render_bytes(data, "json")
+        render_bytes(projection.data, "json")
         return
-    sys.stdout.buffer.write(data)
-    if not data.endswith(b"\n"):
+    sys.stdout.buffer.write(projection.data)
+    if not projection.data.endswith(b"\n"):
         sys.stdout.buffer.write(b"\n")
 
 
@@ -180,12 +186,12 @@ def main(argv: list[str]) -> int:
         return 0
     try:
         rendered_capture = capture(argv, object())
-        rendered_bytes = project(argv, rendered_capture)
+        projection = project(argv, rendered_capture)
     except SystemExit as exc:
         return _system_exit_status(exc)
     except RuntimeError as exc:
         return die(str(exc), code=1)
-    _emit_projection(rendered_bytes, capture=rendered_capture, parsed=parsed)
+    _emit_projection(projection, capture=rendered_capture, parsed=parsed)
     return 0
 
 

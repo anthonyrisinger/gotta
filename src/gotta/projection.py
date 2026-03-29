@@ -2,11 +2,47 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 
+from gotta.capture import Capture
 from gotta.content.file import PRIVATE_FILE_MODE, ensure_private_dir, write_text_atomic
+
+
+@dataclass(frozen=True, slots=True)
+class Projection:
+    data: bytes
+    content_type: str = ""
+    degradations: tuple[str, ...] = ()
+
+
+def projection_bytes(
+    data: bytes,
+    *,
+    content_type: str = "",
+    degradations: tuple[str, ...] = (),
+) -> Projection:
+    return Projection(
+        data=data,
+        content_type=content_type,
+        degradations=degradations,
+    )
+
+
+def projection_for_capture(
+    capture: Capture,
+    data: bytes,
+    *,
+    content_type: str = "",
+    degradations: tuple[str, ...] = (),
+) -> Projection:
+    return Projection(
+        data=data,
+        content_type=content_type or capture.content_type,
+        degradations=degradations,
+    )
 
 
 def append_chunk(path: Path, chunk: str) -> None:
@@ -51,3 +87,14 @@ def write_projection_if_changed(path: Path, text: str) -> None:
         except OSError:
             pass
     write_text_atomic(path, text)
+
+
+__all__ = [
+    "Projection",
+    "append_chunk",
+    "append_jsonl",
+    "projection_bytes",
+    "projection_for_capture",
+    "read_jsonl_records",
+    "write_projection_if_changed",
+]

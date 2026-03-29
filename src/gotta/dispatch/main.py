@@ -286,15 +286,15 @@ def run_surface(surface: str, argv: list[str]) -> int:
         try:
             with scoped_runtime_env(runtime_dirs):
                 with capture_stderr(preserve_tty=True) as stderr_capture:
-                    capture, display = _captured_execution(surface, cleaned, options)
+                    capture, projection = _captured_execution(surface, cleaned, options)
         except NotImplementedError:
             capture = None
-            display = None
+            projection = None
         except SystemExit as exc:
             return system_exit_status(exc)
         except (ContentError, RuntimeError) as exc:
             return die(str(exc), code=1)
-        if capture is not None and display is not None:
+        if capture is not None and projection is not None:
             try:
                 result = _materialize_invocation(
                     resolved,
@@ -306,7 +306,7 @@ def run_surface(surface: str, argv: list[str]) -> int:
             except ContentError as exc:
                 return die(str(exc), code=1)
             return emit_success(
-                display,
+                projection.data,
                 stderr_data=stderr_capture.getvalue(),
                 result=result,
                 dirs=runtime_dirs,

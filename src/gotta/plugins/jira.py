@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.config import set_provider_env_values
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
@@ -2792,9 +2793,9 @@ def capture(argv: list[str], _options: object) -> Capture:
             )
             return Capture(
                 data=payload,
-                name=preferred_name(argv, object()),
-                type="application/json",
-                meta={
+                preferred_name=preferred_name(argv, object()),
+                content_type="application/json",
+                metadata={
                     "projector": "jira",
                     "jira_kind": args.command,
                 },
@@ -2804,9 +2805,9 @@ def capture(argv: list[str], _options: object) -> Capture:
     envelope = fetch_issue(issue_ref, fields=DEFAULT_GET_FIELDS)
     return Capture(
         data=json_bytes(envelope),
-        name=f"{_issue_key_for_locator(args.issue)}.json",
-        type="application/json",
-        meta={
+        preferred_name=f"{_issue_key_for_locator(args.issue)}.json",
+        content_type="application/json",
+        metadata={
             "projector": "jira",
             "source_created_at": str(envelope.get("createdAt") or ""),
             "source_updated_at": str(envelope.get("updatedAt") or ""),
@@ -2814,31 +2815,55 @@ def capture(argv: list[str], _options: object) -> Capture:
     )
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("jira_kind") or "get").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("jira_kind") or "get").strip()
     if kind in {"search", "jql"}:
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
-            return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != kind:
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
-        return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                pretty_json(capture.data),
+                content_type="application/json",
+            )
+        return projection_bytes(
+            render_search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
     envelope = json.loads(capture.data.decode("utf-8"))
     if not argv:
-        return markdown_issue(envelope).encode("utf-8")
+        return projection_bytes(
+            markdown_issue(envelope).encode("utf-8"),
+            content_type="text/markdown",
+        )
     args = _parse_cli(argv)
     if args.command != "get":
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.output == "json":
-        return pretty_json(capture.data)
+        return projection_bytes(
+            pretty_json(capture.data),
+            content_type="application/json",
+        )
     if args.output == "meta":
-        return json_bytes(meta_issue(envelope))
+        return projection_bytes(
+            json_bytes(meta_issue(envelope)),
+            content_type="application/json",
+        )
     if args.output == "adf":
-        return json_bytes(envelope.get("descriptionAdf"))
-    return markdown_issue(envelope).encode("utf-8")
+        return projection_bytes(
+            json_bytes(envelope.get("descriptionAdf")),
+            content_type="application/json",
+        )
+    return projection_bytes(
+        markdown_issue(envelope).encode("utf-8"),
+        content_type="text/markdown",
+    )
 
 
 def cmd_search(args: argparse.Namespace) -> int:

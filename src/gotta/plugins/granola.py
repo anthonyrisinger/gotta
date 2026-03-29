@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.projection import Projection, projection_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.resolve.route import split_locator_tail
@@ -1432,9 +1433,9 @@ def capture(argv: list[str], _options: object) -> Capture:
         )
         return Capture(
             data=json_bytes(document),
-            name=f"{base}.json",
-            type="application/json",
-            meta=_capture_meta(document),
+            preferred_name=f"{base}.json",
+            content_type="application/json",
+            metadata=_capture_meta(document),
         )
     if args.command == "transcript":
         token = load_access_token(args.supabase)
@@ -1463,9 +1464,9 @@ def capture(argv: list[str], _options: object) -> Capture:
             base = f"{base}-query-{_slug(args.query, fallback='query')}"
         return Capture(
             data=json_bytes(payload),
-            name=f"{base}.json",
-            type="application/json",
-            meta=_capture_meta(document),
+            preferred_name=f"{base}.json",
+            content_type="application/json",
+            metadata=_capture_meta(document),
         )
     if args.command in {"search", "list", "search-transcript"}:
         runner = {
@@ -1480,9 +1481,9 @@ def capture(argv: list[str], _options: object) -> Capture:
         )
         return Capture(
             data=payload,
-            name=preferred_name(argv, object()),
-            type="application/json",
-            meta={
+            preferred_name=preferred_name(argv, object()),
+            content_type="application/json",
+            metadata={
                 "projector": "granola",
                 "granola_kind": args.command,
             },
@@ -1490,21 +1491,33 @@ def capture(argv: list[str], _options: object) -> Capture:
     raise NotImplementedError("granola capture does not support this command")
 
 
-def project(argv: list[str], capture: Capture) -> bytes:
-    kind = str(capture.meta.get("granola_kind") or "").strip()
+def project(argv: list[str], capture: Capture) -> Projection:
+    kind = str(capture.metadata.get("granola_kind") or "").strip()
     if kind in {"search", "list", "search-transcript"}:
         payload = json.loads(capture.data.decode("utf-8"))
         if not argv:
             if kind == "list":
-                return render_list_markdown(payload).encode("utf-8")
+                return projection_bytes(
+                    render_list_markdown(payload).encode("utf-8"),
+                    content_type="text/markdown",
+                )
             if kind == "search-transcript":
-                return render_transcript_search_markdown(payload).encode("utf-8")
-            return render_search_markdown(payload).encode("utf-8")
+                return projection_bytes(
+                    render_transcript_search_markdown(payload).encode("utf-8"),
+                    content_type="text/markdown",
+                )
+            return projection_bytes(
+                render_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         args = _parse_cli(argv)
         if args.command != kind:
-            return capture.data
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if args.output == "json":
-            return pretty_json(capture.data)
+            return projection_bytes(
+                pretty_json(capture.data),
+                content_type="application/json",
+            )
         if kind == "list":
             if args.output == "summary":
                 lines: list[str] = []
@@ -1522,38 +1535,68 @@ def project(argv: list[str], capture: Capture) -> bytes:
                     lines.append(
                         f"{primary_time or ''}\t{item.get('id') or ''}\t{item.get('title') or 'Untitled'}"
                     )
-                return ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
-            return render_list_markdown(payload).encode("utf-8")
+                return projection_bytes(
+                    ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"),
+                    content_type="text/plain",
+                )
+            return projection_bytes(
+                render_list_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
         if kind == "search-transcript":
-            return render_transcript_search_markdown(payload).encode("utf-8")
-        return render_search_markdown(payload).encode("utf-8")
+            return projection_bytes(
+                render_transcript_search_markdown(payload).encode("utf-8"),
+                content_type="text/markdown",
+            )
+        return projection_bytes(
+            render_search_markdown(payload).encode("utf-8"),
+            content_type="text/markdown",
+        )
     payload = json.loads(capture.data.decode("utf-8"))
     if not argv:
         if "segmentCount" in payload:
             document = payload.get("document")
             segments = payload.get("segments")
             if isinstance(document, dict) and isinstance(segments, list):
-                return format_transcript_markdown(document, segments).encode("utf-8")
+                return projection_bytes(
+                    format_transcript_markdown(document, segments).encode("utf-8"),
+                    content_type="text/markdown",
+                )
         if isinstance(payload, dict):
             note = best_note_body(payload)
-            return format_markdown_document(payload, note).encode("utf-8")
-        return capture.data
+            return projection_bytes(
+                format_markdown_document(payload, note).encode("utf-8"),
+                content_type="text/markdown",
+            )
+        return projection_bytes(capture.data, content_type=capture.content_type)
     args = _parse_cli(argv)
     if args.command == "get":
         if args.output == "json":
-            return pretty_json(capture.data)
+            return projection_bytes(
+                pretty_json(capture.data),
+                content_type="application/json",
+            )
         if args.output == "meta":
             if isinstance(payload, dict):
-                return json_bytes(document_meta_payload(payload))
-            return capture.data
+                return projection_bytes(
+                    json_bytes(document_meta_payload(payload)),
+                    content_type="application/json",
+                )
+            return projection_bytes(capture.data, content_type=capture.content_type)
         if isinstance(payload, dict):
-            return format_markdown_document(payload, best_note_body(payload)).encode(
-                "utf-8"
+            return projection_bytes(
+                format_markdown_document(payload, best_note_body(payload)).encode(
+                    "utf-8"
+                ),
+                content_type="text/markdown",
             )
-        return capture.data
+        return projection_bytes(capture.data, content_type=capture.content_type)
     if args.command == "transcript":
         if args.output == "json":
-            return pretty_json(capture.data)
+            return projection_bytes(
+                pretty_json(capture.data),
+                content_type="application/json",
+            )
         if args.output == "summary":
             document = payload.get("document") if isinstance(payload, dict) else {}
             if not isinstance(document, dict):
@@ -1562,12 +1605,15 @@ def project(argv: list[str], capture: Capture) -> bytes:
                 f"{document.get('id') or ''}\t{payload.get('segmentCount') or 0}\t"
                 f"{document.get('title') or 'Untitled'}\n"
             )
-            return line.encode("utf-8")
+            return projection_bytes(line.encode("utf-8"), content_type="text/plain")
         document = payload.get("document") if isinstance(payload, dict) else {}
         segments = payload.get("segments") if isinstance(payload, dict) else []
         if isinstance(document, dict) and isinstance(segments, list):
-            return format_transcript_markdown(document, segments).encode("utf-8")
-    return capture.data
+            return projection_bytes(
+                format_transcript_markdown(document, segments).encode("utf-8"),
+                content_type="text/markdown",
+            )
+    return projection_bytes(capture.data, content_type=capture.content_type)
 
 
 def cmd_transcript(args: argparse.Namespace) -> int:

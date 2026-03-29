@@ -243,9 +243,9 @@ def _capture_search(
     payload = _dict_payload(_canonicalize_capture_value(payload))
     return Capture(
         data=json_bytes(payload),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "search",
         },
@@ -275,9 +275,9 @@ def _capture_workflow_job(
         data=json_bytes(
             _object_capture_payload("workflow_job", payload, owner=owner, repo=repo)
         ),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "workflow_job",
             "github_owner": owner,
@@ -306,9 +306,9 @@ def _capture_workflow_run(
         data=json_bytes(
             _object_capture_payload("workflow_run", payload, owner=owner, repo=repo)
         ),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "workflow_run",
             "github_owner": owner,
@@ -358,9 +358,9 @@ def _capture_blob(
     payload = _dict_payload(_canonicalize_capture_value(payload))
     return Capture(
         data=blob,
-        name=Path(path).name or "github.bin",
-        type=_blob_content_type(path, blob, deps=deps),
-        meta={
+        preferred_name=Path(path).name or "github.bin",
+        content_type=_blob_content_type(path, blob, deps=deps),
+        metadata={
             "projector": "github",
             "github_kind": "blob",
             "github_owner": owner,
@@ -370,7 +370,7 @@ def _capture_blob(
             "source_created_at": "",
             "source_updated_at": "",
         },
-        view={"payload": payload},
+        view_data={"payload": payload},
     )
 
 
@@ -395,9 +395,9 @@ def _capture_tree(
         blob = deps.decode_content_blob(payload)
         return Capture(
             data=blob,
-            name=Path(file_path).name or "github.bin",
-            type=_blob_content_type(file_path, blob, deps=deps),
-            meta={
+            preferred_name=Path(file_path).name or "github.bin",
+            content_type=_blob_content_type(file_path, blob, deps=deps),
+            metadata={
                 "projector": "github",
                 "github_kind": "blob",
                 "github_owner": owner,
@@ -405,7 +405,7 @@ def _capture_tree(
                 "github_ref": ref,
                 "github_path": file_path,
             },
-            view={"payload": payload},
+            view_data={"payload": payload},
         )
     readme_path, readme_summary = deps.readme_rollup(
         gh,
@@ -441,9 +441,9 @@ def _capture_tree(
     payload = _dict_payload(_canonicalize_capture_value(payload))
     return Capture(
         data=json_bytes(payload),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "tree",
             "github_owner": owner,
@@ -451,7 +451,7 @@ def _capture_tree(
             "github_ref": ref,
             "github_path": path,
         },
-        view=view,
+        view_data=view,
     )
 
 
@@ -484,9 +484,9 @@ def _capture_pull_or_issue(
     payload = _dict_payload(_canonicalize_capture_value(payload))
     return Capture(
         data=json_bytes(_object_capture_payload(kind, payload, owner=owner, repo=repo)),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": kind,
             "github_owner": owner,
@@ -517,9 +517,9 @@ def _capture_commit(
         data=json_bytes(
             _object_capture_payload("commit", payload, owner=owner, repo=repo)
         ),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "commit",
             "github_owner": owner,
@@ -597,9 +597,9 @@ def _capture_commits(
                 "commits", payload, owner=owner, repo=repo, ref=ref, path=path
             )
         ),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "commits",
             "github_owner": owner,
@@ -637,9 +637,9 @@ def _capture_release(
         data=json_bytes(
             _object_capture_payload("release", payload, owner=owner, repo=repo)
         ),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "release",
             "github_owner": owner,
@@ -676,9 +676,9 @@ def _capture_releases(
         data=json_bytes(
             _object_capture_payload("releases", payload, owner=owner, repo=repo)
         ),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "releases",
             "github_owner": owner,
@@ -763,9 +763,9 @@ def _capture_repo(
     capture_payload = _dict_payload(_canonicalize_capture_value(capture_payload))
     return Capture(
         data=json_bytes(capture_payload),
-        name=deps.preferred_name(argv, options),
-        type="application/json",
-        meta={
+        preferred_name=deps.preferred_name(argv, options),
+        content_type="application/json",
+        metadata={
             "projector": "github",
             "github_kind": "repo",
             "github_owner": owner,
@@ -776,7 +776,7 @@ def _capture_repo(
                 payload.get("updatedAt") or payload.get("pushedAt") or ""
             ),
         },
-        view=view,
+        view_data=view,
     )
 
 

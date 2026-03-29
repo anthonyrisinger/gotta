@@ -1323,7 +1323,7 @@ def test_confluence_markdown_from_capture_reloads_session_for_drawio_projection(
         rendered = confluence._markdown_from_capture(
             Capture(
                 data=b'<ac:structured-macro ac:name="drawio" />',
-                meta={
+                metadata={
                     "content_kind": "page",
                     "content_id": "222222",
                     "source_title": "Example Diagram Page",

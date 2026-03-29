@@ -12,6 +12,7 @@ import sys
 from typing import Any, Literal, SupportsInt, cast
 
 from gotta.capture import Capture
+from gotta.projection import Projection
 
 
 Runner = Callable[[list[str]], int]
@@ -24,7 +25,7 @@ CanonicalLocator = Callable[[list[str]], str]
 PreferredName = Callable[[list[str], Any], str]
 ContentType = Callable[[list[str], str], str]
 CaptureHook = Callable[[list[str], Any], Capture]
-ProjectHook = Callable[[list[str], Capture], bytes]
+ProjectHook = Callable[[list[str], Capture], Projection]
 CapabilityName = Literal[
     "route",
     "read",

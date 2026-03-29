@@ -13,6 +13,7 @@ import gotta.content.model as content_model
 import gotta.content.path as content_path
 from gotta.plugins import actor, read
 from gotta.plugins.session import main as session
+from gotta.projection import projection_bytes
 import gotta.resolve.read as resolve_read
 from gotta.session import registry as session_registry
 
@@ -674,13 +675,13 @@ def test_execute_materializing_read_keeps_full_routed_bytes_under_bounded_view(
     def fake_capture(argv: list[str], _options: object):
         return read.Capture(
             data=canonical,
-            name="widgets.json",
-            type="application/json",
+            preferred_name="widgets.json",
+            content_type="application/json",
         )
 
     def fake_project(argv: list[str], capture):
         assert capture.data == canonical
-        return b"# Title\n\nline 1\nline 2\n"
+        return projection_bytes(b"# Title\n\nline 1\nline 2\n")
 
     monkeypatch.setattr(
         read,
