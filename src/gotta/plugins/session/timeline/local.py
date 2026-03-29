@@ -11,6 +11,7 @@ from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
 
 from ..core import LOCAL_TIMELINE_FILES, rendered_actor
+from .model import TimelineEvent, apply_visibility, timeline_visibility
 from .stamp import _iso_utc_from_timestamp
 
 
@@ -30,8 +31,8 @@ def _timeline_activity_roots(dirs) -> list[Path]:
     return [dirs.session_dir.resolve()]
 
 
-def local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list[str]]:
-    events: list[dict[str, object]] = []
+def local_activity_timeline_events(dirs) -> tuple[list[TimelineEvent], list[str]]:
+    events: list[TimelineEvent] = []
     activity_paths: list[str] = []
     seen_locators: set[tuple[str, str]] = set()
     seen_activity_roots: set[Path] = set()
@@ -48,40 +49,43 @@ def local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list[
             locator = str(raw.get("locator") or "").strip() or "unknown"
             seen_locators.add((str(resolved_root), locator))
             plugin = str(raw.get("plugin") or "session").strip() or "session"
-            events.append(
-                {
-                    "mode": "local",
-                    "source_time": timestamp,
-                    "source_time_field": str(
-                        raw.get("time_field") or "session_recorded_at"
-                    ),
-                    "source_created_at": "",
-                    "source_updated_at": "",
-                    "source_published_at": "",
-                    "fetched_at": timestamp,
-                    "plugin": plugin,
-                    "actor": rendered_actor(
-                        raw.get("actor"), session_root=resolved_root
-                    ),
-                    "target_actor": str(raw.get("target_actor") or "").strip(),
-                    "locator": locator,
-                    "preferred_name": str(raw.get("preferred_name") or locator).strip()
-                    or locator,
-                    "checksum": "",
-                    "artifactKind": "",
-                    "content_locator": "",
-                    "artifact_locator": "",
-                    "follow_command": str(raw.get("follow_command") or "").strip(),
-                    "detail": str(raw.get("detail") or "").strip(),
-                    "event_kind": "local",
-                    **classify_visibility_metadata(
+            event: TimelineEvent = {
+                "mode": "local",
+                "source_time": timestamp,
+                "source_time_field": str(
+                    raw.get("time_field") or "session_recorded_at"
+                ),
+                "source_created_at": "",
+                "source_updated_at": "",
+                "source_published_at": "",
+                "fetched_at": timestamp,
+                "plugin": plugin,
+                "actor": rendered_actor(raw.get("actor"), session_root=resolved_root),
+                "target_actor": str(raw.get("target_actor") or "").strip(),
+                "locator": locator,
+                "preferred_name": str(raw.get("preferred_name") or locator).strip()
+                or locator,
+                "checksum": "",
+                "artifactKind": "",
+                "content_locator": "",
+                "artifact_locator": "",
+                "follow_command": str(raw.get("follow_command") or "").strip(),
+                "detail": str(raw.get("detail") or "").strip(),
+                "surface": str(raw.get("surface") or "").strip(),
+                "event_kind": "local",
+            }
+            apply_visibility(
+                event,
+                timeline_visibility(
+                    classify_visibility_metadata(
                         {},
                         provider="gotta",
                         plugin=plugin,
                         locator=locator,
-                    ),
-                }
+                    )
+                ),
             )
+            events.append(event)
     candidates: list[tuple[str, Path, str, str, str]] = []
     for activity_root in _timeline_activity_roots(dirs):
         resolved_root = activity_root.resolve()
@@ -115,33 +119,38 @@ def local_activity_timeline_events(dirs) -> tuple[list[dict[str, object]], list[
             if plugin == "actor"
             else rendered_actor("", session_root=dirs.session_dir)
         )
-        events.append(
-            {
-                "mode": "local",
-                "source_time": timestamp,
-                "source_time_field": "filesystem_mtime",
-                "source_created_at": "",
-                "source_updated_at": "",
-                "source_published_at": "",
-                "fetched_at": timestamp,
-                "plugin": plugin,
-                "actor": actor,
-                "target_actor": "",
-                "locator": locator,
-                "preferred_name": preferred_name,
-                "checksum": "",
-                "artifactKind": "",
-                "content_locator": "",
-                "artifact_locator": "",
-                "follow_command": follow_path,
-                "detail": "local surface snapshot",
-                "event_kind": "local",
-                **classify_visibility_metadata(
+        event: TimelineEvent = {
+            "mode": "local",
+            "source_time": timestamp,
+            "source_time_field": "filesystem_mtime",
+            "source_created_at": "",
+            "source_updated_at": "",
+            "source_published_at": "",
+            "fetched_at": timestamp,
+            "plugin": plugin,
+            "actor": actor,
+            "target_actor": "",
+            "locator": locator,
+            "preferred_name": preferred_name,
+            "checksum": "",
+            "artifactKind": "",
+            "content_locator": "",
+            "artifact_locator": "",
+            "follow_command": follow_path,
+            "detail": "local surface snapshot",
+            "surface": "want" if locator.startswith("want:") else "goal",
+            "event_kind": "local",
+        }
+        apply_visibility(
+            event,
+            timeline_visibility(
+                classify_visibility_metadata(
                     {},
                     provider="gotta",
                     plugin=plugin,
                     locator=locator,
-                ),
-            }
+                )
+            ),
         )
+        events.append(event)
     return events, activity_paths

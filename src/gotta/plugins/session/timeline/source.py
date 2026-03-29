@@ -17,6 +17,7 @@ from ..core import (
     rendered_actor,
     resolved_visibility_metadata,
 )
+from .model import TimelineEvent, apply_visibility, timeline_visibility
 from .stamp import _source_timestamps
 
 
@@ -128,82 +129,88 @@ def source_timeline_events(
     mode: str,
     session_ref: str,
     filter_pattern,
-    local_events: list[dict[str, object]],
-) -> tuple[list[dict[str, object]], int]:
+    local_events: list[TimelineEvent],
+) -> tuple[list[TimelineEvent], int]:
     snapshots = scan_content_snapshots(
         dirs.content_dir,
         session_dir=dirs.session_dir,
     )
-    events: list[dict[str, object]] = []
+    events: list[TimelineEvent] = []
     coverage_gap_count = 0
     for snapshot in snapshots:
         metadata = snapshot.artifact.metadata
         locator = str(
             metadata.get("canonical_locator", "") or metadata.get("locator", "")
         ).strip()
-        source_payload = {
-            "plugin": str(metadata.get("plugin", "")).strip() or "unknown-plugin",
-            "actor": rendered_actor(
-                metadata.get("actor"),
-                session_root=dirs.session_dir,
-            ),
-            "target_actor": str(metadata.get("target_actor") or "").strip(),
-            "locator": locator,
-            "preferred_name": (
-                snapshot.artifact.preferred_name.strip()
-                or (snapshot.aliases[0].name if snapshot.aliases else "data")
-            ),
-            "event_kind": "source",
-        }
+        plugin = str(metadata.get("plugin", "")).strip() or "unknown-plugin"
+        actor = rendered_actor(
+            metadata.get("actor"),
+            session_root=dirs.session_dir,
+        )
+        target_actor = str(metadata.get("target_actor") or "").strip()
+        preferred_name = snapshot.artifact.preferred_name.strip() or (
+            snapshot.aliases[0].name if snapshot.aliases else "data"
+        )
         source_time, source_field = _source_timestamp_for_mode(snapshot, mode)
         if not source_time:
             if counts_as_source_coverage_gap(snapshot) and (
                 filter_pattern is None
                 or match_any(
                     filter_pattern,
-                    source_payload.get("actor"),
-                    source_payload.get("target_actor"),
-                    source_payload.get("plugin"),
-                    source_payload.get("locator"),
-                    source_payload.get("preferred_name"),
-                    source_payload.get("event_kind"),
+                    actor,
+                    target_actor,
+                    plugin,
+                    locator,
+                    preferred_name,
+                    "source",
                 )
             ):
                 coverage_gap_count += 1
             continue
         fetched_at = snapshot.events[-1].timestamp if snapshot.events else ""
         source_timestamps = _source_timestamps(snapshot)
-        events.append(
-            {
-                "mode": "source",
-                "source_time": source_time,
-                "source_time_field": source_field,
-                "source_created_at": source_timestamps.get("source_created_at", ""),
-                "source_updated_at": source_timestamps.get("source_updated_at", ""),
-                "source_published_at": source_timestamps.get("source_published_at", ""),
-                "checksum": snapshot.digest,
-                "artifactKind": artifact_kind(metadata.get("artifact_kind")),
-                "content_locator": content_locator(snapshot.digest),
-                "artifact_locator": artifact_human_locator(
-                    snapshot.artifact.preferred_name.strip() or "data",
-                    snapshot.digest,
-                ),
-                "fetched_at": fetched_at,
-                "follow_command": follow_command(
-                    locator,
-                    checksum=snapshot.digest,
-                    session_ref=session_ref,
-                ),
-                **source_payload,
-                **resolved_visibility_metadata(
+        event: TimelineEvent = {
+            "mode": "source",
+            "source_time": source_time,
+            "source_time_field": source_field,
+            "source_created_at": source_timestamps.get("source_created_at", ""),
+            "source_updated_at": source_timestamps.get("source_updated_at", ""),
+            "source_published_at": source_timestamps.get("source_published_at", ""),
+            "checksum": snapshot.digest,
+            "artifactKind": artifact_kind(metadata.get("artifact_kind")),
+            "content_locator": content_locator(snapshot.digest),
+            "artifact_locator": artifact_human_locator(
+                snapshot.artifact.preferred_name.strip() or "data",
+                snapshot.digest,
+            ),
+            "fetched_at": fetched_at,
+            "plugin": plugin,
+            "actor": actor,
+            "target_actor": target_actor,
+            "locator": locator,
+            "preferred_name": preferred_name,
+            "follow_command": follow_command(
+                locator,
+                checksum=snapshot.digest,
+                session_ref=session_ref,
+            ),
+            "detail": "",
+            "surface": "",
+            "event_kind": "source",
+        }
+        apply_visibility(
+            event,
+            timeline_visibility(
+                resolved_visibility_metadata(
                     dict(metadata),
                     provider=str(metadata.get("plugin") or ""),
                     plugin=str(metadata.get("plugin") or ""),
                     subcommand=str(metadata.get("subcommand") or ""),
                     locator=locator,
-                ),
-            }
+                )
+            ),
         )
+        events.append(event)
     if mode == "best-effort":
         events.extend(local_events)
     if filter_pattern is not None:

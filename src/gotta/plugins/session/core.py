@@ -264,7 +264,7 @@ def artifact_kind(raw: object) -> str:
     return value if value in {"discovery", "evidence"} else ""
 
 
-def artifact_kind_counts(records: list[dict[str, object]]) -> tuple[int, int]:
+def artifact_kind_counts(records: Sequence[Mapping[str, object]]) -> tuple[int, int]:
     discovery = 0
     evidence = 0
     for record in records:

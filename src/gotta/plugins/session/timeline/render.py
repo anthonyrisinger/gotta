@@ -9,53 +9,31 @@ from ..core import (
     paging_summary_line,
     visibility_summary,
 )
+from .model import TimelinePayload
 
 
-def _int_value(value: object, *, default: int = 0) -> int:
-    try:
-        return int(str(value or default))
-    except ValueError:
-        return default
-
-
-def _object_records(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, dict)]
-
-
-def _string_items(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item)]
-
-
-def render_timeline_text(payload: dict[str, object]) -> str:
-    total_count = _int_value(payload.get("totalCount"))
-    shown_count = _int_value(payload.get("shownCount"))
-    offset = _int_value(payload.get("offset"))
-    next_offset = (
-        _int_value(payload.get("nextOffset"))
-        if payload.get("nextOffset") is not None
-        else None
-    )
-    top_plugins = _object_records(payload.get("topPlugins"))
-    top_actors = _object_records(payload.get("topActors"))
-    events = _object_records(payload.get("events"))
+def render_timeline_text(payload: TimelinePayload) -> str:
+    total_count = payload["totalCount"]
+    shown_count = payload["shownCount"]
+    offset = payload["offset"]
+    next_offset = payload["nextOffset"]
+    top_plugins = payload["topPlugins"]
+    top_actors = payload["topActors"]
+    events = payload["events"]
     lines = [f"timeline: {payload['manifestPath']}"]
-    activity_paths = _string_items(payload.get("activityPaths"))
+    activity_paths = payload["activityPaths"]
     if len(activity_paths) > 1:
         lines.append(f"activity: {len(activity_paths)} actor activity logs")
     else:
         lines.append(f"activity: {payload['activityPath']}")
     lines.append(f"mode: {payload['mode']} ({payload['modeDescription']})")
-    lines.append(f"coverage_gaps: {payload.get('coverageGapCount', 0)}")
+    lines.append(f"coverage_gaps: {payload['coverageGapCount']}")
     lines.append(
         "events: "
         f"{payload['eventCount']} total "
         f"(discovery {payload['discoveryArtifactCount']}, "
         f"evidence {payload['evidenceArtifactCount']})"
-        f"{filter_suffix(payload.get('filter'))}"
+        f"{filter_suffix(payload['filter'])}"
     )
     lines.append(
         paging_summary_line(
@@ -94,27 +72,27 @@ def render_timeline_text(payload: dict[str, object]) -> str:
                 f"events preview (showing {len(preview_events)} of {len(events)}):"
             )
     for event in preview_events:
-        actor_label = str(event.get("actor") or "")
-        target_actor = str(event.get("target_actor") or "")
+        actor_label = event.get("actor", "")
+        target_actor = event.get("target_actor", "")
         if target_actor and target_actor != actor_label:
             actor_label = f"{actor_label}->{target_actor}"
-        checksum = str(event.get("checksum") or "")[:12] or "unknown"
+        checksum = event.get("checksum", "")[:12] or "unknown"
         if payload["mode"] != "acquired":
             lines.append(
-                f"- {event.get('source_time') or 'unknown-time'} "
+                f"- {event['source_time'] or 'unknown-time'} "
                 f"[{event['plugin']}/{actor_label}] "
                 f"{event['locator']} -> {event['preferred_name']} ({checksum}) "
-                f"(from {event.get('source_time_field') or 'unknown-field'})"
+                f"(from {event['source_time_field'] or 'unknown-field'})"
             )
         else:
-            local_suffix = " (local)" if event.get("event_kind") == "local" else ""
+            local_suffix = " (local)" if event["event_kind"] == "local" else ""
             lines.append(
                 f"- {event['fetched_at'] or 'unknown-time'} "
                 f"[{event['plugin']}/{actor_label}] "
                 f"{event['locator']} -> {event['preferred_name']} ({checksum})"
                 f"{local_suffix}"
             )
-        if event.get("artifactKind"):
+        if event["artifactKind"]:
             lines.append(f"  artifact_kind: {event['artifactKind']}")
         visibility = visibility_summary(event)
         if visibility:

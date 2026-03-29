@@ -14,6 +14,12 @@ from ..core import (
 )
 from .acquired import acquired_timeline_events
 from .local import local_activity_timeline_events
+from .model import (
+    TimelineActorCountRecord,
+    TimelineEvent,
+    TimelinePayload,
+    TimelinePluginCountRecord,
+)
 from .source import source_timeline_events
 from .stamp import normalize_timeline_mode
 
@@ -27,7 +33,7 @@ def timeline_payload(
     mode: str = "acquired",
     filter_query: str = "",
     session_ref: str = "",
-) -> dict[str, object]:
+) -> TimelinePayload:
     normalized_mode = normalize_timeline_mode(mode)
     local_events, activity_paths = local_activity_timeline_events(dirs)
     primary_activity_path = (
@@ -61,15 +67,9 @@ def timeline_payload(
         default_tail_window=True,
     )
     discovery_count, evidence_count = artifact_kind_counts(events)
-    top_plugins = top_count_records(
-        [str(item.get("plugin") or "").strip() for item in events],
-        key="plugin",
-    )
-    top_actors = top_count_records(
-        [str(item.get("actor") or "").strip() for item in events],
-        key="actor",
-    )
-    return {
+    top_plugins = plugin_count_records(events)
+    top_actors = actor_count_records(events)
+    payload: TimelinePayload = {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
@@ -78,8 +78,13 @@ def timeline_payload(
         "mode": normalized_mode,
         "modeDescription": TIMELINE_MODE_DESCRIPTIONS[normalized_mode],
         "coverageGapCount": coverage_gap_count,
-        "eventCount": paging["totalCount"],
-        **paging,
+        "eventCount": paging_int(paging.get("totalCount")),
+        "offset": paging_int(paging.get("offset")),
+        "limit": paging_limit(paging.get("limit")),
+        "totalCount": paging_int(paging.get("totalCount")),
+        "shownCount": paging_int(paging.get("shownCount")),
+        "nextOffset": paging_next_offset(paging.get("nextOffset")),
+        "truncated": paging_bool(paging.get("truncated")),
         "discoveryArtifactCount": discovery_count,
         "evidenceArtifactCount": evidence_count,
         "topPlugins": top_plugins,
@@ -87,3 +92,48 @@ def timeline_payload(
         "filter": filter_text,
         "events": paged,
     }
+    return payload
+
+
+def plugin_count_records(
+    events: list[TimelineEvent],
+) -> list[TimelinePluginCountRecord]:
+    records: list[TimelinePluginCountRecord] = []
+    for record in top_count_records(
+        [str(item.get("plugin") or "").strip() for item in events],
+        key="plugin",
+    ):
+        plugin = record.get("plugin")
+        count = record.get("count")
+        if isinstance(plugin, str) and isinstance(count, int):
+            records.append({"plugin": plugin, "count": count})
+    return records
+
+
+def actor_count_records(events: list[TimelineEvent]) -> list[TimelineActorCountRecord]:
+    records: list[TimelineActorCountRecord] = []
+    for record in top_count_records(
+        [str(item.get("actor") or "").strip() for item in events],
+        key="actor",
+    ):
+        actor = record.get("actor")
+        count = record.get("count")
+        if isinstance(actor, str) and isinstance(count, int):
+            records.append({"actor": actor, "count": count})
+    return records
+
+
+def paging_int(value: object) -> int:
+    return value if isinstance(value, int) else 0
+
+
+def paging_limit(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def paging_next_offset(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def paging_bool(value: object) -> bool:
+    return value if isinstance(value, bool) else False

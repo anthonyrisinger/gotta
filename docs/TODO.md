@@ -258,6 +258,35 @@ This file is the execution queue.
   More cleanup of this exact species inside `session scan` would not; the next
   work that pays rent is the remaining derived-view payload families outside
   `analyze`, `lead`, and `scan`, starting with `session timeline`.
+- [x] Typed `session timeline` payload center landed.
+  - The `session timeline` surface now has a truthful payload owner:
+    - `src/gotta/plugins/session/timeline/model.py`
+      - `TimelineVisibility`
+      - `TimelinePluginCountRecord`
+      - `TimelineActorCountRecord`
+      - `TimelineEvent`
+      - `TimelinePayload`
+  - The timeline producers, payload builder, and renderer now consume the named
+    event and payload contracts instead of anonymous `dict[str, object]`
+    records:
+    - `src/gotta/plugins/session/timeline/local.py`
+    - `src/gotta/plugins/session/timeline/acquired.py`
+    - `src/gotta/plugins/session/timeline/source.py`
+    - `src/gotta/plugins/session/timeline/payload.py`
+    - `src/gotta/plugins/session/timeline/render.py`
+  - Dead timeline-only export detritus that no longer paid rent was deleted:
+    - the acquired timeline surface no longer exports the unused `fetch_link`
+      field
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/plugins/session/timeline src/gotta/plugins/session/core.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted another live anonymous derived-view seam
+  and replaced it with one shared event family across every timeline producer.
+  More cleanup of this exact species inside `session timeline` would not; the
+  next work that pays rent is the remaining exported session payload families,
+  starting with `session manifest`, then the smaller typed-count cleanup still
+  left in `session graph`.
 
 ## Current Tranche
 
@@ -277,10 +306,11 @@ This file is the execution queue.
   edge/summary records into a cross-package model center.
 - [x] Type the exported `session scan` payload family and center it in one
   truthful owner.
-- [ ] Next tranche: type the remaining derived-view payload families outside
-  `session analyze`, `session lead`, and `session scan`, starting with
-  `session timeline`, while continuing to erase filesystem-shaped assumptions in
-  those seams.
+- [x] Type the exported `session timeline` payload family and center it in one
+  truthful owner.
+- [ ] Next tranche: type the remaining exported session payload families,
+  starting with `session manifest`, then finish the smaller typed-count cleanup
+  still left in `session graph`.
 
 ## Non-Negotiable Invariants
 
