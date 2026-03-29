@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gotta.content.filesystem import FileSystemLedgerStore
+from gotta.content.backend import scan_content_snapshots
 from gotta.content.model import ResolvedDirs
 from gotta.content.path import content_locator
 from gotta.lead.aggregate import aggregate_lead_sources
@@ -50,7 +50,10 @@ def leads_payload(
     include_all: bool = False,
     session_ref: str = "",
 ) -> dict[str, object]:
-    snapshots = FileSystemLedgerStore.for_content_dir(dirs.content_dir).scan_artifacts()
+    snapshots = scan_content_snapshots(
+        dirs.content_dir,
+        session_dir=dirs.session_dir,
+    )
     session_manifest = manifest_entries(dirs)
     selected = resolve_lead_snapshots(target, snapshots, session_manifest)
     selected_digests = {snapshot.digest for snapshot in selected}

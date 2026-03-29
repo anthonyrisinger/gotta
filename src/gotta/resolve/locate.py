@@ -8,8 +8,8 @@ from typing import Any
 import urllib.parse
 
 from gotta import topology
+from gotta.content.backend import scan_content_snapshots
 from gotta.content.env import CONTENT_ENV, SESSION_ENV, load_state_env_at_root
-from gotta.content.filesystem import FileSystemLedgerStore
 from gotta.content.model import CommonOptions
 from gotta.content.path import artifact_locator, is_sha256_digest, sanitize_name
 
@@ -104,7 +104,7 @@ def resolve_session_artifact_name(
         return None
     matches = [
         snapshot
-        for snapshot in FileSystemLedgerStore.for_content_dir(root).scan_artifacts()
+        for snapshot in scan_content_snapshots(root)
         if any(alias.name == target for alias in snapshot.aliases)
     ]
     if not matches:
@@ -140,7 +140,7 @@ def resolve_artifact_locator(target: str, *, content_root: str = "") -> Path | N
     desired_name = sanitize_name(name_part)
     matches = [
         snapshot
-        for snapshot in FileSystemLedgerStore.for_content_dir(root).scan_artifacts()
+        for snapshot in scan_content_snapshots(root)
         if any(alias.name == desired_name for alias in snapshot.aliases)
         and (not digest_hint or snapshot.digest.startswith(digest_hint))
     ]

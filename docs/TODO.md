@@ -60,6 +60,31 @@ This file is the execution queue.
   More registry synonym cleanup of the same species would not; the next work
   that pays rent is pushing derived views toward ledger/state contracts and
   typing the exported payload families that still move as anonymous records.
+- [x] Default backend selection landed.
+  - `src/gotta/content/backend.py` now owns the default backend path for:
+    - `default_blob_store(...)`
+    - `default_ledger_store(...)`
+    - `default_ledger_store_for_dirs(...)`
+    - `scan_content_snapshots(...)`
+    - `materialize_artifact_bytes(...)`
+  - The derived views and resolution/materialization seam no longer import
+    `FileSystemLedgerStore` directly:
+    - `src/gotta/dispatch/materialize.py`
+    - `src/gotta/resolve/locate.py`
+    - `src/gotta/plugins/session/timeline/source.py`
+    - `src/gotta/plugins/session/lead/payload.py`
+    - `src/gotta/plugins/session/scan/payload.py`
+    - `src/gotta/plugins/session/graph/payload.py`
+    - `src/gotta/plugins/session/analyze/lineage.py`
+  - Concrete filesystem ownership is now isolated to:
+    - `src/gotta/content/filesystem.py`
+    - `src/gotta/content/backend.py`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed direct concrete-backend ownership from the
+  shared view seam.
+  More retargeting of this exact species would not; the next work that pays
+  rent is typing the exported payload families and continuing to erase
+  filesystem-shaped assumptions inside those views.
 - [x] Logical ledger record tranche landed.
   - `src/gotta/content/model.py` now centers:
     - `ArtifactMetadata`
@@ -428,6 +453,8 @@ This file is the execution queue.
   - `Capture`
   - `Projection`
   - `ArtifactKind`
+- [x] Introduce one truthful default backend owner and retarget the shared
+  views to it.
 - [ ] Keep pushing derived views toward ledger/state contracts instead of
   concrete filesystem ownership.
 - [ ] Type the lead kernel.

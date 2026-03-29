@@ -8,6 +8,7 @@ from typing import Any
 from gotta.actor import require_writer, session_actor, writer_name
 from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta.capture import Capture
+from gotta.content.backend import materialize_artifact_bytes
 from gotta.content.env import ACTOR_ID_ENV
 from gotta.content.model import (
     CommonOptions,
@@ -15,7 +16,6 @@ from gotta.content.model import (
     Materialization,
     ResolvedDirs,
 )
-from gotta.content.filesystem import FileSystemLedgerStore
 from gotta.content.scope import session_identity
 from gotta.dispatch.metadata import _derived_source_metadata
 from gotta.resolve.intent import (
@@ -120,8 +120,9 @@ def _materialize_invocation(
         and not (options and options.save_as)
     ):
         preferred_name = capture.preferred_name
-    return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
+    return materialize_artifact_bytes(
         payload,
+        dirs=dirs,
         preferred_name=preferred_name,
         metadata=metadata,
     )

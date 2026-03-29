@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from gotta.content.filesystem import FileSystemLedgerStore
+from gotta.content.backend import scan_content_snapshots
 from gotta.content.model import ContentSnapshot
 from gotta.content.path import content_locator
 from gotta.lead.aggregate import aggregate_lead_sources
@@ -91,7 +91,10 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[dict[str, str]]:
 
 
 def lineage_payload(dirs, *, session_ref: str = "") -> dict[str, Any]:
-    snapshots = FileSystemLedgerStore.for_content_dir(dirs.content_dir).scan_artifacts()
+    snapshots = scan_content_snapshots(
+        dirs.content_dir,
+        session_dir=dirs.session_dir,
+    )
     snapshot_by_digest = {snapshot.digest: snapshot for snapshot in snapshots}
     entries: list[dict[str, Any]] = [dict(entry) for entry in manifest_entries(dirs)]
     source_map: dict[str, dict[str, Any]] = {}

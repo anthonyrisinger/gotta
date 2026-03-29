@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from gotta.content.filesystem import FileSystemLedgerStore
+from gotta.content.backend import scan_content_snapshots
 from gotta.content.model import ContentSnapshot, ResolvedDirs
 
 from ..core import (
@@ -118,9 +118,10 @@ def graph_payload(
     entries = manifest_entries(dirs)
     snapshot_by_digest = {
         snapshot.digest: snapshot
-        for snapshot in FileSystemLedgerStore.for_content_dir(
-            dirs.content_dir
-        ).scan_artifacts()
+        for snapshot in scan_content_snapshots(
+            dirs.content_dir,
+            session_dir=dirs.session_dir,
+        )
     }
     source_to_content: dict[str, set[str]] = {}
     content_to_sources: dict[str, set[str]] = {}
