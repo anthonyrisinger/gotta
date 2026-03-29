@@ -114,6 +114,10 @@ PREFIX_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
 LIZARD_ROW_RE = re.compile(r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.+)$")
 PYRIGHT_ERROR_RE = re.compile(r"^(?P<path>.+?\.py):\d+:\d+ - error:")
 RADON_ROW_RE = re.compile(r"^\s+([FCM])\s+\d+:\d+\s+(.+?) - ([A-F]) \((\d+)\)$")
+SRC_DIR_RE = re.compile(r"^[0-9a-z]+$")
+SRC_FILE_RE = re.compile(r"^[0-9a-z]+\.py$")
+TEST_FILE_RE = re.compile(r"^test_[0-9a-z]+\.py$")
+ALLOWED_SRC_FILENAMES = frozenset({"__main__.py"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +364,46 @@ def namespace_policy_error(repo_root: Path) -> str:
     )
 
 
+def path_shape_errors(repo_root: Path) -> tuple[str, ...]:
+    offenders: list[str] = []
+
+    src_root = repo_root / "src" / "gotta"
+    if src_root.exists():
+        for path in sorted(src_root.rglob("*")):
+            if path.is_dir():
+                if not SRC_DIR_RE.fullmatch(path.name):
+                    offenders.append(path.relative_to(repo_root).as_posix())
+                continue
+            if path.is_file() and (
+                path.name not in ALLOWED_SRC_FILENAMES
+                and not SRC_FILE_RE.fullmatch(path.name)
+            ):
+                offenders.append(path.relative_to(repo_root).as_posix())
+
+    tests_root = repo_root / "tests"
+    if tests_root.exists():
+        for path in sorted(tests_root.rglob("*.py")):
+            if not TEST_FILE_RE.fullmatch(path.name):
+                offenders.append(path.relative_to(repo_root).as_posix())
+
+    return tuple(offenders)
+
+
+def path_shape_error(repo_root: Path) -> str:
+    offenders = path_shape_errors(repo_root)
+    if not offenders:
+        return ""
+    return "\n".join(
+        [
+            "path-shape policy violated: src/gotta/ directories must match "
+            "[0-9a-z]+, src/gotta/ files "
+            "must match [0-9a-z]+.py (except __main__.py), and tests/ Python "
+            "files must match test_[0-9a-z]+.py",
+            *offenders,
+        ]
+    )
+
+
 def residue_paths(repo_root: Path) -> tuple[str, ...]:
     residue: set[str] = set()
     for surface in REPO_SURFACES:
@@ -371,6 +415,9 @@ def residue_paths(repo_root: Path) -> tuple[str, ...]:
                 residue.add(path.relative_to(repo_root).as_posix())
         for path in root.rglob("*.pyc"):
             if path.is_file():
+                residue.add(path.relative_to(repo_root).as_posix())
+        for pattern in ("*.egg-info", "*.dist-info"):
+            for path in root.rglob(pattern):
                 residue.add(path.relative_to(repo_root).as_posix())
     return tuple(sorted(residue))
 
@@ -393,6 +440,19 @@ def scrub_residue(repo_root: Path) -> tuple[str, ...]:
             if path.is_file():
                 removed.add(path.relative_to(repo_root).as_posix())
                 path.unlink()
+        metadata_dirs = sorted(
+            (
+                path
+                for pattern in ("*.egg-info", "*.dist-info")
+                for path in root.rglob(pattern)
+                if path.is_dir()
+            ),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for path in metadata_dirs:
+            removed.add(path.relative_to(repo_root).as_posix())
+            shutil.rmtree(path)
     return tuple(sorted(removed))
 
 
@@ -402,7 +462,8 @@ def residue_error(repo_root: Path) -> str:
         return ""
     return "\n".join(
         [
-            "python residue violated: generated __pycache__/ or *.pyc found under repo surfaces",
+            "python residue violated: generated __pycache__/, *.pyc, *.egg-info, "
+            "or *.dist-info found under repo surfaces",
             *residue,
         ]
     )
@@ -423,6 +484,24 @@ def run_namespace_check(*, repo_root: Path, verbose: bool) -> int:
         print(failure)
         return 1
     print(f"ok {elapsed:.2f}s namespace-package policy")
+    return 0
+
+
+def run_path_shape_check(*, repo_root: Path, verbose: bool) -> int:
+    start = time.monotonic()
+    failure = path_shape_error(repo_root)
+    elapsed = time.monotonic() - start
+    if verbose:
+        if failure:
+            print(failure, file=sys.stderr)
+            return 1
+        print("ok path-shape policy")
+        return 0
+    if failure:
+        print("fail path-shape policy")
+        print(failure)
+        return 1
+    print(f"ok {elapsed:.2f}s path-shape policy")
     return 0
 
 
@@ -586,6 +665,8 @@ def run_quick(repo_root: Path, *, verbose: bool) -> int:
         print(f"note: scrubbed {len(scrubbed)} python residue paths under src/")
     if run_namespace_check(repo_root=repo_root, verbose=verbose) != 0:
         return 1
+    if run_path_shape_check(repo_root=repo_root, verbose=verbose) != 0:
+        return 1
     if run_residue_check(repo_root=repo_root, verbose=verbose) != 0:
         return 1
 
@@ -636,6 +717,10 @@ def run_full(repo_root: Path, *, deep: bool, types: bool) -> int:
             f"note: scrubbed {len(scrubbed)} python residue paths under src/ before full gate"
         )
     failure = namespace_policy_error(repo_root)
+    if failure:
+        print(failure, file=sys.stderr)
+        return 1
+    failure = path_shape_error(repo_root)
     if failure:
         print(failure, file=sys.stderr)
         return 1
@@ -790,6 +875,8 @@ def run_discover(repo_root: Path) -> int:
     )
     if run_namespace_check(repo_root=repo_root, verbose=False) != 0:
         print("note: namespace policy is broken; discovery continued anyway")
+    if run_path_shape_check(repo_root=repo_root, verbose=False) != 0:
+        print("note: path-shape policy is broken; discovery continued anyway")
     if run_residue_check(repo_root=repo_root, verbose=False) != 0:
         print("note: python residue is present; discovery continued anyway")
 

@@ -15,8 +15,10 @@ uv sync --python 3.10 --extra dev
 `./scripts/install-hooks` sets `core.hooksPath` to the repo-owned
 `.githooks/` directory. The default pre-commit hook formats staged `*.py`
 files with `uv run ruff format`, re-stages them, and then runs
-`uv run ruff check` on those same files. Partially staged Python files are
-rejected so the hook never pulls unstaged edits into the commit.
+`uv run ruff check` on those same files. Before any of that, it enforces the
+same namespace-package and path-shape policy as the study gate. Partially
+staged Python files are rejected so the hook never pulls unstaged edits into
+the commit.
 
 ## Before You Open A Change
 
@@ -50,10 +52,11 @@ For regular study and maintenance work, use the repo wrapper:
 ```
 
 `./scripts/study` defaults to the quick working-tree loop: namespace
-policy, python-residue hygiene, full-tree `ruff check`, full-tree `ruff format
---check`, and a deterministic targeted pytest slice derived from the current
-working tree. Treat that quick pass as local edit-loop signal, not branch
-health. `--quick` is the explicit alias for that same mode.
+policy, path-shape policy, python-residue hygiene, full-tree `ruff check`,
+full-tree `ruff format --check`, and a deterministic targeted pytest slice
+derived from the current working tree. Treat that quick pass as local
+edit-loop signal, not branch health. `--quick` is the explicit alias for that
+same mode.
 
 `./scripts/study --discover` is the discovery surface. It is designed for
 exploratory diagnosis rather than validating one local edit: it
@@ -67,11 +70,11 @@ as `cloc`, `ctags`, and `ast-grep` when they are installed. `--deep` and
 `--types` both imply `--full`; `--deep` adds `import-linter` and `semgrep`,
 and `--types` adds a source-only `pyright` pass as a pressure map.
 
-Quick and full modes both treat generated `__pycache__/` directories and
-`*.pyc` files under `src/` as residue. The study runner scrubs existing
-residue before the gate starts and suppresses new bytecode emission
-in its subprocesses so the gate itself does not leave new source-tree exhaust
-behind.
+Quick and full modes both treat generated `__pycache__/` directories, `*.pyc`
+files, and packaging metadata like `*.egg-info` or `*.dist-info` under `src/`
+as residue. The study runner scrubs existing residue before the gate starts
+and suppresses new bytecode emission in its subprocesses so the gate itself
+does not leave new source-tree exhaust behind.
 
 If you are preparing a PyPI upload, rebuild first and then validate the fresh
 artifacts through the canonical release wrapper:

@@ -10,6 +10,49 @@ cd "$repo_root"
   find src -type f -name '__init__.py' -print | sort >&2
   exit 1
 }
+
+python3 - <<'PY'
+from pathlib import Path
+import re
+import sys
+
+repo_root = Path.cwd()
+src_dir_re = re.compile(r"^[0-9a-z]+$")
+src_file_re = re.compile(r"^[0-9a-z]+\.py$")
+test_file_re = re.compile(r"^test_[0-9a-z]+\.py$")
+allowed_src_filenames = {"__main__.py"}
+offenders: list[str] = []
+
+src_root = repo_root / "src" / "gotta"
+if src_root.exists():
+    for path in sorted(src_root.rglob("*")):
+        rel = path.relative_to(repo_root).as_posix()
+        if path.is_dir():
+            if not src_dir_re.fullmatch(path.name):
+                offenders.append(rel)
+            continue
+        if path.is_file() and path.name not in allowed_src_filenames and not src_file_re.fullmatch(path.name):
+            offenders.append(rel)
+
+tests_root = repo_root / "tests"
+if tests_root.exists():
+    for path in sorted(tests_root.rglob("*.py")):
+        if not test_file_re.fullmatch(path.name):
+            offenders.append(path.relative_to(repo_root).as_posix())
+
+if offenders:
+    print(
+        "path-shape policy violated: src/gotta/ directories must match "
+        "[0-9a-z]+, src/gotta/ files must "
+        "match [0-9a-z]+.py (except __main__.py), and tests/ Python files must "
+        "match test_[0-9a-z]+.py",
+        file=sys.stderr,
+    )
+    for offender in offenders:
+        print(offender, file=sys.stderr)
+    raise SystemExit(1)
+PY
+
 staged_python="$(mktemp)"
 partial_python="$(mktemp)"
 cleanup() {

@@ -126,14 +126,52 @@ def test_select_pytest_targets_uses_repo_control_fallback() -> None:
     assert selection.targets == SORTED_CORE_SLICE
 
 
+def test_path_shape_errors_accept_canonical_src_and_tests(tmp_path: Path) -> None:
+    driver = _load_driver()
+    (tmp_path / "src" / "gotta").mkdir(parents=True)
+    (tmp_path / "src" / "gotta" / "read.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "gotta" / "__main__.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "vendor_name").mkdir(parents=True)
+    (tmp_path / "src" / "vendor_name" / "bad_name.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_read.py").write_text("", encoding="utf-8")
+
+    assert driver.path_shape_errors(tmp_path) == ()
+
+
+def test_path_shape_errors_reject_invalid_src_directory(tmp_path: Path) -> None:
+    driver = _load_driver()
+    (tmp_path / "src" / "gotta" / "bad_name").mkdir(parents=True)
+
+    assert driver.path_shape_errors(tmp_path) == ("src/gotta/bad_name",)
+
+
+def test_path_shape_errors_reject_invalid_src_file(tmp_path: Path) -> None:
+    driver = _load_driver()
+    (tmp_path / "src" / "gotta").mkdir(parents=True)
+    (tmp_path / "src" / "gotta" / "bad_name.py").write_text("", encoding="utf-8")
+
+    assert driver.path_shape_errors(tmp_path) == ("src/gotta/bad_name.py",)
+
+
+def test_path_shape_errors_reject_invalid_test_file(tmp_path: Path) -> None:
+    driver = _load_driver()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_bad_name.py").write_text("", encoding="utf-8")
+
+    assert driver.path_shape_errors(tmp_path) == ("tests/test_bad_name.py",)
+
+
 def test_residue_paths_find_python_cache_residue(tmp_path: Path) -> None:
     driver = _load_driver()
     (tmp_path / "src" / "pkg" / "__pycache__").mkdir(parents=True)
     (tmp_path / "src" / "pkg" / "__pycache__" / "x.cpython-310.pyc").write_bytes(b"x")
+    (tmp_path / "src" / "gotta.egg-info").mkdir()
 
     residue = driver.residue_paths(tmp_path)
 
     assert residue == (
+        "src/gotta.egg-info",
         "src/pkg/__pycache__",
         "src/pkg/__pycache__/x.cpython-310.pyc",
     )
@@ -145,10 +183,14 @@ def test_scrub_residue_removes_python_cache_residue(tmp_path: Path) -> None:
     cache_dir.mkdir(parents=True)
     pyc = cache_dir / "x.cpython-310.pyc"
     pyc.write_bytes(b"x")
+    (tmp_path / "src" / "gotta.egg-info").mkdir()
 
     removed = driver.scrub_residue(tmp_path)
 
-    assert removed == ("src/pkg/__pycache__",)
+    assert removed == (
+        "src/gotta.egg-info",
+        "src/pkg/__pycache__",
+    )
     assert driver.residue_paths(tmp_path) == ()
 
 
@@ -393,6 +435,7 @@ def test_run_quick_prints_caveat_and_selection_reason(monkeypatch, capsys) -> No
     calls: list[str] = []
 
     monkeypatch.setattr(driver, "run_namespace_check", lambda repo_root, verbose: 0)
+    monkeypatch.setattr(driver, "run_path_shape_check", lambda repo_root, verbose: 0)
     monkeypatch.setattr(driver, "run_residue_check", lambda repo_root, verbose: 0)
     monkeypatch.setattr(
         driver,
@@ -421,6 +464,7 @@ def test_run_discover_prints_discovery_caveat(monkeypatch, capsys) -> None:
     calls: list[str] = []
 
     monkeypatch.setattr(driver, "run_namespace_check", lambda repo_root, verbose: 0)
+    monkeypatch.setattr(driver, "run_path_shape_check", lambda repo_root, verbose: 0)
     monkeypatch.setattr(driver, "run_residue_check", lambda repo_root, verbose: 0)
     monkeypatch.setattr(
         driver,
