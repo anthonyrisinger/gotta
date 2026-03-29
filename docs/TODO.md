@@ -26,8 +26,8 @@ This file is the execution queue.
     - `SurfaceSpec`
     - `SurfaceBinding`
   - Top-level discovery is now binding- and surface-shaped.
-  - Legacy `PluginSpec` / `get_plugin()` / `available_plugins()` remain only as
-    compatibility shims for deeper seams not yet collapsed.
+  - Legacy `PluginSpec` / `get_plugin()` / `available_plugins()` remain as
+    unfinished registry debt that still needs deletion.
 - [x] Adjacent command seam retarget landed.
   - `src/gotta/dispatch/main.py`
   - `src/gotta/dispatch/runtime.py`
@@ -50,9 +50,9 @@ This file is the execution queue.
     - `MaterializationEvent`
     - `ManifestEntry`
   - `Materialization` and `ContentSnapshot` now center logical records and
-    layout, with path-shaped compatibility exposed only as derived properties.
-  - `src/gotta/content/store.py` now produces logical ledger records instead of
-    exporting raw path bundles as the semantic center.
+    layout directly.
+  - The filesystem storage implementation now produces logical ledger records
+    instead of exporting raw path bundles as the semantic center.
   - First downstream consumers now read `artifact`, `layout`, `aliases`, and
     `events` directly:
     - `src/gotta/resolve/locate.py`
@@ -82,13 +82,37 @@ This file is the execution queue.
     - `alias`
     - `event`
     - `aliases`
-  - The removed compatibility surface is no longer present in `src/`; it was
-    only surviving as a test-facing accommodation.
+  - The removed surface is no longer present in `src/` or the test surface.
 - [x] Diminishing-returns judgment for this cycle:
   deleting the dead compatibility layer paid rent.
   More cleanup of the same species would not; the next work that pays rent is
   explicit storage contracts and splitting logical ledger operations from the
   filesystem implementation.
+- [x] Storage-contract split landed.
+  - `src/gotta/content/store.py` is now the storage-contract layer:
+    - `BlobStore`
+    - `LedgerStore`
+    - `StateStore`
+    - `IndexStore`
+  - `src/gotta/content/filesystem.py` is now the filesystem implementation:
+    - `FileSystemBlobStore`
+    - `FileSystemLedgerStore`
+  - Concrete call sites now import the filesystem implementation explicitly
+    instead of treating `content/store.py` as both contract and implementation.
+  - The touched derived views now consume logical records through the concrete
+    filesystem ledger:
+    - `src/gotta/dispatch/materialize.py`
+    - `src/gotta/resolve/locate.py`
+    - `src/gotta/plugins/session/timeline/source.py`
+    - `src/gotta/plugins/session/scan/payload.py`
+    - `src/gotta/plugins/session/graph/payload.py`
+    - `src/gotta/plugins/session/analyze/lineage.py`
+    - `src/gotta/plugins/session/lead/payload.py`
+- [x] Diminishing-returns judgment for this cycle:
+  this still paid rent because it made the storage boundary real in code.
+  More cleanup of this exact species would not; the next work that pays rent is
+  typing the artifact-pipeline records above storage and driving derived views
+  toward ledger/state contracts instead of concrete filesystem ownership.
 
 ## Current Tranche
 
@@ -99,9 +123,11 @@ This file is the execution queue.
   record layer.
 - [x] Delete the dead storage-record compatibility layer once `src/` no longer
   depends on it.
-- [ ] Next tranche: introduce explicit storage contracts and continue
-  separating logical ledger operations from the concrete filesystem
-  implementation.
+- [x] Introduce explicit storage contracts and separate the contract layer from
+  the concrete filesystem implementation.
+- [ ] Next tranche: type the artifact-pipeline records above storage and keep
+  pushing derived views toward ledger/state contracts instead of concrete
+  filesystem ownership.
 
 ## Non-Negotiable Invariants
 
@@ -174,7 +200,7 @@ This file is the execution queue.
 
 ## Phase 1: Make The Ledger Logical Instead Of Filesystem-Shaped
 
-- [ ] Introduce first-class storage contracts:
+- [x] Introduce first-class storage contracts:
   - `LedgerStore`
   - `BlobStore`
   - `StateStore`
@@ -200,8 +226,8 @@ This file is the execution queue.
   - `logs_dir`
   - `content_dir`
   as the essence of stored artifacts.
-- [ ] Split `src/gotta/content/store.py` into logical ledger operations versus
-  concrete filesystem implementation.
+- [x] Split `src/gotta/content/store.py` into storage contracts versus concrete
+  filesystem implementation.
 - [ ] Make the derived views consume logical ledger/state contracts rather than
   raw filesystem-shaped records.
 
@@ -348,11 +374,17 @@ This file is the execution queue.
 - [x] Introduce the first real ledger record types.
 - [x] Start extracting logical ledger operations from `content/store.py`.
 - [x] Replace filesystem-shaped exported records in `content/model.py`.
-- [ ] Introduce `LedgerStore`, `BlobStore`, `StateStore`, and `IndexStore`.
-- [ ] Continue splitting `content/store.py` into logical ledger operations and
-  concrete filesystem implementation.
+- [x] Introduce `LedgerStore`, `BlobStore`, `StateStore`, and `IndexStore`.
+- [x] Split `content/store.py` into storage contracts and concrete filesystem
+  implementation.
 - [x] Remove remaining internal dependence on compatibility properties from the
   test surface, then delete those compatibility properties.
+- [ ] Type the artifact-pipeline records above storage:
+  - `Capture`
+  - `Projection`
+  - `ArtifactKind`
+- [ ] Keep pushing derived views toward ledger/state contracts instead of
+  concrete filesystem ownership.
 - [ ] Type the lead kernel.
 - [ ] Type the first analyze/graph/timeline/session payload families.
 - [ ] Replace anonymous manifest and lead aggregate records with named types.

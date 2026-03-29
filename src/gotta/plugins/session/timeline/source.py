@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import shlex
 
+from gotta.content.filesystem import FileSystemLedgerStore
 from gotta.content.model import ContentSnapshot
 from gotta.content.path import content_locator
-from gotta.content.store import scan_content_store
 
 from ..core import (
     AGGREGATE_SOURCE_SUBCOMMANDS,
@@ -130,7 +130,7 @@ def source_timeline_events(
     filter_pattern,
     local_events: list[dict[str, object]],
 ) -> tuple[list[dict[str, object]], int]:
-    snapshots = scan_content_store(dirs.content_dir)
+    snapshots = FileSystemLedgerStore.for_content_dir(dirs.content_dir).scan_artifacts()
     events: list[dict[str, object]] = []
     coverage_gap_count = 0
     for snapshot in snapshots:

@@ -8,13 +8,29 @@ import urllib.error
 import pytest
 
 import gotta.content.env as content_env
+from gotta.content.filesystem import FileSystemLedgerStore
 import gotta.content.model as content_model
 import gotta.content.path as content_path
-import gotta.content.store as content_store
 from gotta.plugins import actor, read
 from gotta.plugins.session import main as session
 import gotta.resolve.read as resolve_read
 from gotta.session import registry as session_registry
+
+
+def materialize_bytes(
+    data: bytes,
+    *,
+    dirs: content_model.ResolvedDirs,
+    preferred_name: str,
+    metadata: dict[str, object],
+    timestamp: str | None = None,
+) -> content_model.Materialization:
+    return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
+        data,
+        preferred_name=preferred_name,
+        metadata=dict(metadata),
+        timestamp=timestamp,
+    )
 
 
 def test_read_local_directory_renders_native_listing(tmp_path: Path, capsys) -> None:
@@ -84,7 +100,7 @@ def test_read_can_follow_stored_content_digest(
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Stored body\n\nline two\n",
         dirs=dirs,
         preferred_name="stored.md",
@@ -108,7 +124,7 @@ def test_read_can_follow_explicit_content_locator(
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Stored body\n\nline two\n",
         dirs=dirs,
         preferred_name="stored.md",
@@ -133,7 +149,7 @@ def test_read_can_follow_explicit_content_locator_with_explicit_session(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content_env.write_state_env(dirs)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Stored body\n\nline two\n",
         dirs=dirs,
         preferred_name="stored.md",
@@ -156,7 +172,7 @@ def test_read_can_follow_unique_session_artifact_name(
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -180,7 +196,7 @@ def test_read_can_follow_explicit_artifact_locator(
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -208,7 +224,7 @@ def test_read_can_follow_explicit_artifact_locator_with_explicit_session(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content_env.write_state_env(dirs)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -239,7 +255,7 @@ def test_read_can_follow_artifact_locator_from_session_root_state_env(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content_env.write_state_env(dirs)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -268,7 +284,7 @@ def test_read_can_follow_artifact_locator_from_actor_root_state_env(
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
     content_env.write_state_env(dirs)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -365,7 +381,7 @@ def test_read_does_not_materialize_local_artifact_rereads(
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"# Search Artifact\n\nbody\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -393,7 +409,7 @@ def test_read_ambiguous_session_artifact_name_suggests_explicit_artifact_locator
     )
     dirs.session_dir.mkdir(parents=True, exist_ok=True)
     dirs.content_dir.mkdir(parents=True, exist_ok=True)
-    first = content_store.materialize_bytes(
+    first = materialize_bytes(
         b"# Search Artifact A\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",
@@ -403,7 +419,7 @@ def test_read_ambiguous_session_artifact_name_suggests_explicit_artifact_locator
             "canonical_locator": "demo-a",
         },
     )
-    second = content_store.materialize_bytes(
+    second = materialize_bytes(
         b"# Search Artifact B\n",
         dirs=dirs,
         preferred_name="slack-search-abc.md",

@@ -10,9 +10,9 @@ import pytest
 from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta import builtin
 import gotta.content.env as content_env
+from gotta.content.filesystem import FileSystemLedgerStore
 import gotta.content.model as content_model
 import gotta.content.scope as content_scope
-import gotta.content.store as content_store
 import gotta.cli.argv as cli_argv
 import gotta.cli.bind as cli_bind
 import gotta.cli.entry as cli
@@ -22,6 +22,22 @@ from gotta.capture import Capture
 from gotta.plugins import jira
 from gotta.session import bootstrap as session_bootstrap
 from gotta.session import registry as session_registry
+
+
+def materialize_bytes(
+    data: bytes,
+    *,
+    dirs: content_model.ResolvedDirs,
+    preferred_name: str,
+    metadata: dict[str, object],
+    timestamp: str | None = None,
+) -> content_model.Materialization:
+    return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
+        data,
+        preferred_name=preferred_name,
+        metadata=dict(metadata),
+        timestamp=timestamp,
+    )
 
 
 def _last_stderr_json(stderr: str) -> dict[str, object]:
@@ -538,7 +554,7 @@ def test_main_session_analyze_emits_no_side_effect_receipt(
         content_model.CommonOptions(session_dir=str(root)), create=True
     )
     session_bootstrap.scaffold_session(root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Example\n\nhello world\n",
         dirs=dirs,
         preferred_name="example.md",

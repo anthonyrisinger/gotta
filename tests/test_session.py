@@ -14,10 +14,10 @@ import gotta.content.activity as content_activity
 import gotta.content.context as content_context
 import gotta.content.env as content_env
 import gotta.content.file as content_file
+from gotta.content.filesystem import FileSystemLedgerStore
 import gotta.content.model as content_model
 import gotta.content.path as content_path
 import gotta.content.scope as content_scope
-import gotta.content.store as content_store
 import gotta.cli.bind as cli_bind
 import gotta.cli.entry as cli
 import gotta.dispatch.main as dispatch
@@ -49,6 +49,26 @@ from gotta.plugins.session.graph.payload import graph_payload as session_graph_p
 from gotta.plugins.session import main as session_main
 from gotta.plugins.session import parse as session_parse
 from gotta.plugins import want
+
+
+def materialize_bytes(
+    data: bytes,
+    *,
+    dirs: content_model.ResolvedDirs,
+    preferred_name: str,
+    metadata: dict[str, object],
+    timestamp: str | None = None,
+) -> content_model.Materialization:
+    return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
+        data,
+        preferred_name=preferred_name,
+        metadata=dict(metadata),
+        timestamp=timestamp,
+    )
+
+
+def scan_content_store(content_dir: Path) -> list[content_model.ContentSnapshot]:
+    return FileSystemLedgerStore.for_content_dir(content_dir).scan_artifacts()
 
 
 @pytest.fixture(autouse=True)
@@ -1900,7 +1920,7 @@ def test_actor_status_reports_recent_activity_and_recent_artifacts(
         ],
         start=1,
     ):
-        content_store.materialize_bytes(
+        materialize_bytes(
             f"artifact {index}".encode("utf-8"),
             dirs=dirs,
             preferred_name=f"artifact-{index}.md",
@@ -2169,7 +2189,7 @@ def test_actor_status_reports_pulse_after_actor_evidence_before_note(
             "started_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Evidence\n\nSomething landed.\n",
         dirs=dirs,
         preferred_name="evidence.md",
@@ -2202,7 +2222,7 @@ def test_actor_status_requires_durable_note_when_pending_actor_already_has_evide
     dirs = content_model.ResolvedDirs(session_dir=root, content_dir=root / "content")
     actor_name = _actor_id(root, "claude")
     session_registry._write_actor_state(root, actor_name, {"status": "pending"})
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Evidence\n\nSomething landed.\n",
         dirs=dirs,
         preferred_name="evidence.md",
@@ -2241,7 +2261,7 @@ def test_actor_status_guides_pending_actor_with_notes_and_evidence(
         author=actor_name,
         timestamp="2026-03-21T00:00:00Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Evidence\n\nSomething landed.\n",
         dirs=dirs,
         preferred_name="evidence.md",
@@ -2914,7 +2934,7 @@ def test_session_analyze_writes_summary_and_graph(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -2926,7 +2946,7 @@ def test_session_analyze_writes_summary_and_graph(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"hello again",
         dirs=dirs,
         preferred_name="demo.md",
@@ -2959,7 +2979,7 @@ def test_session_analyze_output_json_returns_combined_payload_by_default(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -3006,7 +3026,7 @@ def test_session_analyze_output_mermaid_prints_raw_lineage_mermaid(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -3045,7 +3065,7 @@ def test_session_analyze_output_markdown_bundles_lineage_and_semantic_for_all_mo
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -3086,7 +3106,7 @@ def test_session_analyze_receipt_keeps_stdout_pure_for_mermaid(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -3230,7 +3250,7 @@ def test_session_discovery_only_graph_and_analyze_surface_need_for_evidence(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"See also https://kubernetes.io/docs/reference/networking/virtual-ips/\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -3273,7 +3293,7 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Generic Item\n\nReference.\n",
         dirs=dirs,
         preferred_name="generic-item.md",
@@ -3287,7 +3307,7 @@ def test_session_graph_filter_prunes_to_matching_subgraph_and_supports_text_outp
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Generic Page\n\nReference.\n",
         dirs=dirs,
         preferred_name="generic-page.md",
@@ -3350,7 +3370,7 @@ def test_session_manifest_and_timeline_text_surface_hotspots_first(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# GEN-1\n\nReference.\n",
         dirs=dirs,
         preferred_name="GEN-1.md",
@@ -3364,7 +3384,7 @@ def test_session_manifest_and_timeline_text_surface_hotspots_first(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# GEN-2\n\nReference.\n",
         dirs=dirs,
         preferred_name="GEN-2.md",
@@ -3378,7 +3398,7 @@ def test_session_manifest_and_timeline_text_surface_hotspots_first(
         },
         timestamp="2026-03-11T00:00:01.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Generic Page\n\nReference.\n",
         dirs=dirs,
         preferred_name="generic-page.md",
@@ -3414,7 +3434,7 @@ def test_session_analyze_defaults_to_text_overview_with_middle_sections(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "# ABC-1\n\n"
             "Depends on ABC-2.\n"
@@ -3432,7 +3452,7 @@ def test_session_analyze_defaults_to_text_overview_with_middle_sections(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Search\n\nSee also jira:ABC-1\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -3463,7 +3483,7 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    issue = content_store.materialize_bytes(
+    issue = materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3478,7 +3498,7 @@ def test_session_analyze_focus_surfaces_local_neighborhood(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3540,7 +3560,7 @@ def test_session_analyze_focus_respects_lineage_mode(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3555,7 +3575,7 @@ def test_session_analyze_focus_respects_lineage_mode(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3603,7 +3623,7 @@ def test_session_analyze_focus_can_match_projected_corpus_without_label_hits(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"Generic synthetic body describing example connector worker behavior.\n",
         dirs=dirs,
         preferred_name="artifact-a.md",
@@ -3616,7 +3636,7 @@ def test_session_analyze_focus_can_match_projected_corpus_without_label_hits(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"Generic synthetic body describing example connector importer behavior.\n",
         dirs=dirs,
         preferred_name="artifact-b.md",
@@ -3665,7 +3685,7 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "- [acme/relevant:infra/syntheticconcept.tf]"
             "(https://github.com/acme/relevant/blob/main/infra/syntheticconcept.tf)\n"
@@ -3683,7 +3703,7 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b'resource "demo" "syntheticconcept" {}\n',
         dirs=dirs,
         preferred_name="syntheticconcept.tf",
@@ -3696,7 +3716,7 @@ def test_session_analyze_lineage_focus_keeps_search_provenance_without_unrelated
         },
         timestamp="2026-03-11T00:00:01.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b'resource "demo" "plain" {}\n',
         dirs=dirs,
         preferred_name="plain.tf",
@@ -3749,7 +3769,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    issue = content_store.materialize_bytes(
+    issue = materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3764,7 +3784,7 @@ def test_session_analyze_all_mode_focus_returns_combined_outputs(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -3855,7 +3875,7 @@ def test_session_analyze_mode_markdown_stays_dossier_not_mermaid(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -3921,7 +3941,7 @@ def test_session_scan_searches_projected_materialized_corpus(
         "html_markdown",
         lambda _data: b"# Example Heading\n\nGeneric synthetic body.\n",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"<h1>Example Heading</h1><p>Generic synthetic body.</p>",
         dirs=dirs,
         preferred_name="3925246070.html",
@@ -3935,7 +3955,7 @@ def test_session_scan_searches_projected_materialized_corpus(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b'{"title":"Other branch"}',
         dirs=dirs,
         preferred_name="DO-1.json",
@@ -4040,7 +4060,7 @@ def test_session_manifest_falls_back_to_jira_visibility_when_snapshot_metadata_i
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# OPS-1\n\nBody.\n",
         dirs=dirs,
         preferred_name="OPS-1.md",
@@ -4079,7 +4099,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
     url = "https://github.com/acme/widgets"
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"summary view",
         dirs=dirs,
         preferred_name="widgets.summary",
@@ -4094,7 +4114,7 @@ def test_session_analyze_treats_multiple_renderings_as_variants_not_collisions(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"markdown view",
         dirs=dirs,
         preferred_name="widgets.md",
@@ -4131,7 +4151,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
     url = "confluence:4373708801"
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"primary body",
         dirs=dirs,
         preferred_name="4373708801.md",
@@ -4145,7 +4165,7 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"actor body",
         dirs=dirs,
         preferred_name="4373708801.md",
@@ -4177,7 +4197,7 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
     tmp_path: Path,
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "# ABC-1\n\n"
             "Depends on ABC-2.\n"
@@ -4198,7 +4218,7 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -4260,7 +4280,7 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    source = content_store.materialize_bytes(
+    source = materialize_bytes(
         (
             "# ABC-1\n\nDepends on ABC-2.\nPR: https://github.com/acme/widgets/pull/7\n"
         ).encode("utf-8"),
@@ -4278,7 +4298,7 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-2\n\nDone.\n",
         dirs=dirs,
         preferred_name="ABC-2.md",
@@ -4323,7 +4343,7 @@ def test_session_leads_orders_best_first_without_quality_thresholds(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# ABC-1\n\nDepends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -4335,7 +4355,7 @@ def test_session_leads_orders_best_first_without_quality_thresholds(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Search Results\n\nhttps://kubernetes.io/docs/reference/networking/virtual-ips/\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -4401,7 +4421,7 @@ def test_session_leads_filter_filters_surviving_leads_without_reordering_them(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "# GEN-1\n\nDepends on GEN-2.\nRunbook: https://docs.example.test/runbook\n"
         ).encode("utf-8"),
@@ -4448,7 +4468,7 @@ def test_session_leads_filter_no_match_guides_toward_corpus_search(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"Runbook: https://docs.example.test/runbook\n",
         dirs=dirs,
         preferred_name="GEN-1.md",
@@ -4491,7 +4511,7 @@ def test_session_leads_shows_low_signal_only_case_without_hiding_it(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"See also https://kubernetes.io/docs/reference/networking/virtual-ips/\n",
         dirs=dirs,
         preferred_name="search.md",
@@ -4539,7 +4559,7 @@ def test_session_leads_demote_low_signal_service_urls_but_keep_them_visible(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "Service root: https://admin.demo.internal\n"
             "Auth: https://login.demo.internal/.well-known/jwks.json\n"
@@ -4577,7 +4597,7 @@ def test_session_leads_support_offset_and_all_paging(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "https://docs.demo.internal/runbook\n"
             "https://admin.demo.internal\n"
@@ -4649,7 +4669,7 @@ def test_session_leads_preserve_search_result_order_within_search_artifacts(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "1. https://kubernetes.io/docs/reference/networking/virtual-ips/\n"
             "2. https://docs.python.org/3/library/pathlib.html\n"
@@ -4689,7 +4709,7 @@ def test_session_leads_falls_back_to_same_provider_search_for_prose_heavy_conflu
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "# Network configuration for debugging devices remotely\n\n"
             "- URL: https://example.atlassian.net/wiki/pages/viewpage.action?pageId=4456054785\n\n"
@@ -4732,7 +4752,7 @@ def test_session_leads_falls_back_to_workspace_scoped_slack_search_for_semantic_
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         (
             "### Slack Thread: connector retrospective\n\n"
             "- _Source_: https://demo.slack.com/archives/C12345678/p1773085070240949\n\n"
@@ -4872,7 +4892,7 @@ def test_materialize_bytes_eagerly_writes_lead_cache(
     tmp_path: Path, monkeypatch
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"Depends on ABC-2.\nDesign doc: confluence:12345\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -4894,7 +4914,7 @@ def test_materialize_bytes_eagerly_writes_lead_cache(
         "confluence:12345",
     }
 
-    snapshot = content_store.scan_content_store(dirs.content_dir)[0]
+    snapshot = scan_content_store(dirs.content_dir)[0]
 
     def fail_extract(_text: str) -> list[lead_model.LeadMention]:
         raise AssertionError("lead extraction should reuse the eager cache")
@@ -4918,7 +4938,7 @@ def test_materialize_bytes_eagerly_mines_projected_display_for_leads(
         lambda _data: b"Design doc: https://docs.google.com/document/d/doc-123/edit\n",
     )
 
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b'<h1>Example Heading</h1><p><a href="https://www.google.com/url?q=https://docs.google.com/document/d/doc-123/edit&amp;ust=1&amp;usg=2">Design</a></p>',
         dirs=dirs,
         preferred_name="40404.html",
@@ -4946,7 +4966,7 @@ def test_materialize_bytes_records_explicit_projection_degradation(
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
 
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"<p>Design doc: confluence:12345</p>",
         dirs=dirs,
         preferred_name="artifact.html",
@@ -4994,7 +5014,7 @@ def test_materialize_bytes_eagerly_drops_structural_github_repo_navigation_leads
         ),
     )
 
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b'{"synthetic": true}',
         dirs=dirs,
         preferred_name="acme-widgets.json",
@@ -5017,7 +5037,7 @@ def test_materialize_bytes_eagerly_drops_structural_github_repo_navigation_leads
 
 def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None:
     dirs = initialize_session(tmp_path / "local")
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"Depends on ABC-2.\n",
         dirs=dirs,
         preferred_name="ABC-1.md",
@@ -5035,7 +5055,7 @@ def test_lead_mentions_for_snapshot_rebuilds_stale_cache(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    snapshot = content_store.scan_content_store(dirs.content_dir)[0]
+    snapshot = scan_content_store(dirs.content_dir)[0]
     mentions = lead_cache.lead_mentions_for_snapshot(snapshot)
 
     assert [mention.canonical_locator for mention in mentions] == ["jira:ABC-2"]
@@ -5049,7 +5069,7 @@ def test_session_manifest_has_native_summary_surface(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -5107,7 +5127,7 @@ def test_session_manifest_accepts_stdout_flag_for_uniformity(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -5134,7 +5154,7 @@ def test_session_manifest_filter_filters_rows_before_paging(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"north",
         dirs=dirs,
         preferred_name="north-ledger.md",
@@ -5147,7 +5167,7 @@ def test_session_manifest_filter_filters_rows_before_paging(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"south",
         dirs=dirs,
         preferred_name="south-runbook.md",
@@ -5187,7 +5207,7 @@ def test_session_manifest_falls_back_to_content_locator_when_canonical_missing(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -5230,7 +5250,7 @@ def test_session_timeline_has_native_continuity_surface(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"first",
         dirs=dirs,
         preferred_name="first.md",
@@ -5247,7 +5267,7 @@ def test_session_timeline_has_native_continuity_surface(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"second",
         dirs=dirs,
         preferred_name="second.md",
@@ -5291,7 +5311,7 @@ def test_session_timeline_accepts_stdout_flag_for_uniformity(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"first",
         dirs=dirs,
         preferred_name="first.md",
@@ -5318,7 +5338,7 @@ def test_session_timeline_filter_filters_events_before_paging(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"north",
         dirs=dirs,
         preferred_name="north.md",
@@ -5331,7 +5351,7 @@ def test_session_timeline_filter_filters_events_before_paging(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"south",
         dirs=dirs,
         preferred_name="south.md",
@@ -5371,7 +5391,7 @@ def test_session_timeline_filter_filters_coverage_gaps_in_source_modes(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"north content",
         dirs=dirs,
         preferred_name="north-gap.md",
@@ -5383,7 +5403,7 @@ def test_session_timeline_filter_filters_coverage_gaps_in_source_modes(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"south content",
         dirs=dirs,
         preferred_name="south-gap.md",
@@ -5424,7 +5444,7 @@ def test_session_timeline_default_limit_keeps_latest_window(
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
     for index in range(3):
-        content_store.materialize_bytes(
+        materialize_bytes(
             f"artifact-{index}".encode("utf-8"),
             dirs=dirs,
             preferred_name=f"artifact-{index}.md",
@@ -5464,7 +5484,7 @@ def test_session_timeline_acquired_includes_native_local_activity(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="PROJ-1.md",
@@ -5614,7 +5634,7 @@ def test_session_timeline_best_effort_mode_prefers_created_and_surfaces_gaps(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5628,7 +5648,7 @@ def test_session_timeline_best_effort_mode_prefers_created_and_surfaces_gaps(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"readme body",
         dirs=dirs,
         preferred_name="README.md",
@@ -5669,7 +5689,7 @@ def test_session_timeline_best_effort_includes_local_activity_with_explicit_prov
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5727,7 +5747,7 @@ def test_session_timeline_created_and_updated_modes_split_cleanly(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5787,7 +5807,7 @@ def test_session_timeline_source_mode_ignores_local_reads_and_schema_probes(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5801,7 +5821,7 @@ def test_session_timeline_source_mode_ignores_local_reads_and_schema_probes(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"goal body",
         dirs=dirs,
         preferred_name="GOAL.md",
@@ -5813,7 +5833,7 @@ def test_session_timeline_source_mode_ignores_local_reads_and_schema_probes(
         },
         timestamp="2026-03-11T00:00:01.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"schema body",
         dirs=dirs,
         preferred_name="workspace.tsv",
@@ -5850,7 +5870,7 @@ def test_session_timeline_best_effort_ignores_local_artifact_rereads(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    source = content_store.materialize_bytes(
+    source = materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="jira.md",
@@ -5864,7 +5884,7 @@ def test_session_timeline_best_effort_ignores_local_artifact_rereads(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Jira\n\nsnippet\n",
         dirs=dirs,
         preferred_name="jira-head.md",
@@ -5901,7 +5921,7 @@ def test_session_timeline_best_effort_ignores_aggregate_search_artifact_dates(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"# Search Results\n\n- hit\n",
         dirs=dirs,
         preferred_name="gdocs-search-abc.md",
@@ -5959,7 +5979,7 @@ def test_session_timeline_supports_offset_and_reports_exhausted_pages(
 ) -> None:
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"first",
         dirs=dirs,
         preferred_name="first.md",
@@ -5971,7 +5991,7 @@ def test_session_timeline_supports_offset_and_reports_exhausted_pages(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"second",
         dirs=dirs,
         preferred_name="second.md",
@@ -6064,7 +6084,7 @@ def test_session_manifest_supports_offset_and_all_paging(
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
     for index in range(3):
-        content_store.materialize_bytes(
+        materialize_bytes(
             f"artifact-{index}".encode("utf-8"),
             dirs=dirs,
             preferred_name=f"artifact-{index}.md",
@@ -6133,7 +6153,7 @@ def test_session_manifest_collapses_repeated_fetches_into_one_canonical_entry(
     local_root = tmp_path / "local"
     dirs = initialize_session(local_root)
     for index in range(2):
-        content_store.materialize_bytes(
+        materialize_bytes(
             b"same body",
             dirs=dirs,
             preferred_name="demo.md",
@@ -6169,7 +6189,7 @@ def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
     tmp_path: Path,
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"jira body",
         dirs=dirs,
         preferred_name="ABC.md",
@@ -6181,7 +6201,7 @@ def test_session_analyze_does_not_treat_same_name_cross_provider_as_revision(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"confluence body",
         dirs=dirs,
         preferred_name="ABC.md",
@@ -6206,7 +6226,7 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
     tmp_path: Path,
 ) -> None:
     dirs = initialize_session(tmp_path / "local")
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"thread one",
         dirs=dirs,
         preferred_name="shared-thread.md",
@@ -6218,7 +6238,7 @@ def test_session_analyze_marks_same_name_collisions_with_resource_hints(
         },
         timestamp="2026-03-11T00:00:00.000001Z",
     )
-    content_store.materialize_bytes(
+    materialize_bytes(
         b"thread two",
         dirs=dirs,
         preferred_name="shared-thread.md",

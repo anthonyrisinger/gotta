@@ -6,9 +6,9 @@ from collections.abc import Iterable, Mapping
 import re
 
 from gotta import stored
+from gotta.content.filesystem import FileSystemLedgerStore
 from gotta.content.model import ContentSnapshot, ResolvedDirs
 from gotta.content.path import content_locator
-from gotta.content.store import scan_content_store
 
 from ..core import (
     artifact_human_locator,
@@ -58,7 +58,10 @@ def scan_payload(
     )
     entries = object_entries(aggregate_manifest_entries(raw_entries))
     snapshots = {
-        snapshot.digest: snapshot for snapshot in scan_content_store(dirs.content_dir)
+        snapshot.digest: snapshot
+        for snapshot in FileSystemLedgerStore.for_content_dir(
+            dirs.content_dir
+        ).scan_artifacts()
     }
     matches: list[dict[str, object]] = []
     for entry in entries:

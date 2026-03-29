@@ -12,9 +12,9 @@ import pytest
 from gotta import builtin as plugin_api
 import gotta.content.context as content_context
 import gotta.content.env as content_env
+from gotta.content.filesystem import FileSystemLedgerStore
 import gotta.content.model as content_model
 import gotta.content.scope as content_scope
-import gotta.content.store as content_store
 import gotta.cli.argv as cli_argv
 import gotta.cli.entry as cli
 import gotta.cli.notice as cli_notice
@@ -27,6 +27,26 @@ from gotta.capture import Capture
 from gotta.plugins import read as read_plugin
 from gotta.plugins.session import main as session_plugin
 from gotta.resolve.search import SearchRouteError, resolve_search_route
+
+
+def materialize_bytes(
+    data: bytes,
+    *,
+    dirs: content_model.ResolvedDirs,
+    preferred_name: str,
+    metadata: dict[str, object],
+    timestamp: str | None = None,
+) -> content_model.Materialization:
+    return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
+        data,
+        preferred_name=preferred_name,
+        metadata=dict(metadata),
+        timestamp=timestamp,
+    )
+
+
+def scan_content_store(content_dir: Path) -> list[content_model.ContentSnapshot]:
+    return FileSystemLedgerStore.for_content_dir(content_dir).scan_artifacts()
 
 
 def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
@@ -864,7 +884,7 @@ def test_materialize_invocation_attributes_delegated_read_to_provider(
     )
 
     assert result is not None
-    snapshot = next(item for item in content_store.scan_content_store(dirs.content_dir))
+    snapshot = next(item for item in scan_content_store(dirs.content_dir))
     assert snapshot.artifact.metadata["plugin"] == "jira"
     assert snapshot.artifact.metadata["entrypoint"] == "read"
     assert snapshot.artifact.metadata["provider"] == "jira"
@@ -1166,7 +1186,7 @@ def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> No
     assert returncode == 0
     assert "BrokenPipeError" not in stderr
 
-    snapshots = content_store.scan_content_store(dirs.content_dir)
+    snapshots = scan_content_store(dirs.content_dir)
     assert snapshots == []
 
 
@@ -1259,7 +1279,7 @@ def test_run_plugin_materializing_read_section_miss_returns_clean_error(
     assert captured.out == ""
     assert "no section heading matched: Missing" in captured.err
     assert "Traceback" not in captured.err
-    assert content_store.scan_content_store(local_root / "content") == []
+    assert scan_content_store(local_root / "content") == []
 
 
 def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty(
@@ -1721,7 +1741,7 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
     captured = capsys.readouterr()
     assert captured.out == "# Title\n\nline 1\n"
 
-    snapshots = content_store.scan_content_store(local_root / "content")
+    snapshots = scan_content_store(local_root / "content")
     assert len(snapshots) == 1
     snapshot = snapshots[0]
     assert (
@@ -1784,7 +1804,7 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
     )
     capsys.readouterr()
 
-    snapshots = content_store.scan_content_store(local_root / "content")
+    snapshots = scan_content_store(local_root / "content")
     assert len(snapshots) == 1
     assert (
         snapshots[0].artifact.metadata["canonical_locator"]

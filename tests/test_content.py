@@ -10,10 +10,30 @@ import gotta.content.activity as content_activity
 import gotta.content.context as content_context
 import gotta.content.env as content_env
 import gotta.content.file as content_file
+from gotta.content.filesystem import FileSystemLedgerStore
 import gotta.content.model as content_model
 import gotta.content.scope as content_scope
-import gotta.content.store as content_store
 from gotta import topology
+
+
+def materialize_bytes(
+    data: bytes,
+    *,
+    dirs: content_model.ResolvedDirs,
+    preferred_name: str,
+    metadata: dict[str, object],
+    timestamp: str | None = None,
+) -> content_model.Materialization:
+    return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
+        data,
+        preferred_name=preferred_name,
+        metadata=dict(metadata),
+        timestamp=timestamp,
+    )
+
+
+def scan_content_store(content_dir: Path) -> list[content_model.ContentSnapshot]:
+    return FileSystemLedgerStore.for_content_dir(content_dir).scan_artifacts()
 
 
 def make_dirs(root: Path) -> content_model.ResolvedDirs:
@@ -37,7 +57,7 @@ def test_materialize_bytes_creates_content_directory_and_manifest(
 ) -> None:
     dirs = make_dirs(tmp_path / "ws")
 
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -82,7 +102,7 @@ def test_materialize_bytes_records_projection_degradation_in_lead_cache(
 ) -> None:
     dirs = make_dirs(tmp_path / "ws")
 
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"<p>Depends on ABC-2.</p>",
         dirs=dirs,
         preferred_name="demo.html",
@@ -127,7 +147,7 @@ def test_private_state_and_content_paths_use_private_modes(tmp_path: Path) -> No
             "time_field": "session_recorded_at",
         },
     )
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -162,7 +182,7 @@ def test_private_state_and_content_paths_use_private_modes(tmp_path: Path) -> No
 
 def test_scan_content_store_reads_directory_layout(tmp_path: Path) -> None:
     dirs = make_dirs(tmp_path / "ws")
-    result = content_store.materialize_bytes(
+    result = materialize_bytes(
         b"hello world",
         dirs=dirs,
         preferred_name="demo.md",
@@ -170,7 +190,7 @@ def test_scan_content_store_reads_directory_layout(tmp_path: Path) -> None:
         timestamp="2026-03-11T00:00:00.000001Z",
     )
 
-    snapshots = content_store.scan_content_store(dirs.content_dir)
+    snapshots = scan_content_store(dirs.content_dir)
 
     assert len(snapshots) == 1
     snapshot = snapshots[0]
@@ -189,7 +209,7 @@ def test_scan_content_store_handles_missing_names_directory(tmp_path: Path) -> N
     content_dir.mkdir(parents=True, exist_ok=True)
     (content_dir / "data").write_bytes(b"hello world")
 
-    snapshots = content_store.scan_content_store(dirs.content_dir)
+    snapshots = scan_content_store(dirs.content_dir)
 
     assert len(snapshots) == 1
     assert snapshots[0].digest == digest

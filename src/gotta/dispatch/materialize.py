@@ -15,8 +15,8 @@ from gotta.content.model import (
     Materialization,
     ResolvedDirs,
 )
+from gotta.content.filesystem import FileSystemLedgerStore
 from gotta.content.scope import session_identity
-from gotta.content.store import materialize_bytes
 from gotta.dispatch.metadata import _derived_source_metadata
 from gotta.resolve.intent import (
     SUPPRESS_MATERIALIZATION_ENV as INVOCATION_SUPPRESS_MATERIALIZATION_ENV,
@@ -115,9 +115,8 @@ def _materialize_invocation(
     preferred_name = resolved.preferred_name
     if capture is not None and capture.name and not (options and options.save_as):
         preferred_name = capture.name
-    return materialize_bytes(
+    return FileSystemLedgerStore.for_dirs(dirs).materialize_bytes(
         payload,
-        dirs=dirs,
         preferred_name=preferred_name,
         metadata=metadata,
     )
