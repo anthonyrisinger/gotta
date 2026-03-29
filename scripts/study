@@ -114,10 +114,7 @@ PREFIX_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
 LIZARD_ROW_RE = re.compile(r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.+)$")
 PYRIGHT_ERROR_RE = re.compile(r"^(?P<path>.+?\.py):\d+:\d+ - error:")
 RADON_ROW_RE = re.compile(r"^\s+([FCM])\s+\d+:\d+\s+(.+?) - ([A-F]) \((\d+)\)$")
-SRC_DIR_RE = re.compile(r"^[0-9a-z]+$")
-SRC_FILE_RE = re.compile(r"^[0-9a-z]+\.py$")
-TEST_FILE_RE = re.compile(r"^test_[0-9a-z]+\.py$")
-ALLOWED_SRC_FILENAMES = frozenset({"__main__.py"})
+BOUNDARY_UNDERSCORE_RE = re.compile(r"^_*[0-9a-z]+_*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +195,10 @@ def normalize_path(raw: str) -> str:
     if raw == "":
         return ""
     return PurePosixPath(raw).as_posix()
+
+
+def has_boundary_underscore_shape(name: str) -> bool:
+    return bool(BOUNDARY_UNDERSCORE_RE.fullmatch(name))
 
 
 def parse_porcelain_z(raw: bytes) -> tuple[str, ...]:
@@ -371,19 +372,20 @@ def path_shape_errors(repo_root: Path) -> tuple[str, ...]:
     if src_root.exists():
         for path in sorted(src_root.rglob("*")):
             if path.is_dir():
-                if not SRC_DIR_RE.fullmatch(path.name):
+                if not has_boundary_underscore_shape(path.name):
                     offenders.append(path.relative_to(repo_root).as_posix())
                 continue
             if path.is_file() and (
-                path.name not in ALLOWED_SRC_FILENAMES
-                and not SRC_FILE_RE.fullmatch(path.name)
+                path.suffix != ".py" or not has_boundary_underscore_shape(path.stem)
             ):
                 offenders.append(path.relative_to(repo_root).as_posix())
 
     tests_root = repo_root / "tests"
     if tests_root.exists():
         for path in sorted(tests_root.rglob("*.py")):
-            if not TEST_FILE_RE.fullmatch(path.name):
+            if not path.stem.startswith("test_") or not has_boundary_underscore_shape(
+                path.stem.removeprefix("test_")
+            ):
                 offenders.append(path.relative_to(repo_root).as_posix())
 
     return tuple(offenders)
@@ -396,9 +398,9 @@ def path_shape_error(repo_root: Path) -> str:
     return "\n".join(
         [
             "path-shape policy violated: src/gotta/ directories must match "
-            "[0-9a-z]+, src/gotta/ files "
-            "must match [0-9a-z]+.py (except __main__.py), and tests/ Python "
-            "files must match test_[0-9a-z]+.py",
+            "_*[0-9a-z]+_*, src/gotta/ files must match _*[0-9a-z]+_*.py, "
+            "and tests/ Python files must match test_ + _*[0-9a-z]+_* with "
+            "underscores allowed only at the beginning or end of the core name",
             *offenders,
         ]
     )

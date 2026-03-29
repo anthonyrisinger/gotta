@@ -131,10 +131,15 @@ def test_path_shape_errors_accept_canonical_src_and_tests(tmp_path: Path) -> Non
     (tmp_path / "src" / "gotta").mkdir(parents=True)
     (tmp_path / "src" / "gotta" / "read.py").write_text("", encoding="utf-8")
     (tmp_path / "src" / "gotta" / "__main__.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "gotta" / "_compat.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "gotta" / "compat_.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "gotta" / "__shadow__").mkdir()
     (tmp_path / "src" / "vendor_name").mkdir(parents=True)
     (tmp_path / "src" / "vendor_name" / "bad_name.py").write_text("", encoding="utf-8")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_read.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests" / "test___main__.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests" / "test__compat.py").write_text("", encoding="utf-8")
 
     assert driver.path_shape_errors(tmp_path) == ()
 
@@ -160,6 +165,22 @@ def test_path_shape_errors_reject_invalid_test_file(tmp_path: Path) -> None:
     (tmp_path / "tests" / "test_bad_name.py").write_text("", encoding="utf-8")
 
     assert driver.path_shape_errors(tmp_path) == ("tests/test_bad_name.py",)
+
+
+def test_has_boundary_underscore_shape_accepts_boundary_runs() -> None:
+    driver = _load_driver()
+
+    assert driver.has_boundary_underscore_shape("main")
+    assert driver.has_boundary_underscore_shape("_main")
+    assert driver.has_boundary_underscore_shape("main_")
+    assert driver.has_boundary_underscore_shape("__main__")
+
+
+def test_has_boundary_underscore_shape_rejects_interior_underscores() -> None:
+    driver = _load_driver()
+
+    assert driver.has_boundary_underscore_shape("bad_name") is False
+    assert driver.has_boundary_underscore_shape("bad__name") is False
 
 
 def test_residue_paths_find_python_cache_residue(tmp_path: Path) -> None:

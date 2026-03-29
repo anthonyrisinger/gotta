@@ -86,3 +86,36 @@ def test_pre_commit_rejects_invalid_path_shapes(
     assert result.returncode == 1
     assert "path-shape policy violated" in result.stderr
     assert expected_path in result.stderr
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "src/gotta/__main__.py",
+        "src/gotta/_compat.py",
+        "src/gotta/compat_.py",
+        "src/gotta/__shadow__/main.py",
+        "tests/test___main__.py",
+    ],
+)
+def test_pre_commit_allows_boundary_underscore_shapes(
+    tmp_path: Path, relative_path: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    _run(["git", "init", "-q"], cwd=repo)
+
+    hooks_dir = repo / ".githooks"
+    hooks_dir.mkdir()
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text(PRE_COMMIT_HOOK.read_text(encoding="utf-8"), encoding="utf-8")
+    hook_path.chmod(0o755)
+
+    target = repo / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+
+    result = _run([str(hook_path)], cwd=repo, check=False)
+
+    assert result.returncode == 0
