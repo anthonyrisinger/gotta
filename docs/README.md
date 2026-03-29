@@ -725,6 +725,7 @@ Core ships these top-level surface bindings:
 
 - `ask`
 - `actor`
+- `config`
 - `confluence`
 - `gdocs`
 - `gdrive`

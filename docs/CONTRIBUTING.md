@@ -270,17 +270,25 @@ is the live registration shim, not the final 1.0 doctrine.
 In the live codebase, a `PluginSpec` has:
 
 - **`runner`** — the callable that executes the command (`main(argv) -> int`)
-- **`session_access`** — `"none"`, `"read"`, or `"write"` (controls whether a
-  session is required and whether output is materialized)
 - **`route_target`** — optional callback for URL-based routing from `gotta read`
 - **`route_priority`** — numeric priority for route conflicts (lower wins)
-- **`canonical_locator`** / **`preferred_name`** / **`infer_content_type`** —
+- **`should_materialize`** — optional policy hook for whether a surface should
+  materialize a given invocation
+- **`session_access`** — `"none"`, `"read"`, `"write"`, or `"ambient"`, or a
+  callable that resolves one of those modes from argv
+- **`invocation_locator`** — optional callback for deriving one canonical
+  invocation locator before materialization
+- **`canonical_locator`** / **`preferred_name`** / **`content_type`** —
   optional callbacks for materialization metadata
+- **`capture`** / **`project`** — optional hooks for canonical bytes and
+  operator-facing rendering
 
-Extensions register through the `gotta.plugins` entry-point group in
-`pyproject.toml`. Core surface registrations are defined in `builtin.py`;
-external extensions in separate distributions shadow core registrations only if
-explicitly prioritized.
+General surfaces register through the `gotta.plugins` entry-point group in
+`pyproject.toml`. Ask-family extensions register through `gotta.ask`.
+Core surface registrations are defined in `builtin.py`; external extensions
+with the same surface name override core registrations when discovered later,
+so shadowing is an intentional packaging decision rather than a route-priority
+mechanism.
 
 ### Testing Patterns
 
