@@ -235,6 +235,29 @@ This file is the execution queue.
   More cleanup of this exact species inside `session lead` would not; the next
   work that pays rent is the remaining derived-view payload families outside
   `analyze` and `lead`, especially `session scan` and `session timeline`.
+- [x] Typed `session scan` payload center landed.
+  - The `session scan` surface now has a truthful payload owner:
+    - `src/gotta/plugins/session/scan/model.py`
+      - `ScanVisibility`
+      - `ScanEntry`
+      - `ScanPayload`
+  - The scan builder and renderer now consume named payload contracts instead
+    of anonymous `dict[str, object]` exports:
+    - `src/gotta/plugins/session/scan/payload.py`
+    - `src/gotta/plugins/session/scan/render.py`
+  - The existing typed snippet window remains the leaf owner:
+    - `src/gotta/plugins/session/scan/snippet.py`
+      - `SnippetLine`
+      - `Snippet`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/plugins/session/scan`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted another live anonymous derived-view seam
+  without inventing new topology or preserving old dict-shaped exports.
+  More cleanup of this exact species inside `session scan` would not; the next
+  work that pays rent is the remaining derived-view payload families outside
+  `analyze`, `lead`, and `scan`, starting with `session timeline`.
 
 ## Current Tranche
 
@@ -252,8 +275,10 @@ This file is the execution queue.
   truthful owner.
 - [x] Type the exported `session lead` payload family and promote shared lead
   edge/summary records into a cross-package model center.
+- [x] Type the exported `session scan` payload family and center it in one
+  truthful owner.
 - [ ] Next tranche: type the remaining derived-view payload families outside
-  `session analyze` and `session lead`, starting with `session scan` and
+  `session analyze`, `session lead`, and `session scan`, starting with
   `session timeline`, while continuing to erase filesystem-shaped assumptions in
   those seams.
 

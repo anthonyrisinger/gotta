@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 import re
 
 from gotta import stored
@@ -23,6 +23,7 @@ from ..manifest.record import (
     filter_manifest_entries,
     manifest_entries,
 )
+from .model import ScanEntry, ScanPayload, ScanVisibility
 from .match import compile_pattern, hit_lines
 from .snippet import build_snippets
 
@@ -43,7 +44,7 @@ def scan_payload(
     offset: int = 0,
     include_all: bool = False,
     session_ref: str = "",
-) -> dict[str, object]:
+) -> ScanPayload:
     pattern = compile_pattern(
         query,
         match_mode=match_mode,
@@ -56,7 +57,7 @@ def scan_payload(
         locator=locator,
         kind=kind,
     )
-    entries = object_entries(aggregate_manifest_entries(raw_entries))
+    entries = raw_entries
     snapshots = {
         snapshot.digest: snapshot
         for snapshot in scan_content_snapshots(
@@ -64,7 +65,7 @@ def scan_payload(
             session_dir=dirs.session_dir,
         )
     }
-    matches: list[dict[str, object]] = []
+    matches: list[ScanEntry] = []
     for entry in entries:
         matched = matched_entry(
             entry,
@@ -100,7 +101,7 @@ def scan_payload(
         offset=offset,
         include_all=include_all,
     )
-    return {
+    payload: ScanPayload = {
         "sessionDir": str(dirs.session_dir),
         "contentDir": str(dirs.content_dir),
         "manifestPath": str(dirs.content_dir / "manifest.jsonl"),
@@ -114,9 +115,15 @@ def scan_payload(
         "actorFilter": actor,
         "locatorFilter": locator,
         "kindFilter": kind,
-        **paging,
+        "offset": paging_int(paging.get("offset")),
+        "limit": paging_limit(paging.get("limit")),
+        "totalCount": paging_int(paging.get("totalCount")),
+        "shownCount": paging_int(paging.get("shownCount")),
+        "nextOffset": paging_next_offset(paging.get("nextOffset")),
+        "truncated": paging_bool(paging.get("truncated")),
         "entries": paged,
     }
+    return payload
 
 
 def scan_entries(
@@ -126,28 +133,63 @@ def scan_entries(
     actor: str = "",
     locator: str = "",
     kind: str = "",
-) -> list[dict[str, object]]:
-    filtered = object_entries(
-        filter_manifest_entries(
-            entries,
-            plugin=plugin,
-            actor=actor,
-            locator=locator,
+) -> list[ScanEntry]:
+    filtered = [
+        manifest_scan_entry(entry)
+        for entry in aggregate_manifest_entries(
+            filter_manifest_entries(
+                list(entries),
+                plugin=plugin,
+                actor=actor,
+                locator=locator,
+            )
         )
-    )
+    ]
     kind_filter = kind.strip().lower()
     if not kind_filter:
         return filtered
-    return [
-        entry
-        for entry in filtered
-        if artifact_kind(entry.get("artifact_kind") or entry.get("artifactKind"))
-        == kind_filter
-    ]
+    return [entry for entry in filtered if entry.get("artifactKind", "") == kind_filter]
+
+
+def manifest_scan_entry(entry: Mapping[str, object]) -> ScanEntry:
+    checksum = string(entry.get("checksum"))
+    plugin = string(entry.get("plugin"))
+    actor = string(entry.get("actor"))
+    locator = string(entry.get("locator"))
+    canonical_locator = string(entry.get("canonical_locator")) or locator
+    artifact_kind_value = artifact_kind(
+        entry.get("artifact_kind") or entry.get("artifactKind")
+    )
+    plugins = string_list(entry.get("plugins"))
+    actors = string_list(entry.get("actors"))
+    locators = string_list(entry.get("locators"))
+    artifact_kinds = string_list(entry.get("artifactKinds"))
+    scan_entry: ScanEntry = {
+        "checksum": checksum,
+        "plugin": plugin,
+        "actor": actor,
+        "subcommand": string(entry.get("subcommand")),
+        "locator": locator,
+        "canonical_locator": canonical_locator,
+        "preferred_name": string(entry.get("preferred_name")),
+        "fetched_at": string(entry.get("fetched_at")),
+        "fetchCount": integer(entry.get("fetchCount")),
+        "firstFetchedAt": string(entry.get("firstFetchedAt")),
+        "lastFetchedAt": string(entry.get("lastFetchedAt") or entry.get("fetched_at")),
+        "plugins": plugins or ([plugin] if plugin else []),
+        "actors": actors or ([actor] if actor else []),
+        "locators": locators or ([canonical_locator] if canonical_locator else []),
+        "artifactKinds": (
+            artifact_kinds or ([artifact_kind_value] if artifact_kind_value else [])
+        ),
+        "artifactKind": artifact_kind_value,
+    }
+    apply_visibility(scan_entry, visibility_metadata(entry))
+    return scan_entry
 
 
 def matched_entry(
-    entry: dict[str, object],
+    entry: ScanEntry,
     *,
     snapshots: dict[str, ContentSnapshot],
     query: str,
@@ -156,8 +198,8 @@ def matched_entry(
     context: int,
     snippet_limit: int,
     session_ref: str,
-) -> dict[str, object] | None:
-    checksum = string(entry.get("checksum"))
+) -> ScanEntry | None:
+    checksum = entry.get("checksum", "")
     snapshot = snapshots.get(checksum)
     if snapshot is None:
         return None
@@ -170,8 +212,8 @@ def matched_entry(
     )
     if not hits:
         return None
-    preferred_name = string(entry.get("preferred_name")) or "data"
-    canonical_locator = string(entry.get("canonical_locator") or entry.get("locator"))
+    preferred_name = entry.get("preferred_name", "") or "data"
+    canonical_locator = entry.get("canonical_locator") or entry.get("locator") or ""
     artifact_locator = artifact_human_locator(preferred_name, checksum)
     snippets = build_snippets(
         lines,
@@ -179,9 +221,8 @@ def matched_entry(
         context=context,
         limit=snippet_limit,
     )
-    return {
+    matched: ScanEntry = {
         **entry,
-        "artifactKind": artifact_kind(entry.get("artifact_kind")),
         "artifactLocator": artifact_locator,
         "contentLocator": content_locator(checksum),
         "followCommand": follow_command(
@@ -199,31 +240,26 @@ def matched_entry(
             if checksum
             else ""
         ),
-        "plugins": string_list(entry.get("plugins")),
-        "actors": string_list(entry.get("actors")),
-        "locators": string_list(entry.get("locators")),
-        "artifactKinds": string_list(entry.get("artifactKinds")),
         "hitCount": len(hits),
         "snippetCount": len(snippets),
         "displayLineCount": len(lines),
         "snippets": snippets,
-        **resolved_visibility_metadata(
+    }
+    apply_visibility(
+        matched,
+        resolved_scan_visibility(
             entry,
-            provider=string(entry.get("plugin")),
-            plugin=string(entry.get("plugin")),
-            subcommand=string(entry.get("subcommand")),
+            provider=entry.get("plugin", ""),
+            subcommand=entry.get("subcommand", ""),
             locator=canonical_locator,
         ),
-    }
+    )
+    return matched
 
 
 def scan_display_text(snapshot: ContentSnapshot) -> str:
     rendered = stored.stored_display(snapshot.layout.blob_path)
     return rendered.data.decode("utf-8", errors="replace")
-
-
-def object_entries(entries: Iterable[Mapping[str, object]]) -> list[dict[str, object]]:
-    return [{str(key): value for key, value in entry.items()} for entry in entries]
 
 
 def string(value: object) -> str:
@@ -241,3 +277,64 @@ def integer(value: object) -> int:
         return int(str(value or 0))
     except ValueError:
         return 0
+
+
+def paging_int(value: object) -> int:
+    return value if isinstance(value, int) else 0
+
+
+def paging_limit(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def paging_next_offset(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def paging_bool(value: object) -> bool:
+    return value if isinstance(value, bool) else False
+
+
+def visibility_metadata(entry: Mapping[str, object]) -> ScanVisibility:
+    visibility: ScanVisibility = {}
+    visibility_level = entry.get("visibility_level")
+    visibility_boundary = entry.get("visibility_boundary")
+    visibility_confidence = entry.get("visibility_confidence")
+    if isinstance(visibility_level, str):
+        visibility["visibility_level"] = visibility_level
+    if isinstance(visibility_boundary, str):
+        visibility["visibility_boundary"] = visibility_boundary
+    if isinstance(visibility_confidence, str):
+        visibility["visibility_confidence"] = visibility_confidence
+    basis = entry.get("visibility_basis")
+    if isinstance(basis, list):
+        visibility["visibility_basis"] = string_list(basis)
+    return visibility
+
+
+def resolved_scan_visibility(
+    entry: ScanEntry,
+    *,
+    provider: str,
+    subcommand: str,
+    locator: str,
+) -> ScanVisibility:
+    visibility = resolved_visibility_metadata(
+        entry,
+        provider=provider,
+        plugin=provider,
+        subcommand=subcommand,
+        locator=locator,
+    )
+    return visibility_metadata(visibility)
+
+
+def apply_visibility(entry: ScanEntry, visibility: ScanVisibility) -> None:
+    if "visibility_level" in visibility:
+        entry["visibility_level"] = visibility["visibility_level"]
+    if "visibility_boundary" in visibility:
+        entry["visibility_boundary"] = visibility["visibility_boundary"]
+    if "visibility_confidence" in visibility:
+        entry["visibility_confidence"] = visibility["visibility_confidence"]
+    if "visibility_basis" in visibility:
+        entry["visibility_basis"] = visibility["visibility_basis"]
