@@ -9,6 +9,7 @@ from gotta.session.registry import _actor_label, _normalize_actor_name
 from gotta.session.scope import _selected_actor_ids
 from gotta.session.status.marker import FINAL_SIGNOFF_MARKER, _actor_todo_marker
 from gotta.session.status.payload.main import _actor_status_payload
+from gotta.session.status.payload.model import ActorStatusPayload
 from gotta.session.status.payload.value import ACTOR_TERMINAL_STATUS
 
 
@@ -43,7 +44,7 @@ def _ensure_actor_todo_items(work_dir: Path, actor_name: str) -> None:
 
 def _sync_actor_todo_state(work_dir: Path) -> None:
     actor_ids = _selected_actor_ids(work_dir)
-    actor_payloads = {
+    actor_payloads: dict[str, ActorStatusPayload] = {
         actor: _actor_status_payload(work_dir, actor) for actor in actor_ids
     }
     launched_actor_ids = [

@@ -15,6 +15,7 @@ from gotta.session.registry import (
     _actor_session_dir,
     _normalize_actor_name,
 )
+from gotta.session.status.payload.model import LifecycleEntry, ProgressSummary
 
 
 def _rank_value(value: object) -> int:
@@ -26,7 +27,7 @@ def _rank_value(value: object) -> int:
 
 def _actor_progress_summary(
     work_dir: Path, actor_name: str, *, limit: int = 5
-) -> dict[str, object]:
+) -> ProgressSummary:
     normalized_actor = _normalize_actor_name(actor_name)
     actor_root = _actor_session_dir(work_dir, normalized_actor)
     events: list[dict[str, object]] = []
@@ -128,7 +129,7 @@ def _actor_progress_summary(
         ),
         reverse=True,
     )
-    recent_progress = [
+    recent_progress: list[LifecycleEntry] = [
         {
             "timestamp": str(item.get("timestamp") or ""),
             "event": str(item.get("event") or ""),

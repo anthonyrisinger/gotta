@@ -5,6 +5,7 @@ from __future__ import annotations
 from gotta.actor import requested_disposition_label
 from gotta.session.registry import _normalize_actor_name
 from gotta.session.status.payload.value import ACTOR_TERMINAL_STATUS
+from .model import RequestStatePayload
 
 
 def apply_requested_closing(derived_status: str, requested_status: str) -> str:
@@ -22,7 +23,7 @@ def request_state_payload(
     *,
     actor_name: str,
     derived_status: str,
-) -> dict[str, object]:
+) -> RequestStatePayload:
     requested_status = str(state.get("requested_status") or "")
     requested_summary = str(state.get("requested_summary") or "")
     requested_label = requested_disposition_label(state)

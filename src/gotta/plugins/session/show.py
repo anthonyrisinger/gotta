@@ -13,9 +13,8 @@ from gotta import topology
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
 
+from .model import SessionEnvPayload
 from .parse import require_started_session, session_dirs_for_read
-
-SessionEnvPayload = dict[str, str]
 
 
 def print_session_env(
@@ -34,7 +33,9 @@ def print_session_env(
             print(f"{key}={value}")
         return 0
     print(
-        "\n".join(f"export {key}={sh_quote(value)}" for key, value in payload.items())
+        "\n".join(
+            f"export {key}={sh_quote(str(value))}" for key, value in payload.items()
+        )
     )
     return 0
 

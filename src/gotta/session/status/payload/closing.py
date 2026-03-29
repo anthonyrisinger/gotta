@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from .model import ActorStatusPayload
 
-def closing_next_step(actor_name: str, payload: dict[str, object]) -> str:
+
+def closing_next_step(actor_name: str, payload: ActorStatusPayload) -> str:
     derived_status = str(payload.get("status") or "")
     requested_status = str(payload.get("requested_status") or "")
     requested_label = str(payload.get("requested_label") or "")

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import os
+from typing import TypedDict
+from typing import cast
 
 from gotta.config import user_data_dir
 
@@ -13,6 +15,17 @@ DEFAULT_SESSIONS_ROOT = user_data_dir() / "sessions"
 DEFAULT_BINDINGS_ROOT = user_data_dir() / "bindings"
 LEGACY_PRIMARY_IDENTITY = "primary"
 PLACEHOLDER_IDENTITY = "actor"
+
+
+class BindingRecord(TypedDict, total=False):
+    bindingId: str
+    contextId: str
+    contextSource: str
+    sessionId: str
+    actor: str
+    sessionRoot: str
+    createdAt: str
+    updatedAt: str
 
 
 def sanitize_token(value: str, *, fallback: str) -> str:
@@ -190,7 +203,7 @@ def resolve_binding(binding_id: str) -> Path | None:
     return path.resolve()
 
 
-def load_binding_record(binding_id: str) -> dict[str, object] | None:
+def load_binding_record(binding_id: str) -> BindingRecord | None:
     path = binding_path_for(binding_id)
     if not path.is_dir():
         return None
@@ -203,7 +216,7 @@ def load_binding_record(binding_id: str) -> dict[str, object] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    return payload
+    return cast(BindingRecord, payload)
 
 
 def binding_targets_session(binding_id: str, session_root: Path) -> bool:
@@ -220,11 +233,11 @@ def binding_targets_session(binding_id: str, session_root: Path) -> bool:
     return resolved_target == target
 
 
-def binding_records_for_session(session_root: Path) -> list[dict[str, object]]:
+def binding_records_for_session(session_root: Path) -> list[BindingRecord]:
     root = bindings_root()
     if not root.exists():
         return []
-    records: list[dict[str, object]] = []
+    records: list[BindingRecord] = []
     for candidate in sorted(root.iterdir()):
         binding_id = candidate.name
         if not binding_targets_session(binding_id, session_root):
@@ -266,7 +279,7 @@ def write_binding(
         root_link.symlink_to(desired)
     else:
         root_link.symlink_to(desired)
-    record = {
+    record: BindingRecord = {
         "bindingId": binding_id,
         "contextId": context_id,
         "contextSource": context_source,

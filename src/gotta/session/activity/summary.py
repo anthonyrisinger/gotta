@@ -17,6 +17,18 @@ from gotta.session.registry import (
     _normalize_actor_name,
     _read_actor_state,
 )
+from gotta.session.status.payload.model import (
+    EvidenceArtifact,
+    EvidenceSummary,
+    LifecycleEntry,
+    NoteCheckSummary,
+    NoteSummary,
+    RecentActivityPayload,
+)
+
+
+class _OrderedLifecycleEntry(LifecycleEntry):
+    _order: int
 
 
 def _int_value(value: object, *, default: int = 0) -> int:
@@ -26,7 +38,7 @@ def _int_value(value: object, *, default: int = 0) -> int:
         return default
 
 
-def _actor_evidence_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
+def _actor_evidence_summary(work_dir: Path, actor_name: str) -> EvidenceSummary:
     manifest_path = work_dir / "content" / "manifest.jsonl"
     entries: list[dict[str, object]] = []
     if manifest_path.exists():
@@ -49,25 +61,26 @@ def _actor_evidence_summary(work_dir: Path, actor_name: str) -> dict[str, object
         ),
         reverse=True,
     )
+    recent_artifacts: list[EvidenceArtifact] = [
+        {
+            "locator": str(
+                entry.get("canonical_locator") or entry.get("locator") or ""
+            ).strip(),
+            "preferred_name": str(entry.get("preferred_name") or "data").strip(),
+            "fetched_at": str(entry.get("fetched_at") or "").strip(),
+        }
+        for entry in ordered[:5]
+    ]
     return {
         "artifact_count": len(entries),
         "last_artifact_at": str(ordered[0].get("fetched_at") or "").strip()
         if ordered
         else "",
-        "recent_artifacts": [
-            {
-                "locator": str(
-                    entry.get("canonical_locator") or entry.get("locator") or ""
-                ).strip(),
-                "preferred_name": str(entry.get("preferred_name") or "data").strip(),
-                "fetched_at": str(entry.get("fetched_at") or "").strip(),
-            }
-            for entry in ordered[:5]
-        ],
+        "recent_artifacts": recent_artifacts,
     }
 
 
-def _actor_evidence_note(evidence: dict[str, object]) -> str:
+def _actor_evidence_note(evidence: EvidenceSummary) -> str:
     artifact_count = _int_value(evidence.get("artifact_count"))
     if artifact_count <= 0:
         return ""
@@ -101,12 +114,12 @@ def _actor_activity_summary(
     return f"{label}: {author_prefix}".strip(": ")
 
 
-def _actor_event_records(work_dir: Path, actor_name: str) -> list[dict[str, object]]:
+def _actor_event_records(work_dir: Path, actor_name: str) -> list[LifecycleEntry]:
     path = _actor_events_path(work_dir, actor_name)
     if not path.exists():
         return []
     normalized_actor = _normalize_actor_name(actor_name)
-    events: list[dict[str, object]] = []
+    events: list[_OrderedLifecycleEntry] = []
     for index, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines()):
         if not raw_line.strip():
             continue
@@ -142,12 +155,21 @@ def _actor_event_records(work_dir: Path, actor_name: str) -> list[dict[str, obje
                 "_order": index,
             }
         )
-    return events
+    return [
+        {
+            "timestamp": str(item.get("timestamp") or ""),
+            "event": str(item.get("event") or ""),
+            "author": str(item.get("author") or ""),
+            "detail": str(item.get("detail") or ""),
+            "summary": str(item.get("summary") or ""),
+        }
+        for item in events
+    ]
 
 
 def _actor_recent_activity(
     work_dir: Path, actor_name: str, *, limit: int = 5
-) -> dict[str, object]:
+) -> RecentActivityPayload:
     events = _actor_event_records(work_dir, actor_name)
     if not events:
         return {
@@ -165,7 +187,7 @@ def _actor_recent_activity(
         reverse=True,
     )
     lifecycle = [item for item in ordered if str(item.get("event") or "") != "note"]
-    recent_activity = [
+    recent_activity: list[LifecycleEntry] = [
         {
             "timestamp": str(item.get("timestamp") or ""),
             "event": str(item.get("event") or ""),
@@ -175,7 +197,7 @@ def _actor_recent_activity(
         }
         for item in ordered[:limit]
     ]
-    recent_lifecycle = [
+    recent_lifecycle: list[LifecycleEntry] = [
         {
             "timestamp": str(item.get("timestamp") or ""),
             "event": str(item.get("event") or ""),
@@ -194,7 +216,7 @@ def _actor_recent_activity(
     }
 
 
-def _actor_note_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
+def _actor_note_summary(work_dir: Path, actor_name: str) -> NoteSummary:
     normalized_actor = _normalize_actor_name(actor_name)
     notes: list[dict[str, str]] = []
     for record in visible_actor_notes_records(work_dir, normalized_actor):
@@ -231,7 +253,7 @@ def _actor_note_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
     }
 
 
-def _actor_note_check_summary(work_dir: Path, actor_name: str) -> dict[str, object]:
+def _actor_note_check_summary(work_dir: Path, actor_name: str) -> NoteCheckSummary:
     state = _read_actor_state(work_dir, actor_name)
     count = _int_value(state.get("note_checks_since_update"))
     return {

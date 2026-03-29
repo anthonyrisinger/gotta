@@ -350,6 +350,55 @@ This file is the execution queue.
   the next honest move is to type the remaining actor/runtime status payload
   cluster and `session doctor`, then reassess whether core-collapse is actually
   done and provider-local pressure should take over.
+- [x] Typed the actor/runtime status payload center and `session` status
+  surfaces.
+  - The actor/runtime status seam now has one truthful payload owner:
+    - `src/gotta/session/status/payload/model.py`
+      - `LifecycleEntry`
+      - `EvidenceArtifact`
+      - `EvidenceSummary`
+      - `RecentActivityPayload`
+      - `NoteSummary`
+      - `NoteCheckSummary`
+      - `ProgressSummary`
+      - `RequestStatePayload`
+      - `RuntimeStatePayload`
+      - `RuntimeSignalPayload`
+      - `ActorActivityPayload`
+      - `ActorStatusPayload`
+  - The top-level `gotta session` surfaces now have named payload owners:
+    - `src/gotta/plugins/session/model.py`
+      - `SessionEnvPayload`
+      - `DoctorRuntimePayload`
+      - `DoctorSessionPayload`
+      - `DoctorCheck`
+      - `DoctorChecks`
+      - `DoctorPayload`
+  - Durable binding rows now have a named topology contract instead of flowing
+    as raw dicts:
+    - `src/gotta/topology.py`
+      - `BindingRecord`
+  - The typed contract now runs through the touched seam:
+    - `src/gotta/plugins/session/show.py`
+    - `src/gotta/plugins/session/doctor.py`
+    - `src/gotta/session/activity/summary.py`
+    - `src/gotta/session/status/payload/activity.py`
+    - `src/gotta/session/status/payload/request.py`
+    - `src/gotta/session/status/payload/runtime.py`
+    - `src/gotta/session/status/payload/main.py`
+    - `src/gotta/session/status/todo.py`
+    - `src/gotta/notes/render.py`
+    - `src/gotta/plugins/actor.py`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/topology.py src/gotta/plugins/session/model.py src/gotta/plugins/session/show.py src/gotta/plugins/session/doctor.py src/gotta/session/status src/gotta/session/activity/summary.py src/gotta/notes/render.py src/gotta/plugins/actor.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted the last obvious anonymous status and
+  doctor payload seam in the shared session core without reopening settled
+  storage or registry boundaries. More cleanup of this exact species would not;
+  the next honest move is to reassess the remaining shared-core anonymous
+  exports and, unless one more real seam survives, switch from core collapse to
+  provider-local and algorithmic pressure.
 
 ## Current Tranche
 
@@ -376,9 +425,11 @@ This file is the execution queue.
 - [x] Finish the smaller typed-count and payload cleanup still left in
   `session graph`.
 - [x] Remove runner/stdout fallback capture from federated `search`.
-- [ ] Next tranche: type the remaining actor/runtime status payload cluster and
-  `session doctor`, then reassess whether the next real seam is still core
-  contract work or provider-local monolith pressure.
+- [x] Type the remaining actor/runtime status payload cluster and `session
+  doctor`.
+- [ ] Next tranche: reassess the remaining shared-core anonymous exports and
+  switch to provider-local monolith pressure unless one more contract seam
+  clearly still pays rent.
 
 ## Non-Negotiable Invariants
 
@@ -422,7 +473,7 @@ This file is the execution queue.
   - timeline
   - graph
   - analyze
-- [ ] Type the remaining actor/runtime status payload cluster and `session
+- [x] Type the remaining actor/runtime status payload cluster and `session
   doctor`.
 
 ## Phase 0: Freeze The Vocabulary In Code
@@ -498,10 +549,10 @@ This file is the execution queue.
   - `LeadResolution`
 - [ ] Type the derived view payload families:
   - `GraphPayload`
-  - `TimelineEvent`
-  - `AnalyzeOverview`
-  - `LineagePayload`
-  - `SemanticPayload`
+  - [x] `TimelineEvent`
+  - [x] `AnalyzeOverview`
+  - [x] `LineagePayload`
+  - [x] `SemanticPayload`
 - [ ] Replace anonymous exported manifest and session payload records with named
   types.
 - [ ] Type the extension-boundary protocols:
@@ -545,7 +596,7 @@ This file is the execution queue.
 
 - [ ] Fix `gsheets` canonical capture so display-shaping flags affect projection
   only, not stored canonical bytes.
-- [ ] Remove runner/stdout fallback capture from federated `search`.
+- [x] Remove runner/stdout fallback capture from federated `search`.
   `search` should resolve into explicit provider search/capture/project hooks.
 - [ ] Externalize GitHub capability contracts further and treat GitHub as the
   exemplar bundle for:
@@ -648,10 +699,10 @@ This file is the execution queue.
 - [ ] Keep pushing derived views toward ledger/state contracts instead of
   concrete filesystem ownership.
 - [ ] Type the lead kernel.
-- [ ] Type the first analyze/graph/timeline/session payload families.
+- [x] Type the first analyze/graph/timeline/session payload families.
 - [ ] Replace anonymous manifest and lead aggregate records with named types.
 - [ ] Fix `gsheets` capture semantics.
-- [ ] Remove federated `search` runner-capture fallback.
+- [x] Remove federated `search` runner-capture fallback.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 
 ## What Not To Do

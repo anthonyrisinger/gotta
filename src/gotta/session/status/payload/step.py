@@ -5,13 +5,14 @@ from __future__ import annotations
 from gotta.session.status.payload.active import active_next_step
 from gotta.session.status.payload.activity import note_check_next_step
 from gotta.session.status.payload.closing import closing_next_step
+from gotta.session.status.payload.model import ActorStatusPayload
 from gotta.session.status.payload.pending import pending_next_step
 from gotta.session.registry import _normalize_actor_name
 from gotta.session.status.payload.value import int_value
 from gotta.session.status.payload.runtime import low_signal_next_step, runtime_next_step
 
 
-def actor_next_step(actor_name: str, payload: dict[str, object]) -> str:
+def actor_next_step(actor_name: str, payload: ActorStatusPayload) -> str:
     normalized_actor = _normalize_actor_name(actor_name)
     derived_status = str(payload.get("status") or "")
     next_step = runtime_next_step(normalized_actor, payload)

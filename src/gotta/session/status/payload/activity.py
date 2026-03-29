@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from gotta.notes.voice import actor_notes_status, actor_voice
 from gotta.session.activity.summary import (
@@ -22,11 +23,12 @@ from gotta.session.status.payload.value import (
     lifecycle_entries,
 )
 from gotta.session.status.progress import _actor_progress_summary
+from .model import ActorActivityPayload, RecentActivityPayload
 
 
 def _normalized_recent_activity(
-    recent_activity: dict[str, object],
-) -> dict[str, object]:
+    recent_activity: RecentActivityPayload,
+) -> RecentActivityPayload:
     payload = dict(recent_activity)
     entries = lifecycle_entries(payload.get("recent_lifecycle"))
     if entries and str(entries[0].get("event") or "") == "runtime_exit":
@@ -53,15 +55,15 @@ def _normalized_recent_activity(
         payload["recent_lifecycle"] = entries
         payload["last_lifecycle_at"] = str(entries[0].get("timestamp") or "")
         payload["last_lifecycle_summary"] = str(entries[0].get("summary") or "")
-    return payload
+    return cast(RecentActivityPayload, payload)
 
 
-def activity_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
+def activity_payload(work_dir: Path, actor_name: str) -> ActorActivityPayload:
     normalized_actor = _normalize_actor_name(actor_name)
     evidence = _actor_evidence_summary(work_dir, actor_name)
     notes_status = actor_notes_status(work_dir, normalized_actor)
     return {
-        "actor_dir": _actor_session_dir(work_dir, actor_name),
+        "actor_dir": str(_actor_session_dir(work_dir, actor_name)),
         "voice": actor_voice(work_dir, normalized_actor),
         "notes_status": notes_status,
         "notes_ready": notes_status == "present",

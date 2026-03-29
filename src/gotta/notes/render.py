@@ -9,6 +9,7 @@ from gotta.actor import (
     supervisor_stop_message,
     supervisor_stop_pending,
 )
+from gotta.session.status.payload.model import ActorStatusPayload
 
 from .file import (
     ACTOR_NOTES_LOG_NAME,
@@ -17,7 +18,7 @@ from .file import (
 )
 
 
-def _artifact_count(status_payload: dict[str, object]) -> int:
+def _artifact_count(status_payload: ActorStatusPayload) -> int:
     try:
         return int(str(status_payload.get("artifact_count") or 0))
     except ValueError:
@@ -29,7 +30,7 @@ def actor_notes_payload(
     actor_name: str,
     *,
     label: str,
-    status_payload: dict[str, object],
+    status_payload: ActorStatusPayload,
 ) -> dict[str, object]:
     records = sorted(
         visible_actor_notes_records(work_dir, actor_name),
@@ -52,8 +53,9 @@ def render_actor_notes_markdown(
     actor_name: str,
     *,
     label: str,
-    status_payload: dict[str, object],
+    status_payload: ActorStatusPayload,
 ) -> str:
+    status_record = dict(status_payload)
     lines = [
         f"# {label} Notes",
         "",
@@ -65,11 +67,11 @@ def render_actor_notes_markdown(
         "> Use notes for alive, first-anchor, evidence-wave, and signoff narration. `gotta logs` remains procedural/system trace.",
         "",
     ]
-    if supervisor_stop_pending(status_payload):
+    if supervisor_stop_pending(status_record):
         lines.extend(
             [
                 "> [!WARNING]",
-                f"> {supervisor_stop_message(actor_name, status_payload=status_payload)}",
+                f"> {supervisor_stop_message(actor_name, status_payload=status_record)}",
                 "",
             ]
         )
@@ -86,7 +88,7 @@ def render_actor_notes_markdown(
     if status_payload.get("requested_pending"):
         requested_status = str(
             status_payload.get("requested_label")
-            or requested_disposition_label(status_payload)
+            or requested_disposition_label(status_record)
         ).strip()
         requested_summary = str(status_payload.get("requested_summary") or "").strip()
         detail = (
@@ -96,13 +98,13 @@ def render_actor_notes_markdown(
         )
         lines.append(f"- pending_disposition: {detail}")
     if status_payload.get("evidence_note"):
-        lines.append(f"- evidence: {status_payload['evidence_note']}")
+        lines.append(f"- evidence: {status_payload.get('evidence_note')}")
     if status_payload.get("signoff_summary"):
-        lines.append(f"- signoff: {status_payload['signoff_summary']}")
+        lines.append(f"- signoff: {status_payload.get('signoff_summary')}")
     elif status_payload.get("summary"):
-        lines.append(f"- summary: {status_payload['summary']}")
+        lines.append(f"- summary: {status_payload.get('summary')}")
     if status_payload.get("next_step"):
-        lines.append(f"- next_step: {status_payload['next_step']}")
+        lines.append(f"- next_step: {status_payload.get('next_step')}")
     lines.extend(["", "## Entries", ""])
     records = sorted(
         visible_actor_notes_records(work_dir, actor_name),

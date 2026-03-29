@@ -12,6 +12,7 @@ import sys
 import threading
 from textwrap import dedent
 from typing import TextIO
+from collections.abc import Mapping
 
 from gotta.compat import UTC, datetime
 from gotta.actors import ACTOR_SPEAKER_ENV, resolve_actor_context
@@ -49,6 +50,7 @@ from gotta.session.registry import (
 from gotta.session.status.bind import _bind_actor
 from gotta.session.status.blocker import _actor_launch_blockers
 from gotta.session.status.payload.main import _actor_status_payload
+from gotta.session.status.payload.model import ActorStatusPayload
 from gotta.session.status.todo import _sync_actor_todo_state
 
 
@@ -465,7 +467,7 @@ def _record_runtime_issue(
         )
 
 
-def _live_runtime_pid(current: dict[str, object]) -> int:
+def _live_runtime_pid(current: Mapping[str, object]) -> int:
     try:
         pid = int(str(current.get("pid") or 0))
     except ValueError:
@@ -793,12 +795,12 @@ def _status_actors(
     return [resolved]
 
 
-def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
+def _render_status_text(payload: dict[str, ActorStatusPayload]) -> None:
     for actor_name, state in payload.items():
         line = (
-            f"{actor_name}: {state['status']} "
+            f"{actor_name}: {state.get('status', 'pending')} "
             f"(voice: {state.get('voice', 'missing')}, progress: {state.get('progress_kind', 'none')}, "
-            f"notes: {state['notes_status']}, artifacts: {state['artifact_count']})"
+            f"notes: {state.get('notes_status', 'empty')}, artifacts: {state.get('artifact_count', 0)})"
         )
         if state.get("still_running"):
             line += " [still running]"
@@ -855,10 +857,10 @@ def _render_status_text(payload: dict[str, dict[str, object]]) -> None:
             )
         if state.get("requested_pending"):
             print(
-                f"  pending_disposition: {state.get('requested_label') or state['requested_status']}"
+                f"  pending_disposition: {state.get('requested_label') or state.get('requested_status', '')}"
             )
         if state.get("next_step"):
-            print(f"  next_step: {state['next_step']}")
+            print(f"  next_step: {state.get('next_step')}")
 
 
 def _sync_actor_outputs(
@@ -959,7 +961,7 @@ def _write_terminal_disposition(
     return 0
 
 
-def _runtime_closeout_note(current: dict[str, object]) -> bool:
+def _runtime_closeout_note(current: Mapping[str, object]) -> bool:
     status = str(current.get("status") or "").strip()
     return bool(current.get("runtime_live")) or status in LIVE_STATUSES
 
@@ -1110,7 +1112,7 @@ def _cmd_stop(args: argparse.Namespace, work_root: Path, actor_name: str) -> int
     )
 
 
-def _settled_status(current: dict[str, object]) -> str:
+def _settled_status(current: Mapping[str, object]) -> str:
     requested_status = str(current.get("requested_status") or "").strip()
     if requested_status:
         return requested_status
@@ -1122,7 +1124,7 @@ def _settled_status(current: dict[str, object]) -> str:
     return "incomplete"
 
 
-def _live_actor_settle_override(current: dict[str, object]) -> bool:
+def _live_actor_settle_override(current: Mapping[str, object]) -> bool:
     return (
         bool(current.get("runtime_live"))
         and str(current.get("status") or "").strip() == "stalled"
@@ -1218,7 +1220,8 @@ def _cmd_launch(work_root: Path, actor_name: str) -> int:
     current = _actor_status_payload(work_root, actor_name)
     if _runtime_closeout_note(current):
         raise SystemExit(
-            f"{actor_name} is already {current['status']}; inspect with `gotta actor status {actor_name}`"
+            f"{actor_name} is already {current.get('status', 'pending')}; "
+            f"inspect with `gotta actor status {actor_name}`"
         )
     goal_path = work_root / "GOAL.md"
     if not goal_path.is_file():

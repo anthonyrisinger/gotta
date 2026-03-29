@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from .model import ActorStatusPayload
 
-def pending_next_step(actor_name: str, payload: dict[str, object]) -> str:
+
+def pending_next_step(actor_name: str, payload: ActorStatusPayload) -> str:
     derived_status = str(payload.get("status") or "")
     notes_ready = bool(payload.get("notes_ready"))
     evidence_live = bool(payload.get("evidence_live"))

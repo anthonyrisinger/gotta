@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import TypedDict
 
 from gotta.content.context import current_context_binding
 from gotta.content.env import SESSION_CREATED_ENV, load_state_env_at_root
@@ -13,47 +12,17 @@ from gotta.content.model import ResolvedDirs
 from gotta.content.scope import session_is_initialized, shared_session_root
 from gotta import topology
 
+from .model import (
+    DoctorChecks,
+    DoctorPayload,
+    DoctorRuntimePayload,
+    DoctorSessionPayload,
+)
 from .parse import require_started_session, session_dirs_for_read, session_scope_started
 from .show import show_payload
 
 
-class DoctorRuntimePayload(TypedDict):
-    present: bool
-    contextId: str
-    contextSource: str
-    bindingId: str
-
-
-class DoctorSessionPayload(TypedDict):
-    sessionId: str
-    actor: str
-    sessionRoot: str
-    contentRoot: str
-    initialized: bool
-    repo: str
-    createdAt: str
-
-
-class DoctorCheck(TypedDict):
-    status: str
-    detail: str
-
-
-class DoctorChecks(TypedDict):
-    runtimeContextPresent: DoctorCheck
-    durableBindingsPresent: DoctorCheck
-    runtimeBindingMatchesTarget: DoctorCheck
-    sessionTopologyConsistent: DoctorCheck
-
-
-class DoctorPayload(TypedDict):
-    runtime: DoctorRuntimePayload
-    session: DoctorSessionPayload
-    bindings: list[dict[str, object]]
-    checks: DoctorChecks
-
-
-def _binding_detail(record: dict[str, object]) -> str:
+def _binding_detail(record: topology.BindingRecord) -> str:
     context_id = str(record.get("contextId") or "").strip() or "unknown"
     context_source = str(record.get("contextSource") or "").strip() or "unknown"
     session_root = str(record.get("sessionRoot") or "").strip() or "unknown"

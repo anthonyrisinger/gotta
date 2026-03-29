@@ -6,6 +6,8 @@ import time
 
 from gotta.compat import datetime
 
+from .model import LifecycleEntry
+
 
 ACTOR_RUNNING_STATUS = {
     "starting",
@@ -32,10 +34,20 @@ def int_value(value: object, *, default: int = 0) -> int:
         return default
 
 
-def lifecycle_entries(value: object) -> list[dict[str, object]]:
+def lifecycle_entries(value: object) -> list[LifecycleEntry]:
     if not isinstance(value, list):
         return []
-    return [dict(item) for item in value if isinstance(item, dict)]
+    return [
+        {
+            "timestamp": str(item.get("timestamp") or ""),
+            "event": str(item.get("event") or ""),
+            "author": str(item.get("author") or ""),
+            "detail": str(item.get("detail") or ""),
+            "summary": str(item.get("summary") or ""),
+        }
+        for item in value
+        if isinstance(item, dict)
+    ]
 
 
 def iso_age_seconds(value: object) -> float | None:

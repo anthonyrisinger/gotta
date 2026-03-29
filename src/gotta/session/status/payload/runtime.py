@@ -11,6 +11,7 @@ from gotta.session.status.payload.value import (
     int_value,
     iso_age_seconds,
 )
+from .model import ActorStatusPayload, RuntimeSignalPayload, RuntimeStatePayload
 
 
 def runtime_state_payload(
@@ -18,7 +19,7 @@ def runtime_state_payload(
     *,
     status: str,
     requested_status: str,
-) -> dict[str, object]:
+) -> RuntimeStatePayload:
     heartbeat_at = str(state.get("heartbeat_at") or "")
     started_at = str(state.get("started_at") or "")
     derived_status = status
@@ -107,7 +108,7 @@ def runtime_signal_payload(
     progress_kind: str,
     progress_stale: bool,
     evidence_live: bool,
-) -> dict[str, object]:
+) -> RuntimeSignalPayload:
     stdout_age_seconds = iso_age_seconds(runtime_stdout_at)
     stderr_age_seconds = iso_age_seconds(runtime_stderr_at)
     stdout_quiet = (
@@ -138,7 +139,7 @@ def runtime_signal_payload(
     }
 
 
-def runtime_next_step(actor_name: str, payload: dict[str, object]) -> str:
+def runtime_next_step(actor_name: str, payload: ActorStatusPayload) -> str:
     requested_status = str(payload.get("requested_status") or "")
     requested_label = str(payload.get("requested_label") or "")
     evidence_live = bool(payload.get("evidence_live"))
@@ -196,7 +197,7 @@ def runtime_next_step(actor_name: str, payload: dict[str, object]) -> str:
     return ""
 
 
-def low_signal_next_step(payload: dict[str, object]) -> str:
+def low_signal_next_step(payload: ActorStatusPayload) -> str:
     if not bool(payload.get("low_signal_progress")):
         return ""
     request_note = str(payload.get("request_note") or "")

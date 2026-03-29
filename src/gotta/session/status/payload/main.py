@@ -22,9 +22,13 @@ from gotta.session.status.payload.runtime import (
     runtime_state_payload,
 )
 from gotta.session.status.payload.step import actor_next_step
+from gotta.session.status.payload.model import (
+    ActorStatusPayload,
+    ProgressSummary,
+)
 
 
-def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
+def _actor_status_payload(work_dir: Path, actor_name: str) -> ActorStatusPayload:
     actor_name = _resolve_bound_actor_name(work_dir, actor_name)
     state = _read_actor_state(work_dir, actor_name)
     status = str(state.get("status") or "pending")
@@ -51,7 +55,7 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         actor_name=actor_name,
         derived_status=derived_status,
     )
-    progress = cast(dict[str, object], activity["progress"])
+    progress = cast(ProgressSummary, activity["progress"])
     runtime_signal = runtime_signal_payload(
         runtime_live=cast(bool | None, runtime["runtime_live"]),
         started_age_seconds=cast(float | None, runtime["started_age_seconds"]),
@@ -64,75 +68,82 @@ def _actor_status_payload(work_dir: Path, actor_name: str) -> dict[str, object]:
         progress_stale=bool(progress.get("progress_stale")),
         evidence_live=evidence_live,
     )
-    note_summary = cast(dict[str, object], activity["note_summary"])
-    note_check_summary = cast(dict[str, object], activity["note_check_summary"])
-    evidence = cast(dict[str, object], activity["evidence"])
-    recent_activity = cast(dict[str, object], activity["recent_activity"])
+    note_summary = activity["note_summary"]
+    note_check_summary = activity["note_check_summary"]
+    evidence = activity["evidence"]
+    recent_activity = activity["recent_activity"]
 
-    draft = {
-        **state,
-        **request,
-        **runtime,
-        **runtime_signal,
-        **note_summary,
-        **note_check_summary,
-        **progress,
-        **recent_activity,
-        **evidence,
-        "status": derived_status,
-        "notes_status": activity["notes_status"],
-        "notes_ready": activity["notes_ready"],
-        "voice": activity["voice"],
-        "evidence_live": evidence_live,
-        "evidence_note": activity["evidence_note"],
-        "request_note": request["request_note"],
-        "runtime_note": runtime["runtime_note"],
-        "needs_note_refresh": bool(
-            evidence_live
-            and str(evidence.get("last_artifact_at") or "")
-            and (
-                not str(note_summary.get("last_note_at") or "")
-                or str(evidence.get("last_artifact_at") or "")
-                > str(note_summary.get("last_note_at") or "")
-            )
-        ),
-    }
+    draft = cast(
+        ActorStatusPayload,
+        {
+            **state,
+            **request,
+            **runtime,
+            **runtime_signal,
+            **note_summary,
+            **note_check_summary,
+            **progress,
+            **recent_activity,
+            **evidence,
+            "status": derived_status,
+            "notes_status": activity["notes_status"],
+            "notes_ready": activity["notes_ready"],
+            "voice": activity["voice"],
+            "evidence_live": evidence_live,
+            "evidence_note": activity["evidence_note"],
+            "request_note": request["request_note"],
+            "runtime_note": runtime["runtime_note"],
+            "needs_note_refresh": bool(
+                evidence_live
+                and str(evidence.get("last_artifact_at") or "")
+                and (
+                    not str(note_summary.get("last_note_at") or "")
+                    or str(evidence.get("last_artifact_at") or "")
+                    > str(note_summary.get("last_note_at") or "")
+                )
+            ),
+        },
+    )
     next_step = actor_next_step(actor_name, draft)
-    return {
-        **state,
-        "label": _actor_label(actor_name, work_dir=work_dir),
-        "status": derived_status,
-        "state_path": str(_actor_state_path(work_dir, actor_name)),
-        "events_path": str(_actor_events_path(work_dir, actor_name)),
-        "actor_dir": str(activity["actor_dir"]),
-        "notes_status": activity["notes_status"],
-        "notes_ready": activity["notes_ready"],
-        "voice": activity["voice"],
-        "evidence_live": evidence_live,
-        "evidence_note": activity["evidence_note"],
-        "requested_status": request["requested_status"],
-        "requested_summary": request["requested_summary"],
-        "requested_label": request["requested_label"],
-        "requested_pending": request["requested_pending"],
-        "still_running": bool(
-            derived_status in {"starting", "active", "closing", "producing_evidence"}
-            and not runtime["heartbeat_stale"]
-        ),
-        "runtime_live": runtime["runtime_live"],
-        "runtime_issue_kind": runtime["runtime_issue_kind"],
-        "runtime_issue_summary": runtime["runtime_issue_summary"],
-        "runtime_issue_count": runtime["runtime_issue_count"],
-        "runtime_broken": runtime_signal["runtime_broken"],
-        "runtime_stop_signal": runtime["runtime_stop_signal"],
-        "runtime_stop_signal_at": runtime["runtime_stop_signal_at"],
-        "review_ready": bool(
-            derived_status in {"completed", "signed_off"}
-            and (bool(activity["notes_ready"]) or evidence_live)
-        ),
-        "next_step": next_step,
-        **note_summary,
-        **note_check_summary,
-        **progress,
-        **recent_activity,
-        **evidence,
-    }
+    return cast(
+        ActorStatusPayload,
+        {
+            **state,
+            "label": _actor_label(actor_name, work_dir=work_dir),
+            "status": derived_status,
+            "state_path": str(_actor_state_path(work_dir, actor_name)),
+            "events_path": str(_actor_events_path(work_dir, actor_name)),
+            "actor_dir": str(activity["actor_dir"]),
+            "notes_status": activity["notes_status"],
+            "notes_ready": activity["notes_ready"],
+            "voice": activity["voice"],
+            "evidence_live": evidence_live,
+            "evidence_note": activity["evidence_note"],
+            "requested_status": request["requested_status"],
+            "requested_summary": request["requested_summary"],
+            "requested_label": request["requested_label"],
+            "requested_pending": request["requested_pending"],
+            "still_running": bool(
+                derived_status
+                in {"starting", "active", "closing", "producing_evidence"}
+                and not runtime["heartbeat_stale"]
+            ),
+            "runtime_live": runtime["runtime_live"],
+            "runtime_issue_kind": runtime["runtime_issue_kind"],
+            "runtime_issue_summary": runtime["runtime_issue_summary"],
+            "runtime_issue_count": runtime["runtime_issue_count"],
+            "runtime_broken": runtime_signal["runtime_broken"],
+            "runtime_stop_signal": runtime["runtime_stop_signal"],
+            "runtime_stop_signal_at": runtime["runtime_stop_signal_at"],
+            "review_ready": bool(
+                derived_status in {"completed", "signed_off"}
+                and (bool(activity["notes_ready"]) or evidence_live)
+            ),
+            "next_step": next_step,
+            **note_summary,
+            **note_check_summary,
+            **progress,
+            **recent_activity,
+            **evidence,
+        },
+    )
