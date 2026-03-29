@@ -20,8 +20,6 @@ from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 from gotta.cli.notice import die
 
 _GLOBAL_FLAGS = {"--quiet", "--full-output"}
-available_plugins = available_surfaces
-run_plugin = run_surface
 
 
 def normalize_help_aliases(argv: list[str]) -> list[str]:
@@ -112,16 +110,16 @@ def _gotta_main(argv: list[str]) -> int:
         print("Use `gotta <surface> --help-all` for recursive help within one surface.")
         print("")
         print("available top-level surfaces:")
-        for surface in available_plugins():
+        for surface in available_surfaces():
             print(f"  - {surface}")
-        for surface in available_plugins():
+        for surface in available_surfaces():
             print("")
             print(f"## gotta {surface}")
             print("")
             buffer = io.StringIO()
             try:
                 with redirect_stdout(buffer), redirect_stderr(buffer):
-                    result = run_plugin(surface, ["--help"])
+                    result = run_surface(surface, ["--help"])
             except SystemExit as exc:
                 result = system_exit_status(exc, emit=False)
             if result != 0:
@@ -141,10 +139,10 @@ def _gotta_main(argv: list[str]) -> int:
     if invocation is None:
         return print_usage()
     surface, surface_argv = invocation
-    if surface not in available_plugins():
-        surfaces = ", ".join(available_plugins())
+    if surface not in available_surfaces():
+        surfaces = ", ".join(available_surfaces())
         return die(f"unknown gotta surface: {surface}. available surfaces: {surfaces}")
-    return run_plugin(surface, surface_argv)
+    return run_surface(surface, surface_argv)
 
 
 def _explicit_session_arg(argv: list[str]) -> str | None:

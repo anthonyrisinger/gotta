@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gotta.builtin import get_plugin
+from gotta.builtin import get_surface
 from gotta.content.model import CommonOptions
 
 
@@ -35,18 +35,18 @@ def _output_extension(argv: list[str]) -> str:
 
 
 def preferred_name(plugin: str, argv: list[str], options: CommonOptions) -> str:
-    spec = get_plugin(plugin)
-    if spec and spec.preferred_name is not None:
-        return spec.preferred_name(argv, options)
+    surface = get_surface(plugin)
+    if surface and surface.preferred_name is not None:
+        return surface.preferred_name(argv, options)
     if options.save_as:
         return options.save_as
     return f"{plugin}.{_output_extension(argv)}"
 
 
 def infer_content_type(plugin: str, argv: list[str], name: str) -> str:
-    spec = get_plugin(plugin)
-    if spec and spec.content_type is not None:
-        return spec.content_type(argv, name)
+    surface = get_surface(plugin)
+    if surface and surface.content_type is not None:
+        return surface.content_type(argv, name)
     extension = Path(name).suffix.lower()
     if extension == ".html":
         return "text/html"

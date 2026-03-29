@@ -17,10 +17,10 @@ from html import unescape
 import urllib.error
 import urllib.request
 
-from gotta.builtin import get_plugin
+from gotta.builtin import get_surface
 from gotta.capture import Capture
 from gotta.content.model import CommonOptions
-from gotta.dispatch.main import run_plugin
+from gotta.dispatch.main import run_surface
 from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
 from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
@@ -273,7 +273,7 @@ def delegate(plugin: str, argv: list[str]) -> int:
     os.environ[SUPPRESS_MATERIALIZATION_ENV] = "1"
     os.environ[SUPPRESS_RECEIPTS_ENV] = "1"
     try:
-        return run_plugin(plugin, argv)
+        return run_surface(plugin, argv)
     finally:
         if previous is None:
             os.environ.pop(SUPPRESS_MATERIALIZATION_ENV, None)
@@ -432,10 +432,10 @@ def _project_canonical(capture: Capture) -> Projection:
 def _display_projection(capture: Capture) -> Projection:
     stored_projector = str(capture.metadata.get("projector") or "").strip()
     if stored_projector:
-        spec = get_plugin(stored_projector)
-        if spec and spec.project is not None:
+        surface = get_surface(stored_projector)
+        if surface and surface.project is not None:
             try:
-                return spec.project([], capture)
+                return surface.project([], capture)
             except RuntimeError:
                 pass
     return _project_canonical(capture)
@@ -455,9 +455,9 @@ def capture(argv: list[str], options: object) -> Capture:
         resolved = resolve_read_target(argv)
     if resolved.kind == "routed":
         assert resolved.routed_plugin is not None
-        spec = get_plugin(resolved.routed_plugin)
-        if spec and spec.capture is not None:
-            return spec.capture(resolved.routed_argv, options)
+        surface = get_surface(resolved.routed_plugin)
+        if surface and surface.capture is not None:
+            return surface.capture(resolved.routed_argv, options)
         with capture_stdout() as captured:
             code = delegate(resolved.routed_plugin, resolved.routed_argv)
         if code != 0:
@@ -493,9 +493,9 @@ def project(argv: list[str], capture: Capture) -> Projection:
         resolved = resolve_read_target(argv)
     if resolved.kind == "routed":
         assert resolved.routed_plugin is not None
-        spec = get_plugin(resolved.routed_plugin)
-        if spec and spec.project is not None:
-            projected = spec.project(resolved.routed_argv, capture)
+        surface = get_surface(resolved.routed_plugin)
+        if surface and surface.project is not None:
+            projected = surface.project(resolved.routed_argv, capture)
         else:
             projected = projection_for_capture(capture, capture.data)
     else:

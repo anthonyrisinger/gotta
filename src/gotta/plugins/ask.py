@@ -23,10 +23,6 @@ def ask_binding(name: str):
     return get_binding(name, group=ASK_BINDING_GROUP)
 
 
-def ask_spec(name: str):
-    return ask_binding(name)
-
-
 def print_usage() -> int:
     print("usage: gotta ask <surface> [args...]")
     print("")
@@ -43,7 +39,7 @@ def print_usage() -> int:
         )
         return 0
     for surface in surfaces:
-        binding = ask_spec(surface)
+        binding = ask_binding(surface)
         description = binding.description if binding else ""
         if description:
             print(f"  - {surface:<10} {description}")
@@ -57,7 +53,7 @@ def should_materialize(argv: list[str]) -> bool:
         arg in {"-h", "--help", "--help-all", "help-all"} for arg in argv
     ):
         return False
-    binding = ask_spec(argv[0])
+    binding = ask_binding(argv[0])
     if binding and binding.should_materialize is not None:
         return bool(binding.should_materialize(argv[1:]))
     return True
@@ -67,7 +63,7 @@ def invocation_locator(argv: list[str]) -> str:
     if not argv:
         return "ask"
     surface = argv[0]
-    binding = ask_spec(surface)
+    binding = ask_binding(surface)
     if binding and binding.invocation_locator is not None:
         detail = binding.invocation_locator(argv[1:])
         if not detail or detail == surface:
@@ -82,7 +78,7 @@ def canonical_locator(argv: list[str]) -> str:
     if not argv:
         return "ask"
     surface = argv[0]
-    binding = ask_spec(surface)
+    binding = ask_binding(surface)
     if binding and binding.canonical_locator is not None:
         return binding.canonical_locator(argv[1:])
     if len(argv) == 1:
@@ -93,7 +89,7 @@ def canonical_locator(argv: list[str]) -> str:
 def preferred_name(argv: list[str], options: Any) -> str:
     if not argv:
         return options.save_as or "ask.txt"
-    binding = ask_spec(argv[0])
+    binding = ask_binding(argv[0])
     if binding and binding.preferred_name is not None:
         return binding.preferred_name(argv[1:], options)
     return options.save_as or f"{argv[0]}.txt"
@@ -102,7 +98,7 @@ def preferred_name(argv: list[str], options: Any) -> str:
 def content_type(argv: list[str], name: str) -> str:
     if not argv:
         return "text/plain"
-    binding = ask_spec(argv[0])
+    binding = ask_binding(argv[0])
     if binding and binding.content_type is not None:
         return binding.content_type(argv[1:], name)
     return "text/plain"
@@ -127,14 +123,14 @@ def main(argv: list[str]) -> int:
             )
             return 0
         for surface in surfaces:
-            binding = ask_spec(surface)
+            binding = ask_binding(surface)
             description = binding.description if binding else ""
             if description:
                 print(f"  - {surface:<10} {description}")
             else:
                 print(f"  - {surface}")
         for surface in surfaces:
-            binding = ask_spec(surface)
+            binding = ask_binding(surface)
             if binding is None:
                 continue
             print("")
@@ -153,7 +149,7 @@ def main(argv: list[str]) -> int:
         argv = [argv[1], "--help", *argv[2:]]
 
     surface = argv[0]
-    binding = ask_spec(surface)
+    binding = ask_binding(surface)
     if binding is None:
         available = available_asks()
         if not available:

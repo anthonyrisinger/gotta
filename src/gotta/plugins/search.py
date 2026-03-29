@@ -7,7 +7,7 @@ import os
 import signal
 import sys
 
-from gotta.dispatch.main import load_plugin_runner
+from gotta.dispatch.main import load_surface_runner
 from gotta.dispatch.receipt import SUPPRESS_RECEIPTS_ENV
 from gotta.dispatch.runtime import system_exit_status
 from gotta.helptext import is_long_help_request
@@ -57,11 +57,11 @@ def preferred_name(argv: list[str], options: object) -> str:
     if not argv or any(token in {"-h", "--help", "--help-all"} for token in argv):
         return "search.txt"
     route = resolve_search_route(argv)
-    from gotta.builtin import get_plugin
+    from gotta.builtin import get_surface
 
-    spec = get_plugin(route.provider)
-    if spec and spec.preferred_name is not None:
-        return spec.preferred_name(route.provider_argv, options)
+    surface = get_surface(route.provider)
+    if surface and surface.preferred_name is not None:
+        return surface.preferred_name(route.provider_argv, options)
     return f"{route.provider}-search.md"
 
 
@@ -69,28 +69,28 @@ def content_type(argv: list[str], name: str) -> str:
     if not argv or any(token in {"-h", "--help", "--help-all"} for token in argv):
         return "text/plain"
     route = resolve_search_route(argv)
-    from gotta.builtin import get_plugin
+    from gotta.builtin import get_surface
 
-    spec = get_plugin(route.provider)
-    if spec and spec.content_type is not None:
-        return spec.content_type(route.provider_argv, name)
+    surface = get_surface(route.provider)
+    if surface and surface.content_type is not None:
+        return surface.content_type(route.provider_argv, name)
     return "text/markdown"
 
 
 def capture(argv: list[str], options: object):
     route = resolve_search_route(argv)
-    from gotta.builtin import get_plugin
+    from gotta.builtin import get_surface
     from gotta.capture import Capture
     from gotta.dispatch.stream import capture_stdout
 
-    spec = get_plugin(route.provider)
-    if spec and spec.capture is not None:
-        return spec.capture(route.provider_argv, options)
+    surface = get_surface(route.provider)
+    if surface and surface.capture is not None:
+        return surface.capture(route.provider_argv, options)
     previous = os.environ.get(SUPPRESS_RECEIPTS_ENV)
     os.environ[SUPPRESS_RECEIPTS_ENV] = "1"
     try:
         with capture_stdout() as captured:
-            code = load_plugin_runner(route.provider)(route.provider_argv)
+            code = load_surface_runner(route.provider)(route.provider_argv)
     finally:
         if previous is None:
             os.environ.pop(SUPPRESS_RECEIPTS_ENV, None)
@@ -104,12 +104,12 @@ def capture(argv: list[str], options: object):
 
 def project(argv: list[str], capture):
     route = resolve_search_route(argv)
-    from gotta.builtin import get_plugin
+    from gotta.builtin import get_surface
     from gotta.projection import projection_for_capture
 
-    spec = get_plugin(route.provider)
-    if spec and spec.project is not None:
-        return spec.project(route.provider_argv, capture)
+    surface = get_surface(route.provider)
+    if surface and surface.project is not None:
+        return surface.project(route.provider_argv, capture)
     return projection_for_capture(capture, capture.data)
 
 
@@ -127,7 +127,7 @@ def main(argv: list[str]) -> int:
     previous = os.environ.get(SUPPRESS_RECEIPTS_ENV)
     os.environ[SUPPRESS_RECEIPTS_ENV] = "1"
     try:
-        runner = load_plugin_runner(route.provider)
+        runner = load_surface_runner(route.provider)
         try:
             return int(runner(route.provider_argv))
         except SystemExit as exc:

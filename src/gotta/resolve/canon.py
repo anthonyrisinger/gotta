@@ -5,14 +5,14 @@ from __future__ import annotations
 import re
 import urllib.parse
 
-from gotta.builtin import get_plugin
+from gotta.builtin import get_surface
 from gotta.providers import atlassian as atl
 
 
 def invocation_locator(plugin: str, argv: list[str]) -> str:
-    spec = get_plugin(plugin)
-    if spec and spec.invocation_locator is not None:
-        return spec.invocation_locator(argv)
+    surface = get_surface(plugin)
+    if surface and surface.invocation_locator is not None:
+        return surface.invocation_locator(argv)
     if not argv:
         return plugin
     return " ".join(argv)
@@ -82,9 +82,9 @@ def _canonicalize_gsheets_ref(value: str) -> str:
 
 
 def canonical_locator(plugin: str, argv: list[str]) -> str:
-    spec = get_plugin(plugin)
-    if spec and spec.canonical_locator is not None:
-        return spec.canonical_locator(argv)
+    surface = get_surface(plugin)
+    if surface and surface.canonical_locator is not None:
+        return surface.canonical_locator(argv)
     tokens = [arg for arg in argv if not arg.startswith("-")]
     if not tokens:
         return plugin

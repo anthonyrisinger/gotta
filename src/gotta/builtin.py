@@ -39,8 +39,6 @@ CapabilityName = Literal[
 
 DEFAULT_BINDING_GROUP = "gotta.plugins"
 ASK_BINDING_GROUP = "gotta.ask"
-DEFAULT_PLUGIN_GROUP = DEFAULT_BINDING_GROUP
-ASK_PLUGIN_GROUP = ASK_BINDING_GROUP
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,9 +83,6 @@ class SurfaceSpec:
     project: ProjectHook | None = None
     provider_bundle: ProviderBundle | None = None
     capabilities: tuple[CapabilitySpec, ...] = ()
-
-
-PluginSpec = SurfaceSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,16 +297,8 @@ def discovered_surfaces(group: str = DEFAULT_BINDING_GROUP) -> dict[str, Surface
     }
 
 
-def discovered_plugins(group: str = DEFAULT_PLUGIN_GROUP) -> dict[str, PluginSpec]:
-    return discovered_surfaces(group)
-
-
 def clear_binding_cache() -> None:
     discovered_bindings.cache_clear()
-
-
-def clear_plugin_cache() -> None:
-    clear_binding_cache()
 
 
 def get_binding(
@@ -331,20 +318,12 @@ def get_surface(
     return binding.surface if binding is not None else None
 
 
-def get_plugin(name: str, *, group: str = DEFAULT_PLUGIN_GROUP) -> PluginSpec | None:
-    return get_surface(name, group=group)
-
-
 def available_bindings(*, group: str = DEFAULT_BINDING_GROUP) -> list[str]:
     return sorted(discovered_bindings(group))
 
 
 def available_surfaces(*, group: str = DEFAULT_BINDING_GROUP) -> list[str]:
     return available_bindings(group=group)
-
-
-def available_plugins(*, group: str = DEFAULT_PLUGIN_GROUP) -> list[str]:
-    return available_surfaces(group=group)
 
 
 def iter_bindings(*, group: str = DEFAULT_BINDING_GROUP) -> list[SurfaceBinding]:
@@ -355,10 +334,6 @@ def iter_bindings(*, group: str = DEFAULT_BINDING_GROUP) -> list[SurfaceBinding]
 
 def iter_surfaces(*, group: str = DEFAULT_BINDING_GROUP) -> list[SurfaceSpec]:
     return [binding.surface for binding in iter_bindings(group=group)]
-
-
-def iter_plugins(*, group: str = DEFAULT_PLUGIN_GROUP) -> list[PluginSpec]:
-    return iter_surfaces(group=group)
 
 
 def _runner(module_name: str):

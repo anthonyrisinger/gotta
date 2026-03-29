@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gotta.builtin import PluginSpec
+from gotta.builtin import CommandPath, PackageSpec, SurfaceBinding, SurfaceSpec
 from gotta.plugins import ask
 
 
@@ -10,12 +10,17 @@ def test_ask_dispatches_to_registered_surface(monkeypatch) -> None:
     monkeypatch.setattr(ask, "available_asks", lambda: ["docs"])
     monkeypatch.setattr(
         ask,
-        "ask_spec",
+        "ask_binding",
         lambda name: (
-            PluginSpec(
+            SurfaceBinding(
                 name="docs",
-                description="demo",
-                runner=lambda argv: seen.append(argv) or 0,
+                command_path=CommandPath(("ask", "docs")),
+                package=PackageSpec("demo"),
+                surface=SurfaceSpec(
+                    name="docs",
+                    description="demo",
+                    runner=lambda argv: seen.append(argv) or 0,
+                ),
             )
             if name == "docs"
             else None
@@ -28,7 +33,7 @@ def test_ask_dispatches_to_registered_surface(monkeypatch) -> None:
 
 def test_ask_reports_unknown_surface(monkeypatch, capsys) -> None:
     monkeypatch.setattr(ask, "available_asks", lambda: ["docs", "notes"])
-    monkeypatch.setattr(ask, "ask_spec", lambda name: None)
+    monkeypatch.setattr(ask, "ask_binding", lambda name: None)
 
     assert ask.main(["unknown"]) == 2
     assert "unknown gotta ask surface: unknown" in capsys.readouterr().err

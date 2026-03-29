@@ -26,8 +26,6 @@ This file is the execution queue.
     - `SurfaceSpec`
     - `SurfaceBinding`
   - Top-level discovery is now binding- and surface-shaped.
-  - Legacy `PluginSpec` / `get_plugin()` / `available_plugins()` remain as
-    unfinished registry debt that still needs deletion.
 - [x] Adjacent command seam retarget landed.
   - `src/gotta/dispatch/main.py`
   - `src/gotta/dispatch/runtime.py`
@@ -41,6 +39,27 @@ This file is the execution queue.
   additional topology churn is still past diminishing returns.
   The work that is paying rent now is contract-first collapse, not more file
   motion.
+- [x] Plugin-shaped registry alias layer deleted.
+  - Removed `PluginSpec`, `get_plugin()`, `available_plugins()`,
+    `discovered_plugins()`, `iter_plugins()`, and the parallel plugin-named
+    dispatch aliases from the live core.
+  - Retargeted the live registry consumers to `SurfaceSpec`,
+    `SurfaceBinding`, `get_surface()`, `available_surfaces()`,
+    `load_surface_runner()`, and `run_surface()`.
+  - Retargeted the federated surfaces and stored-display path that still
+    depended on the old names:
+    - `src/gotta/resolve/name.py`
+    - `src/gotta/resolve/canon.py`
+    - `src/gotta/resolve/intent.py`
+    - `src/gotta/plugins/read.py`
+    - `src/gotta/plugins/search.py`
+    - `src/gotta/plugins/ask.py`
+    - `src/gotta/stored.py`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted a still-load-bearing false center.
+  More registry synonym cleanup of the same species would not; the next work
+  that pays rent is pushing derived views toward ledger/state contracts and
+  typing the exported payload families that still move as anonymous records.
 - [x] Logical ledger record tranche landed.
   - `src/gotta/content/model.py` now centers:
     - `ArtifactMetadata`
@@ -395,6 +414,8 @@ This file is the execution queue.
 ## Concrete Near-Term Queue
 
 - [x] Implement `SurfaceBinding` and command-path declaration in the registry.
+- [x] Delete the plugin-shaped alias layer from the registry and dispatch
+  surface.
 - [x] Introduce the first real ledger record types.
 - [x] Start extracting logical ledger operations from `content/store.py`.
 - [x] Replace filesystem-shaped exported records in `content/model.py`.

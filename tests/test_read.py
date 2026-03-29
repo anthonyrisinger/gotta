@@ -685,7 +685,7 @@ def test_execute_materializing_read_keeps_full_routed_bytes_under_bounded_view(
 
     monkeypatch.setattr(
         read,
-        "get_plugin",
+        "get_surface",
         lambda name: (
             SimpleNamespace(capture=fake_capture, project=fake_project)
             if name == "github"

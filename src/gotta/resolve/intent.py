@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Literal
 
-from gotta.builtin import get_plugin
+from gotta.builtin import get_surface
 from gotta.content.model import CommonOptions
 from gotta.resolve.read import resolve_read_target
 from gotta.resolve.search import SearchRouteError, resolve_search_route
@@ -103,9 +103,9 @@ def materialization_enabled() -> bool:
 
 
 def _generic_artifact_intent(plugin: str, argv: list[str]) -> ArtifactIntent:
-    spec = get_plugin(plugin)
-    if spec and spec.should_materialize is not None:
-        return "evidence" if bool(spec.should_materialize(argv)) else "none"
+    surface = get_surface(plugin)
+    if surface and surface.should_materialize is not None:
+        return "evidence" if bool(surface.should_materialize(argv)) else "none"
     if plugin == "session":
         return "none"
     if not argv:

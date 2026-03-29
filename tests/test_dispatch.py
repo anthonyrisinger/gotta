@@ -117,7 +117,7 @@ def test_split_common_options_strips_shared_actor_target() -> None:
 
 
 def test_search_plugin_spec_exposes_unary_should_materialize_contract() -> None:
-    spec = plugin_api.get_plugin("search")
+    spec = plugin_api.get_surface("search")
 
     assert spec is not None
     assert spec.should_materialize is not None
@@ -222,7 +222,7 @@ def test_select_text_cutoff_can_use_flex_to_finish_paragraph(monkeypatch) -> Non
     assert cutoff == 73
 
 
-def test_run_plugin_actor_launch_streams_live_without_buffered_capture(
+def test_run_surface_actor_launch_streams_live_without_buffered_capture(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     def fake_runner(_argv: list[str]) -> int:
@@ -238,14 +238,14 @@ def test_run_plugin_actor_launch_streams_live_without_buffered_capture(
     def forbidden_capture(*_args, **_kwargs):
         raise AssertionError("actor launch should bypass buffered capture")
 
-    monkeypatch.setattr(dispatch, "load_plugin_runner", lambda _plugin: fake_runner)
+    monkeypatch.setattr(dispatch, "load_surface_runner", lambda _plugin: fake_runner)
     monkeypatch.setattr(dispatch, "resolve_invocation", fake_resolve_invocation)
     monkeypatch.setattr(dispatch, "session_access_mode", lambda _plugin, _argv: "none")
     monkeypatch.setattr(dispatch, "capture_stdout", forbidden_capture)
     monkeypatch.setattr(dispatch, "capture_stderr", forbidden_capture)
 
     assert (
-        dispatch.run_plugin(
+        dispatch.run_surface(
             "actor", ["launch", "helper", "--session", str(tmp_path / "session")]
         )
         == 0
@@ -907,18 +907,18 @@ def test_external_plugin_can_shadow_builtin(monkeypatch) -> None:
         def load(self):
             return self._payload
 
-    builtin = plugin_api.PluginSpec(
+    builtin = plugin_api.SurfaceSpec(
         name="github",
         description="builtin",
         runner=lambda argv: 0,
     )
-    shadow = plugin_api.PluginSpec(
+    shadow = plugin_api.SurfaceSpec(
         name="github",
         description="shadow",
         runner=lambda argv: 0,
     )
 
-    plugin_api.clear_plugin_cache()
+    plugin_api.clear_binding_cache()
     try:
         monkeypatch.setattr(
             plugin_api,
@@ -929,11 +929,11 @@ def test_external_plugin_can_shadow_builtin(monkeypatch) -> None:
             ],
         )
 
-        discovered = plugin_api.discovered_plugins()
+        discovered = plugin_api.discovered_surfaces()
 
         assert discovered["github"].description == "shadow"
     finally:
-        plugin_api.clear_plugin_cache()
+        plugin_api.clear_binding_cache()
 
 
 def test_plugin_discovery_is_group_scoped(monkeypatch) -> None:
@@ -959,17 +959,17 @@ def test_plugin_discovery_is_group_scoped(monkeypatch) -> None:
                 EntryPoint(
                     "ask",
                     "gotta",
-                    plugin_api.PluginSpec(
+                    plugin_api.SurfaceSpec(
                         name="ask", description="", runner=lambda argv: 0
                     ),
                 )
             ]
-            if group == plugin_api.DEFAULT_PLUGIN_GROUP
+            if group == plugin_api.DEFAULT_BINDING_GROUP
             else [
                 EntryPoint(
                     "docs",
                     "gotta-plugin-ask-docs",
-                    plugin_api.PluginSpec(
+                    plugin_api.SurfaceSpec(
                         name="docs", description="", runner=lambda argv: 0
                     ),
                 )
@@ -977,33 +977,33 @@ def test_plugin_discovery_is_group_scoped(monkeypatch) -> None:
         ),
     )
 
-    plugin_api.clear_plugin_cache()
+    plugin_api.clear_binding_cache()
     try:
-        plugins = plugin_api.available_plugins()
+        plugins = plugin_api.available_surfaces()
         assert "ask" in plugins
         assert "logs" in plugins
         assert "todo" in plugins
-        assert plugin_api.available_plugins(group=plugin_api.ASK_PLUGIN_GROUP) == [
+        assert plugin_api.available_surfaces(group=plugin_api.ASK_BINDING_GROUP) == [
             "docs"
         ]
     finally:
-        plugin_api.clear_plugin_cache()
+        plugin_api.clear_binding_cache()
 
 
 def test_builtin_core_plugins_are_available_without_reinstalled_metadata() -> None:
-    plugin_api.clear_plugin_cache()
+    plugin_api.clear_binding_cache()
     try:
-        plugins = plugin_api.available_plugins()
+        plugins = plugin_api.available_surfaces()
         assert "goal" in plugins
         assert "logs" in plugins
         assert "todo" in plugins
         assert "want" in plugins
-        assert plugin_api.get_plugin("goal") is not None
-        assert plugin_api.get_plugin("logs") is not None
-        assert plugin_api.get_plugin("todo") is not None
-        assert plugin_api.get_plugin("want") is not None
+        assert plugin_api.get_surface("goal") is not None
+        assert plugin_api.get_surface("logs") is not None
+        assert plugin_api.get_surface("todo") is not None
+        assert plugin_api.get_surface("want") is not None
     finally:
-        plugin_api.clear_plugin_cache()
+        plugin_api.clear_binding_cache()
 
 
 def test_source_seeded_core_plugins_ignore_stale_core_metadata(monkeypatch) -> None:
@@ -1021,7 +1021,7 @@ def test_source_seeded_core_plugins_ignore_stale_core_metadata(monkeypatch) -> N
         def load(self):
             return self._payload
 
-    stale = plugin_api.PluginSpec(
+    stale = plugin_api.SurfaceSpec(
         name="todo",
         description="stale installed metadata",
         runner=lambda argv: 0,
@@ -1032,23 +1032,23 @@ def test_source_seeded_core_plugins_ignore_stale_core_metadata(monkeypatch) -> N
         "entry_points",
         lambda group: (
             [EntryPoint("todo", "gotta", stale)]
-            if group == plugin_api.DEFAULT_PLUGIN_GROUP
+            if group == plugin_api.DEFAULT_BINDING_GROUP
             else []
         ),
     )
 
-    plugin_api.clear_plugin_cache()
+    plugin_api.clear_binding_cache()
     try:
         assert (
-            plugin_api.get_plugin("logs").description
+            plugin_api.get_surface("logs").description
             == "inspect and mutate the canonical session procedural trace"
         )
         assert (
-            plugin_api.get_plugin("todo").description
+            plugin_api.get_surface("todo").description
             == "inspect and mutate the canonical session checklist"
         )
     finally:
-        plugin_api.clear_plugin_cache()
+        plugin_api.clear_binding_cache()
 
 
 def test_broken_external_ask_entry_points_do_not_break_help_all(
@@ -1068,15 +1068,15 @@ def test_broken_external_ask_entry_points_do_not_break_help_all(
             raise ModuleNotFoundError("No module named 'gotta.ask.docs'")
 
     def fake_entry_points(group: str):
-        if group == plugin_api.ASK_PLUGIN_GROUP:
+        if group == plugin_api.ASK_BINDING_GROUP:
             return [EntryPoint("docs", "gotta-plugin-ask-docs")]
         return []
 
     monkeypatch.setattr(plugin_api, "entry_points", fake_entry_points)
 
-    plugin_api.clear_plugin_cache()
+    plugin_api.clear_binding_cache()
     try:
-        assert plugin_api.available_plugins(group=plugin_api.ASK_PLUGIN_GROUP) == []
+        assert plugin_api.available_surfaces(group=plugin_api.ASK_BINDING_GROUP) == []
         assert cli.main(["--help-all"]) == 0
         captured = capsys.readouterr()
         output = captured.out
@@ -1086,19 +1086,19 @@ def test_broken_external_ask_entry_points_do_not_break_help_all(
         assert "warning: ignoring broken plugin entry point gotta.ask:docs" in error
         assert "ModuleNotFoundError" in error
     finally:
-        plugin_api.clear_plugin_cache()
+        plugin_api.clear_binding_cache()
 
 
 def test_cli_main_exits_zero_on_broken_pipe(monkeypatch) -> None:
     calls: list[str] = []
 
-    monkeypatch.setattr(cli_argv, "available_plugins", lambda: ["read"])
+    monkeypatch.setattr(cli_argv, "available_surfaces", lambda: ["read"])
     monkeypatch.setattr(cli_notice, "_silence_stdout", lambda: calls.append("silenced"))
 
     def raise_broken_pipe(plugin: str, argv: list[str]) -> int:
         raise BrokenPipeError()
 
-    monkeypatch.setattr(cli_argv, "run_plugin", raise_broken_pipe)
+    monkeypatch.setattr(cli_argv, "run_surface", raise_broken_pipe)
 
     assert cli.main(["read", "README.md"]) == 0
     assert calls == ["silenced"]
@@ -1191,7 +1191,7 @@ def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> No
     assert snapshots == []
 
 
-def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
+def test_run_surface_local_read_does_not_emit_stored_content_receipt(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session-root"
@@ -1208,7 +1208,7 @@ def test_run_plugin_local_read_does_not_emit_stored_content_receipt(
 
     monkeypatch.setenv(content_env.SESSION_ENV, str(dirs.session_dir))
 
-    assert dispatch.run_plugin("read", [str(sample)]) == 0
+    assert dispatch.run_surface("read", [str(sample)]) == 0
     captured = capsys.readouterr()
 
     assert captured.out == "hello\n"
@@ -1235,13 +1235,13 @@ def test_emit_budgeted_output_skips_default_budget_with_full_output_escape(
     assert captured.out == payload.decode("utf-8")
 
 
-def test_run_plugin_read_section_miss_returns_clean_error_for_local_view(
+def test_run_surface_read_section_miss_returns_clean_error_for_local_view(
     tmp_path: Path, capsys
 ) -> None:
     sample = tmp_path / "sample.md"
     sample.write_text("# Intro\n\nbody\n", encoding="utf-8")
 
-    assert dispatch.run_plugin("read", [str(sample), "--section", "Missing"]) == 1
+    assert dispatch.run_surface("read", [str(sample), "--section", "Missing"]) == 1
     captured = capsys.readouterr()
 
     assert captured.out == ""
@@ -1249,7 +1249,7 @@ def test_run_plugin_read_section_miss_returns_clean_error_for_local_view(
     assert "Traceback" not in captured.err
 
 
-def test_run_plugin_materializing_read_section_miss_returns_clean_error(
+def test_run_surface_materializing_read_section_miss_returns_clean_error(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     local_root = tmp_path / "local"
@@ -1263,7 +1263,7 @@ def test_run_plugin_materializing_read_section_miss_returns_clean_error(
     )
 
     assert (
-        dispatch.run_plugin(
+        dispatch.run_surface(
             "read",
             [
                 "https://example.com/doc.md",
@@ -1283,7 +1283,7 @@ def test_run_plugin_materializing_read_section_miss_returns_clean_error(
     assert scan_content_store(local_root / "content") == []
 
 
-def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty(
+def test_run_surface_session_scan_invalid_regex_fails_even_when_manifest_is_empty(
     tmp_path: Path, capsys
 ) -> None:
     local_root = tmp_path / "local"
@@ -1291,7 +1291,7 @@ def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty
     capsys.readouterr()
 
     assert (
-        dispatch.run_plugin(
+        dispatch.run_surface(
             "session",
             ["scan", "[", "--match", "regex", "--session", str(local_root)],
         )
@@ -1304,11 +1304,12 @@ def test_run_plugin_session_scan_invalid_regex_fails_even_when_manifest_is_empty
     assert "Traceback" not in captured.err
 
 
-def test_run_plugin_read_invalid_confluence_shortlink_returns_clean_error(
+def test_run_surface_read_invalid_confluence_shortlink_returns_clean_error(
     capsys,
 ) -> None:
     assert (
-        dispatch.run_plugin("read", ["https://example.atlassian.net/wiki/x/!!!!!"]) == 1
+        dispatch.run_surface("read", ["https://example.atlassian.net/wiki/x/!!!!!"])
+        == 1
     )
     captured = capsys.readouterr()
 
@@ -1696,7 +1697,7 @@ def test_materialize_invocation_rejects_unbound_actor_shell(
     assert not (dirs.content_dir / "manifest.jsonl").exists()
 
 
-def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
+def test_run_surface_materializes_full_bytes_for_bounded_routed_read(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     local_root = tmp_path / "local"
@@ -1718,16 +1719,16 @@ def test_run_plugin_materializes_full_bytes_for_bounded_routed_read(
 
     monkeypatch.setattr(
         read_plugin,
-        "get_plugin",
+        "get_surface",
         lambda name: (
             SimpleNamespace(capture=fake_capture, project=fake_project)
             if name == "github"
-            else plugin_api.get_plugin(name)
+            else plugin_api.get_surface(name)
         ),
     )
 
     assert (
-        dispatch.run_plugin(
+        dispatch.run_surface(
             "read",
             [
                 "https://github.com/acme/widgets",
@@ -1775,16 +1776,16 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
 
     monkeypatch.setattr(
         read_plugin,
-        "get_plugin",
+        "get_surface",
         lambda name: (
             SimpleNamespace(capture=fake_capture, project=fake_project)
             if name == "github"
-            else plugin_api.get_plugin(name)
+            else plugin_api.get_surface(name)
         ),
     )
 
     assert (
-        dispatch.run_plugin(
+        dispatch.run_surface(
             "read",
             [
                 "https://github.com/acme/widgets",
@@ -1798,7 +1799,7 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
     )
     capsys.readouterr()
     assert (
-        dispatch.run_plugin(
+        dispatch.run_surface(
             "read", ["https://github.com/acme/widgets", "--session", str(local_root)]
         )
         == 0
@@ -1828,7 +1829,7 @@ def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(
 
 
 def test_github_route_prefers_markdown_for_common_github_targets() -> None:
-    route_target = plugin_api.get_plugin("github").route_target
+    route_target = plugin_api.get_surface("github").route_target
     assert route_target is not None
 
     assert route_target("https://github.com/acme/widgets") == [
@@ -1872,19 +1873,21 @@ def test_github_route_prefers_markdown_for_common_github_targets() -> None:
 
 
 def test_canonical_locator_routes_are_followable_through_read_contract() -> None:
-    assert plugin_api.get_plugin("jira").route_target("jira:PROJ-3960") == [
+    assert plugin_api.get_surface("jira").route_target("jira:PROJ-3960") == [
         "get",
         "PROJ-3960",
     ]
-    assert plugin_api.get_plugin("jira").route_target("jira:status") == ["status"]
-    assert plugin_api.get_plugin("jira").route_target("jira:projects") == ["projects"]
-    assert plugin_api.get_plugin("granola").route_target("granola:status") == ["status"]
-    assert plugin_api.get_plugin("granola").route_target("granola:list --limit 5") == [
+    assert plugin_api.get_surface("jira").route_target("jira:status") == ["status"]
+    assert plugin_api.get_surface("jira").route_target("jira:projects") == ["projects"]
+    assert plugin_api.get_surface("granola").route_target("granola:status") == [
+        "status"
+    ]
+    assert plugin_api.get_surface("granola").route_target("granola:list --limit 5") == [
         "list",
         "--limit",
         "5",
     ]
-    assert plugin_api.get_plugin("granola").route_target(
+    assert plugin_api.get_surface("granola").route_target(
         "granola:list --sort created --order asc --offset 10 --limit 5"
     ) == [
         "list",
@@ -1897,13 +1900,13 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "--limit",
         "5",
     ]
-    assert plugin_api.get_plugin("granola").route_target(
+    assert plugin_api.get_surface("granola").route_target(
         "granola:search Architecture"
     ) == [
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("granola").route_target(
+    assert plugin_api.get_surface("granola").route_target(
         "granola:search --time-range last_30_days Architecture"
     ) == [
         "search",
@@ -1911,23 +1914,25 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "last_30_days",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("granola").route_target(
+    assert plugin_api.get_surface("granola").route_target(
         "granola:transcript 11111111-1111-1111-1111-111111111111"
     ) == ["transcript", "11111111-1111-1111-1111-111111111111"]
-    assert plugin_api.get_plugin("granola").route_target(
+    assert plugin_api.get_surface("granola").route_target(
         "granola:search-transcript --all latency"
     ) == ["search-transcript", "--all", "latency"]
-    assert plugin_api.get_plugin("granola").route_target(
+    assert plugin_api.get_surface("granola").route_target(
         "granola:11111111-1111-1111-1111-111111111111"
     ) == ["get", "11111111-1111-1111-1111-111111111111"]
-    assert plugin_api.get_plugin("granola").route_target(
+    assert plugin_api.get_surface("granola").route_target(
         "granola:get 'Weekly Review'"
     ) == [
         "get",
         "Weekly Review",
     ]
-    assert plugin_api.get_plugin("grafana").route_target("grafana:status") == ["status"]
-    assert plugin_api.get_plugin("grafana").route_target(
+    assert plugin_api.get_surface("grafana").route_target("grafana:status") == [
+        "status"
+    ]
+    assert plugin_api.get_surface("grafana").route_target(
         "grafana:datasources --limit 25 --offset 25"
     ) == [
         "datasources",
@@ -1936,23 +1941,23 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "--offset",
         "25",
     ]
-    assert plugin_api.get_plugin("grafana").route_target(
+    assert plugin_api.get_surface("grafana").route_target(
         "grafana:search Architecture"
     ) == [
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("grafana").route_target(
+    assert plugin_api.get_surface("grafana").route_target(
         "grafana:get demo-dashboard-uid"
     ) == [
         "get",
         "demo-dashboard-uid",
     ]
-    assert plugin_api.get_plugin("jira").route_target("jira:search Architecture") == [
+    assert plugin_api.get_surface("jira").route_target("jira:search Architecture") == [
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("jira").route_target(
+    assert plugin_api.get_surface("jira").route_target(
         "jira:projects --limit 25 --offset 25"
     ) == [
         "projects",
@@ -1961,19 +1966,21 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
         "--offset",
         "25",
     ]
-    assert plugin_api.get_plugin("jira").route_target("jira:sprints --project OPS") == [
+    assert plugin_api.get_surface("jira").route_target(
+        "jira:sprints --project OPS"
+    ) == [
         "sprints",
         "--project",
         "OPS",
     ]
-    assert plugin_api.get_plugin("jira").route_target(
+    assert plugin_api.get_surface("jira").route_target(
         "jira:issue-types --project OPS"
     ) == [
         "issue-types",
         "--project",
         "OPS",
     ]
-    assert plugin_api.get_plugin("jira").route_target(
+    assert plugin_api.get_surface("jira").route_target(
         "jira:fields --project OPS --type 'Service Request'"
     ) == [
         "fields",
@@ -1986,17 +1993,17 @@ def test_canonical_locator_routes_are_followable_through_read_contract() -> None
 
 def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
     assert (
-        plugin_api.get_plugin("granola").route_target(
+        plugin_api.get_surface("granola").route_target(
             "granola:search --after not-a-date latency"
         )
         is None
     )
     assert capsys.readouterr().err == ""
-    assert plugin_api.get_plugin("jira").route_target("jira:transitions OPS-42") == [
+    assert plugin_api.get_surface("jira").route_target("jira:transitions OPS-42") == [
         "transitions",
         "OPS-42",
     ]
-    assert plugin_api.get_plugin("jira").route_target(
+    assert plugin_api.get_surface("jira").route_target(
         "jira:add-to-sprint OPS-42 --current --project OPS"
     ) == [
         "add-to-sprint",
@@ -2005,47 +2012,49 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
         "--project",
         "OPS",
     ]
-    assert plugin_api.get_plugin("confluence").route_target("confluence:10101") == [
+    assert plugin_api.get_surface("confluence").route_target("confluence:10101") == [
         "get",
         "10101",
     ]
-    assert plugin_api.get_plugin("confluence").route_target(
+    assert plugin_api.get_surface("confluence").route_target(
         "confluence:search Architecture"
     ) == ["search", "Architecture"]
-    assert plugin_api.get_plugin("gdocs").route_target("gdocs:doc-123") == [
+    assert plugin_api.get_surface("gdocs").route_target("gdocs:doc-123") == [
         "get",
         "doc-123",
     ]
-    assert plugin_api.get_plugin("gdocs").route_target(
+    assert plugin_api.get_surface("gdocs").route_target(
         "https://docs.google.com/document/d/doc-123/edit#heading=h.demo"
     ) == ["get", "https://docs.google.com/document/d/doc-123/edit"]
-    assert plugin_api.get_plugin("gdocs").route_target("gdocs:search Architecture") == [
+    assert plugin_api.get_surface("gdocs").route_target(
+        "gdocs:search Architecture"
+    ) == [
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("gsheets").route_target(
+    assert plugin_api.get_surface("gsheets").route_target(
         "https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0"
     ) == [
         "get",
         "https://docs.google.com/spreadsheets/d/sheet-123/edit",
     ]
-    assert plugin_api.get_plugin("gsheets").route_target("gsheets:sheet-123") == [
+    assert plugin_api.get_surface("gsheets").route_target("gsheets:sheet-123") == [
         "get",
         "sheet-123",
     ]
-    assert plugin_api.get_plugin("gsheets").route_target(
+    assert plugin_api.get_surface("gsheets").route_target(
         "gsheets:search Architecture"
     ) == [
         "search",
         "Architecture",
     ]
     assert (
-        plugin_api.get_plugin("gdrive").route_target(
+        plugin_api.get_surface("gdrive").route_target(
             "https://docs.google.com/spreadsheets/d/sheet-123/edit#gid=0"
         )
         is None
     )
-    assert plugin_api.get_plugin("slack").route_target(
+    assert plugin_api.get_surface("slack").route_target(
         "https://example.slack.com/archives/C12345678/p1773085070240949"
         "?thread_ts=1773085070.240949#replies"
     ) == [
@@ -2053,43 +2062,45 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
         "https://example.slack.com/archives/C12345678/p1773085070240949"
         "?thread_ts=1773085070.240949",
     ]
-    assert plugin_api.get_plugin("gdrive").route_target("gdrive:file-123") == [
+    assert plugin_api.get_surface("gdrive").route_target("gdrive:file-123") == [
         "get",
         "file-123",
     ]
-    assert plugin_api.get_plugin("gdrive").route_target(
+    assert plugin_api.get_surface("gdrive").route_target(
         "gdrive:search Architecture"
     ) == [
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("slack").route_target(
+    assert plugin_api.get_surface("slack").route_target(
         "slack:thread:C12345678:1773085070240949"
     ) == ["get", "C12345678:1773085070.240949"]
-    assert plugin_api.get_plugin("slack").route_target(
+    assert plugin_api.get_surface("slack").route_target(
         "https://example.slack.com/docs/T12345678/F12345678#fragment"
     ) == ["get", "https://example.slack.com/docs/T12345678/F12345678"]
-    assert plugin_api.get_plugin("slack").route_target(
+    assert plugin_api.get_surface("slack").route_target(
         "slack:doc:T12345678:F12345678"
     ) == [
         "get",
         "slack:doc:T12345678:F12345678",
     ]
-    assert plugin_api.get_plugin("slack").route_target("slack:search Architecture") == [
+    assert plugin_api.get_surface("slack").route_target(
+        "slack:search Architecture"
+    ) == [
         "search",
         "Architecture",
     ]
-    assert plugin_api.get_plugin("slack").route_target(
+    assert plugin_api.get_surface("slack").route_target(
         "slack:search --workspace demo --source archive ABC"
     ) == ["search", "--workspace", "demo", "--source", "archive", "ABC"]
-    assert plugin_api.get_plugin("slack").route_target("slack:workspace:demo") == [
+    assert plugin_api.get_surface("slack").route_target("slack:workspace:demo") == [
         "status",
         "--workspace",
         "demo",
         "--output",
         "summary",
     ]
-    assert plugin_api.get_plugin("slack").route_target("slack:demo") == [
+    assert plugin_api.get_surface("slack").route_target("slack:demo") == [
         "status",
         "--workspace",
         "demo",

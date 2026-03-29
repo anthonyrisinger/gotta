@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-from gotta.builtin import get_plugin
+from gotta.builtin import get_surface
 from gotta.capture import Capture
 from gotta.projection import Projection, projection_bytes, projection_for_capture
 from gotta.project import html_markdown, looks_text, pretty_json
@@ -106,14 +106,14 @@ def _display_projection(capture: Capture) -> Projection:
         str(part) for part in capture.metadata.get("argv") or [] if str(part).strip()
     ]
     if stored_projector:
-        spec = get_plugin(stored_projector)
-        if spec is None or spec.project is None:
+        surface = get_surface(stored_projector)
+        if surface is None or surface.project is None:
             degradations.append(
                 f"stored projector `{stored_projector}` is unavailable; using canonical projection"
             )
         else:
             try:
-                projection = spec.project(projector_argv, capture)
+                projection = surface.project(projector_argv, capture)
                 if not degradations:
                     return projection
                 return Projection(

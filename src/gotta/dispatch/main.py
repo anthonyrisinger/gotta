@@ -52,12 +52,9 @@ from gotta.resolve.invoke import (
 
 __all__ = [
     "available_surfaces",
-    "available_plugins",
     "surface_binding",
-    "plugin_spec",
     "print_usage",
     "load_surface_runner",
-    "load_plugin_runner",
     "should_materialize",
     "invocation_locator",
     "canonical_locator",
@@ -71,7 +68,6 @@ __all__ = [
     "emit_budgeted_output",
     "require_operational_session",
     "run_surface",
-    "run_plugin",
     "_materialize_invocation",
 ]
 
@@ -85,16 +81,8 @@ def available_surfaces() -> list[str]:
     return discovered_binding_names()
 
 
-def available_plugins() -> list[str]:
-    return available_surfaces()
-
-
 def surface_binding(surface: str) -> SurfaceBinding | None:
     return get_binding(surface)
-
-
-def plugin_spec(plugin: str) -> SurfaceBinding | None:
-    return surface_binding(plugin)
 
 
 def print_usage() -> int:
@@ -135,10 +123,6 @@ def load_surface_runner(surface: str) -> Callable[[list[str]], int]:
     return binding.runner
 
 
-def load_plugin_runner(plugin: str) -> Callable[[list[str]], int]:
-    return load_surface_runner(plugin)
-
-
 def run_surface(surface: str, argv: list[str]) -> int:
     quiet, argv = strip_quiet_flag(argv)
     full_output, argv = strip_full_output_flag(argv)
@@ -167,7 +151,7 @@ def run_surface(surface: str, argv: list[str]) -> int:
             return die(str(exc))
 
     try:
-        runner = load_plugin_runner(surface)
+        runner = load_surface_runner(surface)
     except KeyError:
         surfaces = ", ".join(available_surfaces())
         return die(f"unknown gotta surface: {surface}. available surfaces: {surfaces}")
@@ -333,7 +317,3 @@ def run_surface(surface: str, argv: list[str]) -> int:
     replay_stdout(data)
     _emit_captured_stderr(stderr_data)
     return code
-
-
-def run_plugin(plugin: str, argv: list[str]) -> int:
-    return run_surface(plugin, argv)
