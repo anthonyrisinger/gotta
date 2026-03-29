@@ -20,12 +20,38 @@ This file is the execution queue.
 - [ ] Keep the logical artifact ledger authoritative.
 - [ ] Keep capture prior to projection.
 - [ ] Keep `Capture`, `Projection`, and `ArtifactKind` as first-class contracts.
+- [ ] Eradicate semantically meaningful anonymous payloads.
+- [ ] Name every persisted, exported, cross-package, and derived-view shape.
 - [ ] Keep context at write time.
 - [ ] Keep authored session state distinct from derived views.
 - [ ] Keep external graph/query systems as derived indexes only.
 - [ ] Keep `exec` explicit; no silent local-command fallback from provider work.
 - [ ] Keep `read` and `search` as first-class federated intent surfaces.
 - [ ] Keep CLI names modeled as installed `SurfaceBinding`s, not package names.
+
+## Execution Rule
+
+- [ ] Do not begin heavy provider-local or algorithmic surgery until:
+  - registry vocabulary is explicit in code
+  - ledger records exist above filesystem shape
+  - derived payload families and shared semantic aggregates in the target area
+    are named
+  - semantically meaningful anonymous shapes are gone from the shared cores you
+    plan to cut
+- [ ] Treat current architecture drift as a prerequisite queue, not background
+  cleanup.
+
+## Current Live Drifts To Eliminate First
+
+- [ ] Replace the flat `PluginSpec` registry center with explicit code-level
+  registry and binding kinds.
+- [ ] Stop exporting filesystem-shaped ledger truth from:
+  - `src/gotta/content/model.py`
+  - `src/gotta/content/store.py`
+- [ ] Remove runner/stdout fallback capture from federated `search` in
+  `src/gotta/plugins/search.py`.
+- [ ] Eliminate anonymous `dict`-shaped exported payloads in manifest, lead,
+  timeline, graph, analyze, and session-status surfaces.
 
 ## Phase 0: Freeze The Vocabulary In Code
 
@@ -91,7 +117,33 @@ This file is the execution queue.
 - [ ] Make the derived views consume logical ledger/state contracts rather than
   raw filesystem-shaped records.
 
-## Phase 2: Finish The Surface / Package Model
+## Phase 2: Type The Exported Payload Families
+
+- [ ] Type the lead kernel:
+  - `LeadMention`
+  - `LeadEdge`
+  - `LeadSourceSummary`
+  - `LeadResolution`
+- [ ] Type the derived view payload families:
+  - `GraphPayload`
+  - `TimelineEvent`
+  - `AnalyzeOverview`
+  - `LineagePayload`
+  - `SemanticPayload`
+- [ ] Replace anonymous exported manifest and session payload records with named
+  types.
+- [ ] Type the extension-boundary protocols:
+  - `RouteClaimant`
+  - `ArtifactProvider`
+  - `SearchProvider`
+  - `Projector`
+  - `Mutator`
+  - `LeadExtractor`
+  - `LeadRanker`
+- [ ] Type registry/dispatch glue only after the contracts it points to are
+  typed.
+
+## Phase 3: Finish The Surface / Package Model
 
 - [ ] Introduce vendor-family packaging as an explicit concept.
   Distinguish:
@@ -117,7 +169,7 @@ This file is the execution queue.
   - `analyze`
   - `scan`
 
-## Phase 3: Fix The Known Contract Violations
+## Phase 4: Fix The Known Contract Violations
 
 - [ ] Fix `gsheets` canonical capture so display-shaping flags affect projection
   only, not stored canonical bytes.
@@ -136,30 +188,6 @@ This file is the execution queue.
   - keep shared provider substrate
   - reduce monolithic internal surfaces
   - preserve bundle-level semantics
-
-## Phase 4: Type The Exported Payload Families
-
-- [ ] Type the lead kernel:
-  - `LeadMention`
-  - `LeadEdge`
-  - `LeadSourceSummary`
-  - `LeadResolution`
-- [ ] Type the derived view payload families:
-  - `GraphPayload`
-  - `TimelineEvent`
-  - `AnalyzeOverview`
-  - `LineagePayload`
-  - `SemanticPayload`
-- [ ] Type the extension-boundary protocols:
-  - `RouteClaimant`
-  - `ArtifactProvider`
-  - `SearchProvider`
-  - `Projector`
-  - `Mutator`
-  - `LeadExtractor`
-  - `LeadRanker`
-- [ ] Type registry/dispatch glue only after the contracts it points to are
-  typed.
 
 ## Phase 5: Derived Backend Contracts
 
@@ -199,7 +227,7 @@ This file is the execution queue.
   - leads
   - analyze
 
-## Phase 7: Algorithmic Hardening Inside Settled Boundaries
+## Phase 7: Algorithmic Hardening Inside Settled, Typed Boundaries
 
 - [ ] Reduce algorithmic density in the `session analyze` kernels:
   - `src/gotta/plugins/session/analyze/lineage.py`
@@ -231,14 +259,18 @@ This file is the execution queue.
 - [ ] Implement `SurfaceBinding` and command-path declaration in the registry.
 - [ ] Introduce the first real ledger record types.
 - [ ] Start extracting logical ledger operations from `content/store.py`.
+- [ ] Replace filesystem-shaped exported records in `content/model.py`.
+- [ ] Type the lead kernel.
+- [ ] Type the first analyze/graph/timeline/session payload families.
+- [ ] Replace anonymous manifest and lead aggregate records with named types.
 - [ ] Fix `gsheets` capture semantics.
 - [ ] Remove federated `search` runner-capture fallback.
-- [ ] Type the lead kernel.
-- [ ] Type the first analyze/graph/timeline payload families.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 
 ## What Not To Do
 
+- [ ] Do not begin provider-local or algorithm-local surgery while shared
+  semantic record work is still pending.
 - [ ] Do not resume topology churn inside `session/analyze`.
 - [ ] Do not split files just because they are hot.
 - [ ] Do not externalize provider packages before the binding and ledger
@@ -252,6 +284,9 @@ This file is the execution queue.
   capability separately.
 - [ ] The ledger contracts exist independently of the filesystem layout.
 - [ ] Derived views read logical records, not path-shaped internals.
+- [ ] Anonymous semantically meaningful payloads are gone from exported records,
+  cross-package traffic, persisted records, major derived views, and in-package
+  semantic aggregates.
 - [ ] Provider packaging can be externalized cleanly.
 - [ ] Multi-binding installs like `gotta ask sre` are first-class.
 - [ ] Derived backend interfaces exist without becoming storage truth.

@@ -282,15 +282,31 @@ The escape hatch belongs in the system only as an explicit evidence surface.
 There is no silent fallback from provider failure to arbitrary local command
 execution.
 
-### 11. Typed Boundaries Matter More Than Typed Internals
+### 11. Anonymous Semantic Shapes Are Temporary
 
 The hardening move is:
 
 - named records at package boundaries
+- named records for persisted and operator-visible payloads
+- named records for semantically meaningful intermediate structures
 - protocols at extension boundaries
-- pragmatic locals inside packages
+- temporary adapter locals only at immediate parsing or serialization edges
 
-Anonymous `dict[str, Any]` traffic across packages is the main remaining blur.
+Anonymous `dict`, `list`, tuple, and `Any`-shaped semantic payloads are
+temporary scaffolding only.
+
+If a shape:
+
+- crosses a package boundary
+- persists to disk
+- appears in an operator-visible payload
+- survives long enough to accumulate logic
+- has a semantic name in the architecture
+
+then it must exist in code as a named type.
+
+The intended end state is not merely typed boundaries. The intended end state
+is that semantically meaningful anonymous shapes disappear from the system.
 
 ## Surface Taxonomy
 
@@ -421,13 +437,26 @@ These answer typed queries and typed results.
 
 ## Type System
 
-The type system is not “types everywhere.”
+The type system is not decorative annotation.
 
 It is:
 
-- named records at package boundaries
+- named records for persisted, exported, and cross-package data
+- named payload families for derived views
+- named semantic aggregates inside packages once they stop being throwaway
 - protocols at extension boundaries
-- pragmatic locals inside packages
+- temporary anonymous adapter locals only at immediate library edges
+
+The doctrine is strict:
+
+- exported record families must be named
+- persisted record families must be named
+- derived payload families must be named
+- semantically meaningful intermediate aggregates must converge to named types
+
+Anonymous shapes may exist only as short-lived adapters at parsing,
+serialization, or foreign-library boundaries, and must not become
+architectural truth.
 
 The record families made explicit at package boundaries are:
 
@@ -650,6 +679,22 @@ named above.
 | `SurfaceSpec` | top-level dispatch through `src/gotta/builtin.py`, `src/gotta/cli/`, and plugin runners |
 | `SurfaceBinding` | registry names, config, and entry-point names |
 | `PackageSpec` | Python distribution and entry-point packaging |
+
+## Current Live Drift
+
+The doctrine above is the target shape. The current implementation still has a
+small set of explicit drifts that must be resolved deliberately before deeper
+provider or algorithm surgery:
+
+- the registry still centers a flat `PluginSpec` shim rather than explicit
+  `SurfaceBinding`, `SurfaceSpec`, `ProviderBundle`, and `CapabilitySpec`
+  records
+- `src/gotta/content/model.py` and `src/gotta/content/store.py` still export
+  filesystem-shaped ledger truth rather than purely logical ledger records
+- federated `search` still carries runner/stdout fallback capture instead of
+  always resolving into explicit provider search/capture/project hooks
+- several derived view and session payload families still move anonymous
+  `dict`-shaped records where the architecture already assigns stable names
 
 ## `exec` Surface
 

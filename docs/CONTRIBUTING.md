@@ -136,6 +136,15 @@ Together they capture the settled judgment
 about the irreducible core, surface model, artifact ledger, session model,
 backend contracts, type-system direction, and the explicit `exec` surface.
 
+Before deep provider or algorithm work, freeze the semantic shapes. The current
+live drifts to eliminate first are:
+
+- the flat `PluginSpec` registry center in `builtin.py`
+- filesystem-shaped ledger exports in `content/model.py` and `content/store.py`
+- federated `search` fallback capture in `plugins/search.py`
+- anonymous `dict`-shaped derived payloads where the architecture already
+  assigns stable names
+
 `gotta` is a surface-oriented CLI where the core orchestrates session
 lifecycle, content materialization, and actor coordination. The live
 implementation routes many surfaces through a flat `PluginSpec` registry. The

@@ -191,10 +191,9 @@ def resolve_mode(argv: list[str]) -> Mode:
 
 
 def normalize_path(raw: str) -> str:
-    value = raw.strip()
-    if not value:
+    if raw == "":
         return ""
-    return PurePosixPath(value).as_posix()
+    return PurePosixPath(raw).as_posix()
 
 
 def parse_porcelain_z(raw: bytes) -> tuple[str, ...]:
@@ -338,14 +337,12 @@ def run_capture(command: list[str], *, cwd: Path) -> tuple[int, str]:
         command,
         cwd=cwd,
         check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         env=SUBPROCESS_ENV,
     )
-    output = proc.stdout
-    if proc.stderr:
-        output = f"{output}{proc.stderr}"
-    return proc.returncode, output
+    return proc.returncode, proc.stdout or ""
 
 
 def namespace_policy_error(repo_root: Path) -> str:
@@ -544,12 +541,16 @@ def summarize_semgrep(output: str, *, limit: int) -> str:
         payload = json.loads(output)
     except json.JSONDecodeError:
         decoder = json.JSONDecoder()
-        stripped = output.lstrip()
-        if stripped.startswith("{"):
+        for index, char in enumerate(output):
+            if char != "{":
+                continue
             try:
-                payload, _index = decoder.raw_decode(stripped)
+                candidate, _end = decoder.raw_decode(output[index:])
             except json.JSONDecodeError:
-                payload = None
+                continue
+            if isinstance(candidate, dict) and "results" in candidate:
+                payload = candidate
+                break
     if payload is None:
         return output.strip() or "no semgrep summary produced"
     counts: Counter[str] = Counter(

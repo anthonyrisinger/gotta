@@ -98,6 +98,16 @@ def test_parse_porcelain_z_handles_rename_pairs() -> None:
     assert parsed == ("scripts/study", "scripts/old_study")
 
 
+def test_parse_porcelain_z_preserves_significant_whitespace() -> None:
+    driver = _load_driver()
+
+    parsed = driver.parse_porcelain_z(
+        b" M  src/gotta/ spaced.py \x00?? tests/test_spacey name.py\x00"
+    )
+
+    assert parsed == (" src/gotta/ spaced.py ", "tests/test_spacey name.py")
+
+
 def test_select_pytest_targets_uses_clean_tree_fallback() -> None:
     driver = _load_driver()
 
@@ -242,6 +252,30 @@ def test_run_summary_prints_compact_success_line(capsys) -> None:
     assert "command:" not in output
 
 
+def test_run_capture_preserves_stream_order() -> None:
+    driver = _load_driver()
+
+    status, output = driver.run_capture(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.stdout.write('out1\\n'); "
+                "sys.stdout.flush(); "
+                "sys.stderr.write('err1\\n'); "
+                "sys.stderr.flush(); "
+                "sys.stdout.write('out2\\n'); "
+                "sys.stdout.flush()"
+            ),
+        ],
+        cwd=REPO_ROOT,
+    )
+
+    assert status == 0
+    assert output == "out1\nerr1\nout2\n"
+
+
 def test_summarize_lizard_hotspots_orders_by_ccn_then_length() -> None:
     driver = _load_driver()
 
@@ -330,6 +364,26 @@ def test_summarize_semgrep_accepts_json_with_trailing_text() -> None:
         [
             "1 findings across 1 rules",
             "   1  study.env-read",
+        ]
+    )
+
+
+def test_summarize_semgrep_accepts_json_with_leading_text() -> None:
+    driver = _load_driver()
+
+    summary = driver.summarize_semgrep(
+        (
+            "Scanning files.\n"
+            '{"results":[{"check_id":"study.env-read"},{"check_id":"study.durable-write"}]}'
+        ),
+        limit=5,
+    )
+
+    assert summary == "\n".join(
+        [
+            "2 findings across 2 rules",
+            "   1  study.env-read",
+            "   1  study.durable-write",
         ]
     )
 
