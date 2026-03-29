@@ -8,7 +8,7 @@ import os
 import sys
 from typing import Any
 
-from gotta.builtin import get_plugin
+from gotta.builtin import get_binding
 from gotta.capture import Capture
 from gotta.content.env import CONTENT_ENV, SESSION_ENV
 from gotta.content.model import CommonOptions, ContentError, ResolvedDirs
@@ -54,15 +54,15 @@ def _run_callable(func: Callable[[list[str]], int], argv: list[str]) -> int:
 
 
 def _captured_execution(
-    plugin: str,
+    surface: str,
     argv: list[str],
     options: CommonOptions,
 ) -> tuple[Capture, bytes]:
-    spec = get_plugin(plugin)
-    if spec is None or spec.capture is None or spec.project is None:
-        raise RuntimeError(f"plugin `{plugin}` does not support canonical capture")
-    capture = spec.capture(argv, options)
-    display = spec.project(argv, capture)
+    binding = get_binding(surface)
+    if binding is None or binding.capture is None or binding.project is None:
+        raise RuntimeError(f"surface `{surface}` does not support canonical capture")
+    capture = binding.capture(argv, options)
+    display = binding.project(argv, capture)
     return capture, display
 
 

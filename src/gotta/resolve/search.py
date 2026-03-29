@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import shlex
 
-from gotta.builtin import get_plugin
-from gotta.resolve.route import discover_plugin_route
+from gotta.builtin import get_binding
+from gotta.resolve.route import discover_surface_route
 
 
 SPECIALIZED_PROVIDER_COMMANDS: dict[tuple[str, str], str] = {
@@ -89,9 +89,9 @@ def _canonical_read_locator(
     *,
     fallback: str,
 ) -> str:
-    spec = get_plugin(provider)
-    if spec and spec.canonical_locator is not None:
-        locator = str(spec.canonical_locator(provider_argv) or "").strip()
+    binding = get_binding(provider)
+    if binding and binding.canonical_locator is not None:
+        locator = str(binding.canonical_locator(provider_argv) or "").strip()
         if locator:
             return locator
     return fallback
@@ -112,7 +112,7 @@ def _tail_after_first_word(text: str) -> str:
 
 
 def _discover_read_locator(provider: str, candidate: str) -> str:
-    routed = discover_plugin_route(candidate)
+    routed = discover_surface_route(candidate)
     if routed is None:
         return ""
     routed_provider, provider_argv = routed
@@ -163,10 +163,10 @@ def _canonical_read_redirect(provider: str, raw_tail: str) -> str:
 
 def resolve_search_route(argv: list[str]) -> SearchRoute:
     provider, raw_tail, target = _raw_tail(argv)
-    spec = get_plugin(provider)
+    binding = get_binding(provider)
     if (
-        spec is None
-        or spec.route_target is None
+        binding is None
+        or binding.route_target is None
         or provider in {"read", "session", "search"}
     ):
         raise SearchRouteError(

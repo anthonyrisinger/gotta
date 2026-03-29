@@ -7,7 +7,7 @@ from typing import Any
 from gotta.content.model import CommonOptions
 from gotta.resolve.model import ReadRequest, ReadTarget
 from gotta.resolve.parse import build_parser, parse_args
-from gotta.resolve.route import discover_plugin_route
+from gotta.resolve.route import discover_plugin_route, discover_surface_route
 from gotta.resolve.target import resolve_target
 
 __all__ = [
@@ -15,6 +15,7 @@ __all__ = [
     "ReadTarget",
     "build_parser",
     "parse_args",
+    "discover_surface_route",
     "discover_plugin_route",
     "resolve_read_target",
     "should_materialize",

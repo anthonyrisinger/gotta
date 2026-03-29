@@ -45,7 +45,7 @@ def _actor_id(shared_root: Path, actor_ref: str) -> str:
     return session_registry._resolve_bound_actor_name(shared_root, actor_ref)
 
 
-def test_main_rejects_unknown_plugin_without_creating_session(
+def test_main_rejects_unknown_surface_without_creating_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     _set_default_session_root(monkeypatch, tmp_path / "session")
@@ -54,7 +54,7 @@ def test_main_rejects_unknown_plugin_without_creating_session(
     assert cli.main(["nonsense"]) == 2
     captured = capsys.readouterr()
 
-    assert "unknown gotta plugin: nonsense" in captured.err
+    assert "unknown gotta surface: nonsense" in captured.err
     assert "created a new gotta session" not in captured.err
     assert not (tmp_path / "session").exists()
 
@@ -936,13 +936,13 @@ def test_main_help_and_bare_gotta_are_discoverable_without_creating_session(
 
     assert cli.main(["--help"]) == 0
     help_err = capsys.readouterr().err
-    assert "usage: gotta <plugin> [args...]" in help_err
+    assert "usage: gotta <surface> [args...]" in help_err
     assert "canonical session-binding path: `gotta ...`" in help_err
     assert not (tmp_path / "session").exists()
 
     assert cli.main([]) == 0
     bare_err = capsys.readouterr().err
-    assert "usage: gotta <plugin> [args...]" in bare_err
+    assert "usage: gotta <surface> [args...]" in bare_err
     assert not (tmp_path / "session").exists()
 
 

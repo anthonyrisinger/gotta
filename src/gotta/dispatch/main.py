@@ -1,4 +1,4 @@
-"""Dispatch orchestration for packaged gotta commands."""
+"""Dispatch orchestration for installed gotta surface bindings."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from collections.abc import Callable
 import sys
 
 from gotta.builtin import (
-    PluginSpec,
-    available_plugins as discovered_plugin_names,
-    get_plugin,
+    SurfaceBinding,
+    available_bindings as discovered_binding_names,
+    get_binding,
 )
 from gotta.content.model import CommonOptions, ContentError, ResolvedDirs
 from gotta.dispatch.budget import (
@@ -51,9 +51,12 @@ from gotta.resolve.invoke import (
 )
 
 __all__ = [
+    "available_surfaces",
     "available_plugins",
+    "surface_binding",
     "plugin_spec",
     "print_usage",
+    "load_surface_runner",
     "load_plugin_runner",
     "should_materialize",
     "invocation_locator",
@@ -67,6 +70,7 @@ __all__ = [
     "capture_stderr",
     "emit_budgeted_output",
     "require_operational_session",
+    "run_surface",
     "run_plugin",
     "_materialize_invocation",
 ]
@@ -77,16 +81,24 @@ def die(message: str, code: int = 2) -> int:
     return code
 
 
+def available_surfaces() -> list[str]:
+    return discovered_binding_names()
+
+
 def available_plugins() -> list[str]:
-    return discovered_plugin_names()
+    return available_surfaces()
 
 
-def plugin_spec(plugin: str) -> PluginSpec | None:
-    return get_plugin(plugin)
+def surface_binding(surface: str) -> SurfaceBinding | None:
+    return get_binding(surface)
+
+
+def plugin_spec(plugin: str) -> SurfaceBinding | None:
+    return surface_binding(plugin)
 
 
 def print_usage() -> int:
-    print("usage: gotta <plugin> [args...]", file=sys.stderr)
+    print("usage: gotta <surface> [args...]", file=sys.stderr)
     print("", file=sys.stderr)
     print("canonical session-binding path: `gotta ...`", file=sys.stderr)
     print("", file=sys.stderr)
@@ -105,35 +117,39 @@ def print_usage() -> int:
     print("", file=sys.stderr)
     print("use `gotta --help-all` for recursive command help", file=sys.stderr)
     print("", file=sys.stderr)
-    print("available plugins:", file=sys.stderr)
-    for plugin in available_plugins():
-        spec = plugin_spec(plugin)
-        description = spec.description if spec else ""
+    print("available top-level surfaces:", file=sys.stderr)
+    for surface in available_surfaces():
+        binding = surface_binding(surface)
+        description = binding.description if binding else ""
         if description:
-            print(f"  - {plugin:<10} {description}", file=sys.stderr)
+            print(f"  - {surface:<10} {description}", file=sys.stderr)
             continue
-        print(f"  - {plugin}", file=sys.stderr)
+        print(f"  - {surface}", file=sys.stderr)
     return 0
 
 
+def load_surface_runner(surface: str) -> Callable[[list[str]], int]:
+    binding = surface_binding(surface)
+    if binding is None:
+        raise KeyError(surface)
+    return binding.runner
+
+
 def load_plugin_runner(plugin: str) -> Callable[[list[str]], int]:
-    spec = plugin_spec(plugin)
-    if spec is None:
-        raise KeyError(plugin)
-    return spec.runner
+    return load_surface_runner(plugin)
 
 
-def run_plugin(plugin: str, argv: list[str]) -> int:
+def run_surface(surface: str, argv: list[str]) -> int:
     quiet, argv = strip_quiet_flag(argv)
     full_output, argv = strip_full_output_flag(argv)
-    if plugin == "session":
+    if surface == "session":
         options = CommonOptions()
         cleaned = argv
     else:
         try:
             options, cleaned = split_common_options(
                 argv,
-                strip_actor=plugin
+                strip_actor=surface
                 in {
                     "read",
                     "confluence",
@@ -151,25 +167,25 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             return die(str(exc))
 
     try:
-        runner = load_plugin_runner(plugin)
+        runner = load_plugin_runner(surface)
     except KeyError:
-        plugins = ", ".join(available_plugins())
-        return die(f"unknown gotta plugin: {plugin}. available plugins: {plugins}")
+        surfaces = ", ".join(available_surfaces())
+        return die(f"unknown gotta surface: {surface}. available surfaces: {surfaces}")
     except RuntimeError as exc:
         return die(str(exc), code=1)
 
     try:
-        resolved = resolve_invocation(plugin, cleaned, options)
+        resolved = resolve_invocation(surface, cleaned, options)
     except SystemExit as exc:
         return system_exit_status(exc)
     except ContentError as exc:
         return die(str(exc))
     except RuntimeError as exc:
         return die(str(exc), code=1)
-    access = session_access_mode(plugin, cleaned)
-    spec = plugin_spec(plugin)
+    access = session_access_mode(surface, cleaned)
+    binding = surface_binding(surface)
     follow_command = ""
-    rerun_command = _rerun_full_output_command(plugin, cleaned)
+    rerun_command = _rerun_full_output_command(surface, cleaned)
     runtime_dirs: ResolvedDirs | None = None
     budget_output = not full_output
 
@@ -184,18 +200,18 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         follow_command = _result_follow_command(result)
         emitted = emit_budgeted_output(
             stdout_data,
-            output_format=requested_output_format(plugin, cleaned, stdout_data),
+            output_format=requested_output_format(surface, cleaned, stdout_data),
             budget_output=budget_output,
             follow_command=rerun_command,
         )
         if stderr_data and not quiet:
             _emit_captured_stderr(stderr_data)
-        if _should_emit_receipt(plugin, cleaned):
+        if _should_emit_receipt(surface, cleaned):
             _emit_receipt(
                 _receipt_payload(
                     emitted=emitted,
                     result=result,
-                    extra=_receipt_extra(plugin, cleaned, dirs=dirs),
+                    extra=_receipt_extra(surface, cleaned, dirs=dirs),
                 ),
                 quiet=quiet,
             )
@@ -206,12 +222,12 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
             return
         emit_budgeted_output(
             stdout_data,
-            output_format=requested_output_format(plugin, cleaned, stdout_data),
+            output_format=requested_output_format(surface, cleaned, stdout_data),
             budget_output=budget_output,
             follow_command=rerun_command,
         )
 
-    if not resolved.should_materialize and _streams_live(plugin, cleaned):
+    if not resolved.should_materialize and _streams_live(surface, cleaned):
         if access != "none" and (
             options.session_dir or options.content_dir or options.actor
         ):
@@ -262,15 +278,15 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
         return die(str(exc))
 
     if (
-        spec
-        and spec.capture is not None
-        and spec.project is not None
+        binding
+        and binding.capture is not None
+        and binding.project is not None
         and resolved.artifact_intent in {"evidence", "discovery"}
     ):
         try:
             with scoped_runtime_env(runtime_dirs):
                 with capture_stderr(preserve_tty=True) as stderr_capture:
-                    capture, display = _captured_execution(plugin, cleaned, options)
+                    capture, display = _captured_execution(surface, cleaned, options)
         except NotImplementedError:
             capture = None
             display = None
@@ -317,3 +333,7 @@ def run_plugin(plugin: str, argv: list[str]) -> int:
     replay_stdout(data)
     _emit_captured_stderr(stderr_data)
     return code
+
+
+def run_plugin(plugin: str, argv: list[str]) -> int:
+    return run_surface(plugin, argv)

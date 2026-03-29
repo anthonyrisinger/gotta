@@ -15,6 +15,41 @@ This file is the execution queue.
 - If this file drifts from `ARCHITECTURE.md`, update one or both deliberately.
   Do not let them diverge silently.
 
+## Running Record
+
+- [x] Surface registry tranche landed.
+  - `src/gotta/builtin.py` now centers:
+    - `CommandPath`
+    - `CapabilitySpec`
+    - `ProviderBundle`
+    - `PackageSpec`
+    - `SurfaceSpec`
+    - `SurfaceBinding`
+  - Top-level discovery is now binding- and surface-shaped.
+  - Legacy `PluginSpec` / `get_plugin()` / `available_plugins()` remain only as
+    compatibility shims for deeper seams not yet collapsed.
+- [x] Adjacent command seam retarget landed.
+  - `src/gotta/dispatch/main.py`
+  - `src/gotta/dispatch/runtime.py`
+  - `src/gotta/cli/argv.py`
+  - `src/gotta/resolve/route.py`
+  - `src/gotta/resolve/read.py`
+  - `src/gotta/resolve/search.py`
+  - `src/gotta/plugins/ask.py`
+  now consume the registry in surface/binding terms.
+- [x] Diminishing-returns judgment for this cycle:
+  additional topology churn is still past diminishing returns.
+  The work that is paying rent now is contract-first collapse, not more file
+  motion.
+
+## Current Tranche
+
+- [x] Freeze the registry vocabulary in executable code.
+- [x] Push that vocabulary through top-level dispatch, help, route discovery,
+  and ask-family binding dispatch.
+- [ ] Next tranche: split the logical ledger from filesystem-shaped storage
+  truth.
+
 ## Non-Negotiable Invariants
 
 - [ ] Keep the logical artifact ledger authoritative.
@@ -43,7 +78,7 @@ This file is the execution queue.
 
 ## Current Live Drifts To Eliminate First
 
-- [ ] Replace the flat `PluginSpec` registry center with explicit code-level
+- [x] Replace the flat `PluginSpec` registry center with explicit code-level
   registry and binding kinds.
 - [ ] Stop exporting filesystem-shaped ledger truth from:
   - `src/gotta/content/model.py`
@@ -55,7 +90,7 @@ This file is the execution queue.
 
 ## Phase 0: Freeze The Vocabulary In Code
 
-- [ ] Make `SurfaceBinding` real in code.
+- [x] Make `SurfaceBinding` real in code.
   Define install-time bindings that declare:
   - binding name
   - command path
@@ -63,13 +98,13 @@ This file is the execution queue.
   - provider bundle
   - auth profile
   - defaults
-- [ ] Split the flat registry contract into explicit code-level kinds:
+- [x] Split the flat registry contract into explicit code-level kinds:
   - `PackageSpec`
   - `SurfaceSpec`
   - `SurfaceBinding`
   - `ProviderBundle`
   - `CapabilitySpec`
-- [ ] Make provider capability families explicit instead of implicit command
+- [x] Make provider capability families explicit instead of implicit command
   grammar:
   - route
   - read
@@ -79,7 +114,7 @@ This file is the execution queue.
   - mutate
   - auth
   - status
-- [ ] Make `ask` binding-driven so one implementation can back:
+- [x] Make `ask` binding-driven so one implementation can back:
   - `gotta ask sre`
   - `gotta ask it`
   - `gotta ask product`

@@ -1090,9 +1090,9 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
     assert "# gotta" in output
     assert "Session synthesis surfaces live under `gotta session`" in output
     assert "`manifest`, `timeline`, `graph`, `leads`, `analyze`, `scan`" in output
-    assert "This top-level long help shows only plugin root surfaces." in output
+    assert "This top-level long help shows only top-level surface bindings." in output
     assert (
-        "Use `gotta <plugin> --help-all` for recursive help within one plugin."
+        "Use `gotta <surface> --help-all` for recursive help within one surface."
         in output
     )
     assert "## gotta ask" in output
@@ -1112,7 +1112,7 @@ def test_cli_help_all_includes_recursive_sections(capsys) -> None:
     assert "Use --help-all for recursive command help." not in output
     assert "Use --help-all for the same long-form usage output." not in output
     assert "End of top-level long help for `gotta`." in output
-    assert "Plugin subtrees were intentionally omitted at this level." in output
+    assert "Nested surface trees were intentionally omitted at this level." in output
 
 
 @pytest.mark.parametrize("plugin", ["slack", "jira", "confluence", "gdocs"])

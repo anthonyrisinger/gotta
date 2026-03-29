@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from gotta.builtin import PluginSpec, available_plugins, get_plugin
+from gotta.builtin import SurfaceBinding, available_bindings, get_binding
 from gotta.content.model import CommonOptions
 from gotta.content.path import sanitize_name
 from gotta.resolve.model import ReadRequest, ReadTarget
@@ -74,28 +74,32 @@ def query_route(
     return [*argv, query]
 
 
-def _routed_plugins() -> list[PluginSpec]:
+def _routed_bindings() -> list[SurfaceBinding]:
     return sorted(
         [
-            spec
-            for spec in (get_plugin(name) for name in available_plugins())
-            if spec
-            and spec.name not in {"read", "session"}
-            and spec.route_target is not None
+            binding
+            for binding in (get_binding(name) for name in available_bindings())
+            if binding
+            and binding.name not in {"read", "session"}
+            and binding.route_target is not None
         ],
         key=lambda item: (item.route_priority, item.name),
     )
 
 
-def discover_plugin_route(target: str) -> tuple[str, list[str]] | None:
-    for plugin in _routed_plugins():
+def discover_surface_route(target: str) -> tuple[str, list[str]] | None:
+    for binding in _routed_bindings():
         try:
-            argv = plugin.route_target(target) if plugin.route_target else None
+            argv = binding.route_target(target) if binding.route_target else None
         except ValueError:
             argv = None
         if argv is not None:
-            return plugin.name, argv
+            return binding.name, argv
     return None
+
+
+def discover_plugin_route(target: str) -> tuple[str, list[str]] | None:
+    return discover_surface_route(target)
 
 
 def _resolved_routed_target(
@@ -107,15 +111,15 @@ def _resolved_routed_target(
     *,
     save_as: str,
 ) -> ReadTarget:
-    spec = get_plugin(plugin)
+    binding = get_binding(plugin)
     canonical = (
-        spec.canonical_locator(plugin_argv)
-        if spec and spec.canonical_locator
+        binding.canonical_locator(plugin_argv)
+        if binding and binding.canonical_locator
         else target
     )
     preferred = save_as or (
-        spec.preferred_name(plugin_argv, options)
-        if spec and spec.preferred_name
+        binding.preferred_name(plugin_argv, options)
+        if binding and binding.preferred_name
         else f"{sanitize_name(target) or plugin}.txt"
     )
     return ReadTarget(
@@ -146,7 +150,7 @@ def resolve_routed_target(
             options,
             save_as=save_as,
         )
-    routed = discover_plugin_route(target)
+    routed = discover_surface_route(target)
     if routed is None:
         return None
     plugin, plugin_argv = routed
@@ -172,7 +176,7 @@ def partition_routed_target_tokens(
             ).strip()
             if not candidate:
                 continue
-            routed = discover_plugin_route(candidate)
+            routed = discover_surface_route(candidate)
             if routed is None:
                 continue
             plugin, plugin_argv = routed

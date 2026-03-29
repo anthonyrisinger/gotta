@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI argv normalization and top-level plugin dispatch."""
+"""CLI argv normalization and top-level surface dispatch."""
 
 from __future__ import annotations
 
@@ -8,18 +8,20 @@ import io
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
-from gotta.builtin import SessionAccessMode, get_plugin
+from gotta.builtin import SessionAccessMode, get_binding
 from gotta.compat import tomllib
 from gotta.dispatch.main import (
-    available_plugins,
+    available_surfaces,
     print_usage,
-    run_plugin,
+    run_surface,
     system_exit_status,
 )
 from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 from gotta.cli.notice import die
 
 _GLOBAL_FLAGS = {"--quiet", "--full-output"}
+available_plugins = available_surfaces
+run_plugin = run_surface
 
 
 def normalize_help_aliases(argv: list[str]) -> list[str]:
@@ -51,13 +53,13 @@ def _argv_without_global_flags(argv: list[str]) -> list[str]:
     return [token for token in argv if token not in _GLOBAL_FLAGS]
 
 
-def _plugin_invocation(argv: list[str]) -> tuple[str, list[str]] | None:
+def _surface_invocation(argv: list[str]) -> tuple[str, list[str]] | None:
     for index, token in enumerate(argv):
         if token in _GLOBAL_FLAGS:
             continue
-        plugin = token
-        plugin_argv = [*argv[:index], *argv[index + 1 :]]
-        return plugin, plugin_argv
+        surface = token
+        surface_argv = [*argv[:index], *argv[index + 1 :]]
+        return surface, surface_argv
     return None
 
 
@@ -93,7 +95,7 @@ def _gotta_main(argv: list[str]) -> int:
     if is_long_help_request(stripped):
         print("# gotta")
         print("")
-        print("usage: gotta <plugin> [args...]")
+        print("usage: gotta <surface> [args...]")
         print("")
         print("Canonical operator path: `gotta ...`")
         print("")
@@ -106,20 +108,20 @@ def _gotta_main(argv: list[str]) -> int:
             "`manifest`, `timeline`, `graph`, `leads`, `analyze`, `scan`"
         )
         print("")
-        print("This top-level long help shows only plugin root surfaces.")
-        print("Use `gotta <plugin> --help-all` for recursive help within one plugin.")
+        print("This top-level long help shows only top-level surface bindings.")
+        print("Use `gotta <surface> --help-all` for recursive help within one surface.")
         print("")
-        print("available plugins:")
-        for plugin in available_plugins():
-            print(f"  - {plugin}")
-        for plugin in available_plugins():
+        print("available top-level surfaces:")
+        for surface in available_plugins():
+            print(f"  - {surface}")
+        for surface in available_plugins():
             print("")
-            print(f"## gotta {plugin}")
+            print(f"## gotta {surface}")
             print("")
             buffer = io.StringIO()
             try:
                 with redirect_stdout(buffer), redirect_stderr(buffer):
-                    result = run_plugin(plugin, ["--help"])
+                    result = run_plugin(surface, ["--help"])
             except SystemExit as exc:
                 result = system_exit_status(exc, emit=False)
             if result != 0:
@@ -131,18 +133,18 @@ def _gotta_main(argv: list[str]) -> int:
         print("---")
         print("")
         print("End of top-level long help for `gotta`.")
-        print("Plugin subtrees were intentionally omitted at this level.")
-        print("Use `gotta <plugin> --help-all` for recursive help within one plugin.")
+        print("Nested surface trees were intentionally omitted at this level.")
+        print("Use `gotta <surface> --help-all` for recursive help within one surface.")
         return 0
 
-    invocation = _plugin_invocation(argv)
+    invocation = _surface_invocation(argv)
     if invocation is None:
         return print_usage()
-    plugin, plugin_argv = invocation
-    if plugin not in available_plugins():
-        plugins = ", ".join(available_plugins())
-        return die(f"unknown gotta plugin: {plugin}. available plugins: {plugins}")
-    return run_plugin(plugin, plugin_argv)
+    surface, surface_argv = invocation
+    if surface not in available_plugins():
+        surfaces = ", ".join(available_plugins())
+        return die(f"unknown gotta surface: {surface}. available surfaces: {surfaces}")
+    return run_plugin(surface, surface_argv)
 
 
 def _explicit_session_arg(argv: list[str]) -> str | None:
@@ -178,8 +180,8 @@ def _is_nonbinding_help(argv: list[str]) -> bool:
 def dispatches_without_session_management(argv: list[str]) -> bool:
     if not argv:
         return True
-    plugin_name = argv[0]
-    if plugin_name == "session" and len(argv) >= 2 and argv[1] in {"bind"}:
+    surface_name = argv[0]
+    if surface_name == "session" and len(argv) >= 2 and argv[1] in {"bind"}:
         return True
     return _session_access_mode(argv) == "none"
 
@@ -187,10 +189,10 @@ def dispatches_without_session_management(argv: list[str]) -> bool:
 def _session_access_mode(argv: list[str]) -> SessionAccessMode:
     if not argv:
         return "none"
-    spec = get_plugin(argv[0])
-    if spec is None:
+    binding = get_binding(argv[0])
+    if binding is None:
         return "none"
-    access = spec.session_access
+    access = binding.session_access
     if access is None:
         return "write"
     if callable(access):
