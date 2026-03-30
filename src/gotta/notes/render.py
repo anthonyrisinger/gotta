@@ -16,6 +16,7 @@ from .file import (
     actor_notes_log_path,
     visible_actor_notes_records,
 )
+from .model import ActorNotesPayload
 
 
 def _artifact_count(status_payload: ActorStatusPayload) -> int:
@@ -31,7 +32,7 @@ def actor_notes_payload(
     *,
     label: str,
     status_payload: ActorStatusPayload,
-) -> dict[str, object]:
+) -> ActorNotesPayload:
     records = sorted(
         visible_actor_notes_records(work_dir, actor_name),
         key=lambda item: str(item.get("timestamp") or ""),

@@ -399,6 +399,80 @@ This file is the execution queue.
   the next honest move is to reassess the remaining shared-core anonymous
   exports and, unless one more real seam survives, switch from core collapse to
   provider-local and algorithmic pressure.
+- [x] Typed the authored state-channel records and top-level `logs`, `notes`,
+  and `oops` payload seams.
+  - Canonical authored-state records now have truthful owners:
+    - `src/gotta/logs.py`
+      - `LogRecord`
+      - `LogsPayload`
+    - `src/gotta/notes/file.py`
+      - `ActorNoteRecord`
+    - `src/gotta/notes/model.py`
+      - `ActorNotesPayload`
+      - `SessionNoteRecord`
+      - `SessionNotesPayload`
+    - `src/gotta/friction.py`
+      - `FrictionRecord`
+      - `FrictionSummary`
+  - Top-level surface payload owners now exist for the authored-state read
+    surfaces:
+    - `src/gotta/plugins/logs/model.py`
+      - `SessionLogRecord`
+      - `SessionLogsPayload`
+      - `AggregateLogsPayload`
+    - `src/gotta/plugins/notes/model.py`
+      - session-wide note payload exports
+    - `src/gotta/plugins/oops.py`
+      - `OopsDisplayRecord`
+      - `OopsPayload`
+  - The canonical state owners and read surfaces now consume named records
+    instead of anonymous `dict[str, object]` traffic:
+    - `src/gotta/logs.py`
+    - `src/gotta/notes/file.py`
+    - `src/gotta/notes/render.py`
+    - `src/gotta/notes/voice.py`
+    - `src/gotta/friction.py`
+    - `src/gotta/plugins/logs/render.py`
+    - `src/gotta/plugins/logs/show.py`
+    - `src/gotta/plugins/notes/render.py`
+    - `src/gotta/plugins/notes/show.py`
+    - `src/gotta/plugins/oops.py`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/logs.py src/gotta/notes src/gotta/friction.py src/gotta/plugins/logs src/gotta/plugins/notes src/gotta/plugins/oops.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed one more still-live anonymous core seam in
+  canonical authored state, not because it shuffled topology. More cleanup of
+  this exact species across `logs`, `notes`, and `oops` would not; the next
+  honest move is the event-sourced `todo` surface, which is the remaining
+  authored-state core seam that still exports anonymous records.
+- [x] Typed the event-sourced `todo` core and payload seam.
+  - `src/gotta/todo.py` now centers:
+    - `TodoItem`
+    - `TodoCreateEvent`
+    - `TodoCheckEvent`
+    - `TodoEvent`
+    - `TodoPayload`
+  - The `todo` core no longer exports anonymous `dict[str, object]` records
+    for:
+    - canonical event playback
+    - resolved item state
+    - top-level show payloads
+  - `create_todo_item(...)` now returns the resolved `TodoItem` record rather
+    than a raw event-shaped dict.
+  - The top-level surface and actor-managed status seam now consume the named
+    `todo` contracts instead of anonymous dict traffic:
+    - `src/gotta/plugins/todo.py`
+    - `src/gotta/session/status/todo.py`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/todo.py src/gotta/plugins/todo.py src/gotta/session/status/todo.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted the last authored-state core seam of this
+  species instead of preserving it. More shared-core contract cleanup of this
+  exact species would not; the next honest move is to treat this phase as
+  settled and switch to hot-kernel reduction, starting with the session lead
+  and analyze hotspots that are now the real pressure centers.
 
 ## Current Tranche
 
@@ -427,9 +501,13 @@ This file is the execution queue.
 - [x] Remove runner/stdout fallback capture from federated `search`.
 - [x] Type the remaining actor/runtime status payload cluster and `session
   doctor`.
-- [ ] Next tranche: reassess the remaining shared-core anonymous exports and
-  switch to provider-local monolith pressure unless one more contract seam
-  clearly still pays rent.
+- [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
+  payload surfaces.
+- [x] Type the event-sourced `todo` core and payload seam.
+- [ ] Next tranche: treat the shared-core contract-collapse phase as settled
+  and switch to hot-kernel reduction, starting with:
+  - `src/gotta/plugins/session/lead/payload.py`
+  - `src/gotta/plugins/session/analyze/render.py`
 
 ## Non-Negotiable Invariants
 
@@ -475,6 +553,9 @@ This file is the execution queue.
   - analyze
 - [x] Type the remaining actor/runtime status payload cluster and `session
   doctor`.
+- [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
+  payload surfaces.
+- [x] Type the event-sourced `todo` core and payload seam.
 
 ## Phase 0: Freeze The Vocabulary In Code
 
@@ -522,7 +603,16 @@ This file is the execution queue.
   - [x] `ManifestEntry`
   - `SessionBindingRecord`
   - `ActorStateRecord`
-  - `StateChannelRecord`
+  - [ ] `StateChannelRecord`
+    - concrete authored-state records now exist for:
+      - `LogRecord`
+      - `ActorNoteRecord`
+      - `FrictionRecord`
+      - `TodoItem`
+      - `TodoCreateEvent`
+      - `TodoCheckEvent`
+    - this authored-state record family is now concrete-complete; more work of
+      this exact species would not pay rent
 - [ ] Type the artifact-pipeline records that sit above storage:
   - [x] `Capture`
   - [x] `Projection`
@@ -703,6 +793,11 @@ This file is the execution queue.
 - [ ] Replace anonymous manifest and lead aggregate records with named types.
 - [ ] Fix `gsheets` capture semantics.
 - [x] Remove federated `search` runner-capture fallback.
+- [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
+  read payload surfaces.
+- [x] Type the event-sourced `todo` core and payload seam.
+- [ ] Switch from shared-core contract collapse to hot-kernel reduction once
+  the last authored-state seam is typed.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 
 ## What Not To Do

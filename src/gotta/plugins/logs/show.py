@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import TypeVar
 
 from gotta.actor import writer_role
 from gotta.content.scope import session_is_initialized
@@ -14,24 +15,26 @@ from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
 from gotta import topology
 
+from .model import (
+    ActorLogsPayload,
+    AggregateLogsPayload,
+    SessionLogRecord,
+    SessionLogsPayload,
+)
 from .render import render_follow_text, render_session_text
+
+RecordT = TypeVar("RecordT")
 
 
 def _int_value(value: object) -> int:
     return value if isinstance(value, int) else 0
 
 
-def _entry_records(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, dict)]
-
-
 def _limited_records(
-    records: list[dict[str, object]],
+    records: list[RecordT],
     *,
     limit: int,
-) -> list[dict[str, object]]:
+) -> list[RecordT]:
     bounded = max(limit, 0)
     return records[-bounded:] if bounded > 0 else records
 
@@ -40,9 +43,9 @@ def _aggregate_logs(
     work_dir: Path,
     *,
     actor_name: str | None = None,
-) -> tuple[list[str], list[dict[str, object]]]:
+) -> tuple[list[str], list[SessionLogRecord]]:
     actor_ids = list(session_scope._target_actor_ids(work_dir, actor_name))
-    records: list[dict[str, object]] = []
+    records: list[SessionLogRecord] = []
     for current_actor in actor_ids:
         actor_root = session_registry._actor_session_dir(work_dir, current_actor)
         for record in log_records(actor_root):
@@ -54,11 +57,13 @@ def _aggregate_logs(
                 == "foreign"
             ):
                 continue
-            payload = dict(record)
-            payload.setdefault("actor", current_actor)
-            payload.setdefault(
-                "label", session_registry._actor_label(current_actor, work_dir=work_dir)
-            )
+            payload: SessionLogRecord = {
+                **record,
+                "actor": record["actor"] or current_actor,
+                "label": session_registry._actor_label(
+                    current_actor, work_dir=work_dir
+                ),
+            }
             records.append(payload)
     records.sort(key=lambda item: str(item.get("timestamp") or ""))
     return actor_ids, records
@@ -79,7 +84,7 @@ def _actor_payload(
     *,
     actor_name: str,
     limit: int,
-) -> dict[str, object]:
+) -> ActorLogsPayload:
     visible = [
         record
         for record in log_records(work_dir)
@@ -101,7 +106,7 @@ def _actor_payload(
     }
 
 
-def _session_payload(work_dir: Path, *, limit: int) -> dict[str, object]:
+def _session_payload(work_dir: Path, *, limit: int) -> SessionLogsPayload:
     entries = sorted(
         log_records(work_dir), key=lambda item: str(item.get("timestamp") or "")
     )
@@ -121,9 +126,9 @@ def _aggregate_payload(
     work_dir: Path,
     *,
     actor_ids: list[str],
-    records: list[dict[str, object]],
+    records: list[SessionLogRecord],
     limit: int,
-) -> dict[str, object]:
+) -> AggregateLogsPayload:
     return {
         "session_root": str(work_dir),
         "actor_count": len(actor_ids),
@@ -161,9 +166,9 @@ def show_logs(args: argparse.Namespace) -> int:
             return 0
         print(
             render_follow_text(
-                follow_command=str(payload["follow_command"]),
+                follow_command=payload["follow_command"],
                 entry_count=_int_value(payload.get("entry_count")),
-                entries=_entry_records(payload.get("entries")),
+                entries=payload["entries"],
                 default_actor=scoped_actor,
             )
         )
@@ -181,9 +186,9 @@ def show_logs(args: argparse.Namespace) -> int:
             return 0
         print(
             render_follow_text(
-                follow_command=str(payload["follow_command"]),
+                follow_command=payload["follow_command"],
                 entry_count=_int_value(payload.get("entry_count")),
-                entries=_entry_records(payload.get("entries")),
+                entries=payload["entries"],
                 default_actor="session",
             )
         )
@@ -201,7 +206,7 @@ def show_logs(args: argparse.Namespace) -> int:
         render_session_text(
             actor_count=_int_value(payload.get("actor_count")),
             entry_count=_int_value(payload.get("entry_count")),
-            entries=_entry_records(payload.get("entries")),
+            entries=payload["entries"],
         )
     )
     return 0

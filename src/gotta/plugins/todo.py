@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from typing import TypedDict
 
 from gotta.actor import session_actor
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta.todo import (
+    TodoItem,
+    TodoPayload,
     create_todo_item,
     is_todo_id,
     resolve_todo_item,
@@ -29,6 +32,12 @@ TODO_TASK_BULLET_INPUT_RE = re.compile(
     r"^(?P<indent>\s*)[-*+]\s+\[(?P<checked>[ xX])\]\s+(?P<body>.+?)\s*$"
 )
 TODO_BULLET_INPUT_RE = re.compile(r"^(?P<indent>\s*)[-*+]\s+(?P<body>.+?)\s*$")
+
+
+class TodoDraftItem(TypedDict):
+    section: str
+    text: str
+    checked: bool
 
 
 def _add_root_args(parser: argparse.ArgumentParser) -> None:
@@ -195,16 +204,16 @@ def _todo_items_from_markdown_entry(
     entry: str,
     *,
     default_section: str,
-) -> list[dict[str, object]]:
+) -> list[TodoDraftItem]:
     current_section = default_section
-    items: list[dict[str, object]] = []
-    pending: dict[str, object] | None = None
+    items: list[TodoDraftItem] = []
+    pending: TodoDraftItem | None = None
     for raw_line in entry.splitlines():
         line = raw_line.rstrip("\n")
         stripped = line.strip()
         if not stripped:
             if pending is not None:
-                pending["text"] = str(pending["text"]).rstrip()
+                pending["text"] = pending["text"].rstrip()
             continue
         heading_match = TODO_HEADING_INPUT_RE.match(stripped)
         if heading_match:
@@ -233,25 +242,23 @@ def _todo_items_from_markdown_entry(
     return items
 
 
-def _check_todo_item(work_dir, *, item_id: str) -> dict[str, object]:
+def _check_todo_item(work_dir, *, item_id: str) -> TodoItem:
     current = resolve_todo_item(work_dir, item_id=item_id)
-    managed_key = str(current.get("managed_key") or "")
-    if managed_key and not bool(current.get("checked")):
+    managed_key = current["managed_key"]
+    if managed_key and not current["checked"]:
         raise SystemExit(_managed_todo_redirect(managed_key))
     updated = set_todo_checked(work_dir, item_id, checked=True)
     if updated is None:
         updated = current
-    if not isinstance(updated, dict):
-        raise SystemExit(f"invalid TODO item id: {item_id}")
     return updated
 
 
-def _check_todo_items(work_dir, *, item_ids: list[str]) -> list[dict[str, object]]:
+def _check_todo_items(work_dir, *, item_ids: list[str]) -> list[TodoItem]:
     if not item_ids:
         raise SystemExit(
             "missing TODO item ids; pass one or more printed ids or pipe ids through stdin"
         )
-    updated: list[dict[str, object]] = []
+    updated: list[TodoItem] = []
     seen: set[str] = set()
     for value in item_ids:
         normalized = value.strip().upper()
@@ -285,7 +292,9 @@ def main(argv: list[str] | None = None) -> int:
     _sync_actor_todo_state(work_dir)
     action = args.action or "show"
     if action == "show":
-        payload = todo_payload(work_dir, status=args.status, limit=max(args.limit, 0))
+        payload: TodoPayload = todo_payload(
+            work_dir, status=args.status, limit=max(args.limit, 0)
+        )
         actor_scope = (
             session_actor(work_dir)
             if work_dir.resolve().parent.name == "actors"
@@ -307,11 +316,11 @@ def main(argv: list[str] | None = None) -> int:
             f"(open: {payload['open_count']}, done: {payload['done_count']})"
         )
         for item in payload["entries"]:
-            mark = "x" if bool(item["checked"]) else " "
+            mark = "x" if item["checked"] else " "
             print(f"- {item['id']} [{mark}] {item['section']} :: {item['text']}")
         return 0
     if action == "append":
-        payload = session_charter._read_text_source(
+        text = session_charter._read_text_source(
             session_root=work_dir,
             inline=(args.value[0] if args.value else None),
             from_file=args.from_file,
@@ -322,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             work_dir,
             section="Captured Work",
             text=session_charter._normalize_entry_text(
-                payload, input_name="TODO item text"
+                text, input_name="TODO item text"
             ),
         )
         _record_session_activity(

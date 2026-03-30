@@ -27,6 +27,8 @@ def has_boundary_underscore_shape(name: str) -> bool:
 src_root = repo_root / "src" / "gotta"
 if src_root.exists():
     for path in sorted(src_root.rglob("*")):
+        if "__pycache__" in path.parts:
+            continue
         rel = path.relative_to(repo_root).as_posix()
         if path.is_dir():
             if not has_boundary_underscore_shape(path.name):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gotta.todo import ensure_managed_todo_item, set_todo_checked, todo_items
+from gotta.todo import TodoItem, ensure_managed_todo_item, set_todo_checked, todo_items
 from gotta.session.registry import _actor_label, _normalize_actor_name
 from gotta.session.scope import _selected_actor_ids
 from gotta.session.status.marker import FINAL_SIGNOFF_MARKER, _actor_todo_marker
@@ -55,10 +55,10 @@ def _sync_actor_todo_state(work_dir: Path) -> None:
     ]
     for actor_name in launched_actor_ids:
         _ensure_actor_todo_items(work_dir, actor_name)
-    items_by_key = {
-        str(item.get("managed_key") or ""): item
+    items_by_key: dict[str, TodoItem] = {
+        item["managed_key"]: item
         for item in todo_items(work_dir)
-        if item.get("managed_key")
+        if item["managed_key"]
     }
     for actor_name in launched_actor_ids:
         payload = actor_payloads[actor_name]

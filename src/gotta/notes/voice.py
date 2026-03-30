@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 
 from gotta.actor import actor_session_root, resolve_actor_identity
-from gotta.friction import OOPS_CHANNEL, visible_channel_records
+from gotta.friction import FrictionRecord, OOPS_CHANNEL, visible_channel_records
 
-from .file import visible_actor_notes_records
+from .file import ActorNoteRecord, visible_actor_notes_records
 
 
-def _has_nonempty_note_from(records: list[dict[str, object]], author: str) -> bool:
+def _has_nonempty_note_from(records: list[ActorNoteRecord], author: str) -> bool:
     return any(
         str(record.get("author") or "").strip() == author
         and str(record.get("message") or "").strip()
@@ -19,7 +19,7 @@ def _has_nonempty_note_from(records: list[dict[str, object]], author: str) -> bo
     )
 
 
-def _has_nonempty_actor_record(records: list[dict[str, object]], actor: str) -> bool:
+def _has_nonempty_actor_record(records: list[FrictionRecord], actor: str) -> bool:
     return any(
         str(record.get("actor") or "").strip() == actor
         and str(record.get("message") or "").strip()

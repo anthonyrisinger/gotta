@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 from gotta.actor import require_writer, session_actor, writer_name, writer_role
 from gotta.content.context import stdin_has_meaningful_text
@@ -15,6 +16,8 @@ from gotta.content.scope import resolve_dirs, session_is_initialized
 from gotta.helptext import format_long_help, is_long_help_request
 from gotta import topology
 from gotta.friction import (
+    FrictionRecord,
+    FrictionSummary,
     append_oops_record,
     filtered_oops_records,
     oops_log_path,
@@ -37,6 +40,24 @@ _APPEND_METADATA_FLAGS = (
     "--reproducibility",
     "--resolution-state",
 )
+
+
+class OopsDisplayRecord(FrictionRecord, total=False):
+    label: str
+
+
+class OopsPayload(FrictionSummary, total=False):
+    session_root: str
+    actor_count: int
+    actors: list[str]
+    shown_count: int
+    entries: list[OopsDisplayRecord]
+    state_path: str
+    locator: str
+    follow_command: str
+    state_paths: dict[str, str]
+    locators: dict[str, str]
+    follow_commands: dict[str, str]
 
 
 def _has_explicit_write_source(argv: list[str]) -> bool:
@@ -262,9 +283,9 @@ def _aggregate_oops_records(
     command: str = "",
     kind: str = "",
     severity: str = "",
-) -> tuple[list[str], list[dict[str, object]]]:
+) -> tuple[list[str], list[OopsDisplayRecord]]:
     actor_ids = list(session_scope._target_actor_ids(work_dir, actor_name))
-    records: list[dict[str, object]] = []
+    records: list[OopsDisplayRecord] = []
     for current_actor in actor_ids:
         actor_root = session_registry._actor_session_dir(work_dir, current_actor)
         for record in filtered_oops_records(
@@ -282,11 +303,13 @@ def _aggregate_oops_records(
                 == "foreign"
             ):
                 continue
-            payload = dict(record)
-            payload.setdefault("actor", current_actor)
-            payload.setdefault(
-                "label", session_registry._actor_label(current_actor, work_dir=work_dir)
-            )
+            payload: OopsDisplayRecord = {
+                **record,
+                "actor": record["actor"] or current_actor,
+                "label": session_registry._actor_label(
+                    current_actor, work_dir=work_dir
+                ),
+            }
             records.append(payload)
     records = sorted(
         records, key=lambda item: str(item.get("timestamp") or ""), reverse=True
@@ -316,8 +339,8 @@ def _unknown_action(action_token: str) -> SystemExit:
 
 
 def _limited_records(
-    records: list[dict[str, object]], *, limit: int
-) -> list[dict[str, object]]:
+    records: list[OopsDisplayRecord], *, limit: int
+) -> list[OopsDisplayRecord]:
     bounded = max(limit, 0)
     if bounded == 0:
         return list(records)
@@ -327,14 +350,14 @@ def _limited_records(
 def _read_payload(
     session_dir: Path,
     actor_ids: list[str],
-    records: list[dict[str, object]],
+    records: list[OopsDisplayRecord],
     *,
     explicit_actor: str | None,
     scoped_actor: str | None,
     limit: int,
-) -> dict[str, object]:
+) -> OopsPayload:
     limited = _limited_records(records, limit=limit)
-    payload: dict[str, object] = {
+    payload: OopsPayload = {
         "session_root": str(session_dir),
         "actor_count": len(actor_ids),
         "actors": actor_ids,
@@ -426,7 +449,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
                 writer=writer,
                 action="write into this actor branch",
             )
-        payload = _read_text_source(
+        message_text = _read_text_source(
             session_root=session_dir,
             inline=(" ".join(values) if values else None),
             from_file=args.from_file,
@@ -435,7 +458,7 @@ def cmd_oops(args: argparse.Namespace) -> int:
         )
         append_oops_record(
             session_dir,
-            message=_normalize_text(payload, input_name="oops entry text"),
+            message=_normalize_text(message_text, input_name="oops entry text"),
             actor=writer,
             surface=args.surface or "",
             command=args.command or "",
@@ -493,13 +516,16 @@ def cmd_oops(args: argparse.Namespace) -> int:
     )
     explicit_actor = getattr(args, "actor", None)
     if scoped_actor:
-        records = filtered_oops_records(
-            oops_records(session_dir),
-            surface=args.surface or "",
-            command=args.command or "",
-            kind=args.kind or "",
-            severity=args.severity or "",
-        )
+        records = [
+            cast(OopsDisplayRecord, dict(record))
+            for record in filtered_oops_records(
+                oops_records(session_dir),
+                surface=args.surface or "",
+                command=args.command or "",
+                kind=args.kind or "",
+                severity=args.severity or "",
+            )
+        ]
         records = [
             record
             for record in records
@@ -523,14 +549,17 @@ def cmd_oops(args: argparse.Namespace) -> int:
                     "no actors bound for this session; bind one intentionally with "
                     + session_registry._actor_bind_examples(prefix="gotta actor bind")
                 )
-            records = filtered_oops_records(
-                oops_records(session_dir),
-                surface=args.surface or "",
-                command=args.command or "",
-                kind=args.kind or "",
-                severity=args.severity or "",
-            )
-            payload = {
+            records = [
+                cast(OopsDisplayRecord, dict(record))
+                for record in filtered_oops_records(
+                    oops_records(session_dir),
+                    surface=args.surface or "",
+                    command=args.command or "",
+                    kind=args.kind or "",
+                    severity=args.severity or "",
+                )
+            ]
+            payload: OopsPayload = {
                 "session_root": str(session_dir),
                 "actor_count": 0,
                 "actors": [],
@@ -546,9 +575,10 @@ def cmd_oops(args: argparse.Namespace) -> int:
             if args.output == "json":
                 print(json.dumps(payload, indent=2, sort_keys=True))
                 return 0
-            print(f"oops: {payload['follow_command']}")
+            print(f"oops: {payload.get('follow_command', '')}")
             print(
-                f"entries: {payload['entry_count']} (showing {payload['shown_count']})"
+                f"entries: {payload['entry_count']} "
+                f"(showing {payload.get('shown_count', 0)})"
             )
             print(f"severity_counts: {payload['severity_counts']}")
             print(f"kind_counts: {payload['kind_counts']}")
@@ -556,47 +586,45 @@ def cmd_oops(args: argparse.Namespace) -> int:
             print(f"resolution_counts: {payload['resolution_counts']}")
             print(f"reproducibility_counts: {payload['reproducibility_counts']}")
             print(f"affordance_counts: {payload['affordance_counts']}")
-            for record in payload["entries"]:
-                timestamp = str(record.get("timestamp") or "unknown-time")
-                actor = str(record.get("actor") or "session")
-                message = (
-                    str(record.get("message") or "").strip() or "unspecified oops entry"
-                )
+            for record in payload.get("entries", []):
+                timestamp = record["timestamp"] or "unknown-time"
+                actor = record["actor"] or "session"
+                message = record["message"].strip() or "unspecified oops entry"
                 print(f"- `{timestamp}` [{actor}] {message}")
             return 0
-    payload = {
-        **_read_payload(
-            session_dir,
-            actor_ids,
-            records,
-            explicit_actor=explicit_actor,
-            scoped_actor=scoped_actor,
-            limit=args.limit,
-        )
-    }
+    payload = _read_payload(
+        session_dir,
+        actor_ids,
+        records,
+        explicit_actor=explicit_actor,
+        scoped_actor=scoped_actor,
+        limit=args.limit,
+    )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if explicit_actor or scoped_actor:
-        print(f"oops: {payload['follow_command']}")
+        print(f"oops: {payload.get('follow_command', '')}")
     else:
         print(f"oops: session-wide across {len(actor_ids)} actor(s)")
-    print(f"entries: {payload['entry_count']} (showing {payload['shown_count']})")
+    print(
+        f"entries: {payload['entry_count']} (showing {payload.get('shown_count', 0)})"
+    )
     print(f"severity_counts: {payload['severity_counts']}")
     print(f"kind_counts: {payload['kind_counts']}")
     print(f"surface_counts: {payload['surface_counts']}")
     print(f"resolution_counts: {payload['resolution_counts']}")
     print(f"reproducibility_counts: {payload['reproducibility_counts']}")
     print(f"affordance_counts: {payload['affordance_counts']}")
-    for record in payload["entries"]:
-        actor = str(record.get("actor") or "unknown-actor")
+    for record in payload.get("entries", []):
+        actor = record["actor"] or "unknown-actor"
         print(
             "- "
-            f"{record.get('timestamp') or 'unknown-time'} "
-            f"[{actor}/{record.get('severity') or 'unknown'}] "
-            f"{record.get('kind') or 'general'} "
-            f"{record.get('surface') or 'unspecified'} :: "
-            f"{record.get('message') or ''}"
+            f"{record['timestamp'] or 'unknown-time'} "
+            f"[{actor}/{record['severity'] or 'unknown'}] "
+            f"{record['kind'] or 'general'} "
+            f"{record['surface'] or 'unspecified'} :: "
+            f"{record['message']}"
         )
     return 0
 

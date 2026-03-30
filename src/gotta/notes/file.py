@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TypedDict
 
 from gotta.actor import actor_session_root, writer_role
 from gotta.compat import UTC, datetime
@@ -15,18 +16,41 @@ from gotta.projection import append_jsonl, read_jsonl_records
 ACTOR_NOTES_LOG_NAME = "notes.jsonl"
 
 
+class ActorNoteRecord(TypedDict):
+    timestamp: str
+    author: str
+    actor: str
+    message: str
+
+
 def actor_notes_log_path(work_dir: Path, actor_name: str) -> Path:
     return actor_session_root(work_dir, actor_name) / "state" / ACTOR_NOTES_LOG_NAME
 
 
-def actor_notes_records(work_dir: Path, actor_name: str) -> list[dict[str, object]]:
-    return read_jsonl_records(actor_notes_log_path(work_dir, actor_name))
+def _normalize_actor_note_record(value: object) -> ActorNoteRecord | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "timestamp": str(value.get("timestamp") or "").strip(),
+        "author": str(value.get("author") or "").strip(),
+        "actor": str(value.get("actor") or "").strip(),
+        "message": str(value.get("message") or ""),
+    }
+
+
+def actor_notes_records(work_dir: Path, actor_name: str) -> list[ActorNoteRecord]:
+    records: list[ActorNoteRecord] = []
+    for record in read_jsonl_records(actor_notes_log_path(work_dir, actor_name)):
+        normalized = _normalize_actor_note_record(record)
+        if normalized is not None:
+            records.append(normalized)
+    return records
 
 
 def visible_actor_notes_records(
     work_dir: Path, actor_name: str
-) -> list[dict[str, object]]:
-    visible: list[dict[str, object]] = []
+) -> list[ActorNoteRecord]:
+    visible: list[ActorNoteRecord] = []
     for record in actor_notes_records(work_dir, actor_name):
         author = str(record.get("author") or "").strip()
         if writer_role(work_dir, actor_name, writer=author or actor_name) == "foreign":
@@ -47,12 +71,12 @@ def append_actor_note(
     message: str,
     author: str = "",
     timestamp: str | None = None,
-) -> dict[str, object]:
-    payload: dict[str, object] = {
+) -> ActorNoteRecord:
+    payload: ActorNoteRecord = {
         "timestamp": timestamp or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "author": author.strip() or _author_name(),
         "actor": actor_name,
         "message": message,
     }
-    append_jsonl(actor_notes_log_path(work_dir, actor_name), payload)
+    append_jsonl(actor_notes_log_path(work_dir, actor_name), dict(payload))
     return payload

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from .model import SessionNoteRecord
+
 
 def render_session_text(
     *,
     actor_count: int,
     entry_count: int,
-    entries: list[dict[str, object]],
+    entries: list[SessionNoteRecord],
 ) -> str:
     lines = [
         f"notes: session-wide across {actor_count} actor(s)",

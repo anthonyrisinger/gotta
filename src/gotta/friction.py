@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence, TypedDict
 
 from gotta.actor import session_actor, writer_role
 from gotta.compat import UTC, datetime
@@ -51,20 +52,75 @@ OOPS_CHANNEL = FrictionChannel(
 )
 
 
+class FrictionRecord(TypedDict):
+    timestamp: str
+    actor: str
+    message: str
+    surface: str
+    command: str
+    kind: str
+    affordance: str
+    workaround: str
+    severity: str
+    reproducibility: str
+    resolution_state: str
+    sessionDir: str
+    channel: str
+
+
+class FrictionSummary(TypedDict):
+    entry_count: int
+    severity_counts: dict[str, int]
+    kind_counts: dict[str, int]
+    surface_counts: dict[str, int]
+    resolution_counts: dict[str, int]
+    reproducibility_counts: dict[str, int]
+    affordance_counts: dict[str, int]
+
+
 def channel_log_path(session_dir: Path, channel: FrictionChannel) -> Path:
     return session_dir / "state" / f"{channel.stem}.jsonl"
 
 
+def _normalize_friction_record(
+    value: object, *, channel: FrictionChannel
+) -> FrictionRecord | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "timestamp": str(value.get("timestamp") or "").strip(),
+        "actor": str(value.get("actor") or "").strip(),
+        "message": str(value.get("message") or ""),
+        "surface": str(value.get("surface") or "").strip(),
+        "command": str(value.get("command") or "").strip(),
+        "kind": str(value.get("kind") or "").strip(),
+        "affordance": str(value.get("affordance") or "").strip(),
+        "workaround": str(value.get("workaround") or ""),
+        "severity": str(value.get("severity") or "medium").strip() or "medium",
+        "reproducibility": str(value.get("reproducibility") or "unknown").strip()
+        or "unknown",
+        "resolution_state": str(value.get("resolution_state") or "open").strip()
+        or "open",
+        "sessionDir": str(value.get("sessionDir") or ""),
+        "channel": str(value.get("channel") or channel.stem).strip() or channel.stem,
+    }
+
+
 def channel_records(
     session_dir: Path, channel: FrictionChannel
-) -> list[dict[str, object]]:
-    return read_jsonl_records(channel_log_path(session_dir, channel))
+) -> list[FrictionRecord]:
+    records: list[FrictionRecord] = []
+    for record in read_jsonl_records(channel_log_path(session_dir, channel)):
+        normalized = _normalize_friction_record(record, channel=channel)
+        if normalized is not None:
+            records.append(normalized)
+    return records
 
 
 def visible_channel_records(
     session_dir: Path,
     channel: FrictionChannel,
-) -> list[dict[str, object]]:
+) -> list[FrictionRecord]:
     target_actor = (
         session_actor(session_dir)
         if session_dir.resolve().parent.name == "actors"
@@ -82,13 +138,13 @@ def visible_channel_records(
 
 
 def filtered_records(
-    records: list[dict[str, object]],
+    records: list[FrictionRecord],
     *,
     surface: str = "",
     command: str = "",
     kind: str = "",
     severity: str = "",
-) -> list[dict[str, object]]:
+) -> list[FrictionRecord]:
     return [
         record
         for record in records
@@ -100,7 +156,7 @@ def filtered_records(
 
 
 def render_channel_markdown(
-    records: list[dict[str, object]],
+    records: list[FrictionRecord],
     channel: FrictionChannel,
 ) -> str:
     lines = [
@@ -152,11 +208,11 @@ def append_channel_record(
     severity: str = "medium",
     reproducibility: str = "unknown",
     resolution_state: str = "open",
-) -> dict[str, object]:
+) -> FrictionRecord:
     record_actor = actor.strip() or current_actor(
         default_actor=session_identity(session_dir)
     )
-    payload: dict[str, object] = {
+    payload: FrictionRecord = {
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "actor": record_actor,
         "message": message,
@@ -172,7 +228,7 @@ def append_channel_record(
         "channel": channel.stem,
     }
     log_path = channel_log_path(session_dir, channel)
-    append_jsonl(log_path, payload)
+    append_jsonl(log_path, dict(payload))
     actor_id = (
         session_identity(session_dir)
         if session_dir.resolve().parent.name == "actors"
@@ -222,7 +278,7 @@ def recent_channel_lines(
     return entries
 
 
-def channel_summary(records: list[dict[str, object]]) -> dict[str, object]:
+def channel_summary(records: Sequence[FrictionRecord]) -> FrictionSummary:
     severity_counts = Counter(
         str(record.get("severity") or "unknown") for record in records
     )
@@ -254,18 +310,18 @@ def oops_log_path(session_dir: Path) -> Path:
     return channel_log_path(session_dir, OOPS_CHANNEL)
 
 
-def oops_records(session_dir: Path) -> list[dict[str, object]]:
+def oops_records(session_dir: Path) -> list[FrictionRecord]:
     return channel_records(session_dir, OOPS_CHANNEL)
 
 
 def filtered_oops_records(
-    records: list[dict[str, object]],
+    records: list[FrictionRecord],
     *,
     surface: str = "",
     command: str = "",
     kind: str = "",
     severity: str = "",
-) -> list[dict[str, object]]:
+) -> list[FrictionRecord]:
     return filtered_records(
         records,
         surface=surface,
@@ -275,7 +331,7 @@ def filtered_oops_records(
     )
 
 
-def render_oops_markdown(records: list[dict[str, object]]) -> str:
+def render_oops_markdown(records: list[FrictionRecord]) -> str:
     return render_channel_markdown(records, OOPS_CHANNEL)
 
 
@@ -292,7 +348,7 @@ def append_oops_record(
     severity: str = "medium",
     reproducibility: str = "unknown",
     resolution_state: str = "open",
-) -> dict[str, object]:
+) -> FrictionRecord:
     return append_channel_record(
         session_dir,
         OOPS_CHANNEL,
@@ -313,5 +369,5 @@ def recent_oops_lines(session_dir: Path, *, limit: int) -> list[str]:
     return recent_channel_lines(session_dir, OOPS_CHANNEL, limit=limit)
 
 
-def oops_summary(records: list[dict[str, object]]) -> dict[str, object]:
+def oops_summary(records: Sequence[FrictionRecord]) -> FrictionSummary:
     return channel_summary(records)

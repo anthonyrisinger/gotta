@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 import hashlib
 from pathlib import Path
+from typing import Literal, TypedDict
 import uuid
 
 from gotta.compat import UTC, datetime
@@ -24,6 +25,45 @@ DEFAULT_SECTION_ORDER = (
     "Actor Checklist",
     "Captured Work",
 )
+
+
+class TodoItem(TypedDict):
+    id: str
+    section: str
+    text: str
+    checked: bool
+    managed_key: str
+    created_at: str
+
+
+class TodoCreateEvent(TypedDict):
+    op: Literal["create"]
+    id: str
+    section: str
+    text: str
+    checked: bool
+    managed_key: str
+    timestamp: str
+
+
+class TodoCheckEvent(TypedDict):
+    op: Literal["check"]
+    id: str
+    checked: bool
+    timestamp: str
+
+
+TodoEvent = TodoCreateEvent | TodoCheckEvent
+
+
+class TodoPayload(TypedDict):
+    state_path: str
+    locator: str
+    follow_command: str
+    entry_count: int
+    open_count: int
+    done_count: int
+    entries: list[TodoItem]
 
 
 def todo_state_path(work_dir: Path) -> Path:
@@ -63,32 +103,66 @@ def managed_todo_id(managed_key: str) -> str:
     return f"{TODO_ID_PREFIX}{digest}"
 
 
-def todo_events(work_dir: Path) -> list[dict[str, object]]:
-    return read_jsonl_records(todo_state_path(work_dir))
+def _normalize_todo_event(value: object) -> TodoEvent | None:
+    if not isinstance(value, dict):
+        return None
+    item_id = str(value.get("id") or "").upper()
+    if not is_todo_id(item_id):
+        return None
+    timestamp = str(value.get("timestamp") or "").strip()
+    op = str(value.get("op") or "").strip()
+    if op == "create":
+        return {
+            "op": "create",
+            "id": item_id,
+            "section": str(value.get("section") or "Captured Work").strip()
+            or "Captured Work",
+            "text": str(value.get("text") or "").strip(),
+            "checked": bool(value.get("checked")),
+            "managed_key": str(value.get("managed_key") or "").strip(),
+            "timestamp": timestamp,
+        }
+    if op == "check":
+        return {
+            "op": "check",
+            "id": item_id,
+            "checked": bool(value.get("checked")),
+            "timestamp": timestamp,
+        }
+    return None
 
 
-def todo_items(work_dir: Path) -> list[dict[str, object]]:
-    items: OrderedDict[str, dict[str, object]] = OrderedDict()
+def todo_events(work_dir: Path) -> list[TodoEvent]:
+    events: list[TodoEvent] = []
+    for record in read_jsonl_records(todo_state_path(work_dir)):
+        normalized = _normalize_todo_event(record)
+        if normalized is not None:
+            events.append(normalized)
+    return events
+
+
+def _todo_item_from_create_event(event: TodoCreateEvent) -> TodoItem:
+    return {
+        "id": event["id"],
+        "section": event["section"],
+        "text": event["text"],
+        "checked": event["checked"],
+        "managed_key": event["managed_key"],
+        "created_at": event["timestamp"],
+    }
+
+
+def todo_items(work_dir: Path) -> list[TodoItem]:
+    items: OrderedDict[str, TodoItem] = OrderedDict()
     for event in todo_events(work_dir):
-        op = str(event.get("op") or "")
-        item_id = str(event.get("id") or "").upper()
-        if not is_todo_id(item_id):
-            continue
-        if op == "create":
+        item_id = event["id"]
+        if event["op"] == "create":
             if item_id in items:
                 continue
-            items[item_id] = {
-                "id": item_id,
-                "section": str(event.get("section") or "Captured Work").strip()
-                or "Captured Work",
-                "text": str(event.get("text") or "").strip(),
-                "checked": bool(event.get("checked")),
-                "managed_key": str(event.get("managed_key") or "").strip(),
-                "created_at": str(event.get("timestamp") or ""),
-            }
+            items[item_id] = _todo_item_from_create_event(event)
             continue
-        if op == "check" and item_id in items:
-            items[item_id]["checked"] = bool(event.get("checked"))
+        if item_id in items:
+            items[item_id]["checked"] = event["checked"]
     return list(items.values())
 
 
@@ -97,12 +171,12 @@ def todo_payload(
     *,
     status: str = "all",
     limit: int = 0,
-) -> dict[str, object]:
+) -> TodoPayload:
     items = todo_items(work_dir)
     if status == "open":
-        filtered = [item for item in items if not bool(item["checked"])]
+        filtered = [item for item in items if not item["checked"]]
     elif status == "done":
-        filtered = [item for item in items if bool(item["checked"])]
+        filtered = [item for item in items if item["checked"]]
     else:
         filtered = list(items)
     if limit > 0:
@@ -112,8 +186,8 @@ def todo_payload(
         "locator": "todo:session",
         "follow_command": "gotta todo",
         "entry_count": len(items),
-        "open_count": sum(1 for item in items if not bool(item["checked"])),
-        "done_count": sum(1 for item in items if bool(item["checked"])),
+        "open_count": sum(1 for item in items if not item["checked"]),
+        "done_count": sum(1 for item in items if item["checked"]),
         "entries": filtered,
     }
 
@@ -136,32 +210,32 @@ def render_todo_entry(
     return "\n".join([head, *[f"  {line}" if line else "  " for line in lines[1:]]])
 
 
-def _render_section_items(items: list[dict[str, object]]) -> list[str]:
+def _render_section_items(items: list[TodoItem]) -> list[str]:
     lines: list[str] = []
     for item in items:
         lines.extend(
             render_todo_entry(
-                str(item["text"]),
-                checked=bool(item["checked"]),
-                item_id=str(item["id"]),
-                managed_key=str(item.get("managed_key") or ""),
+                item["text"],
+                checked=item["checked"],
+                item_id=item["id"],
+                managed_key=item["managed_key"],
             ).splitlines()
         )
     return lines
 
 
-def render_todo_markdown(work_dir: Path, items: list[dict[str, object]]) -> str:
+def render_todo_markdown(work_dir: Path, items: list[TodoItem]) -> str:
     from gotta.session.registry import (
         _actor_bind_examples,
         _actor_label,
         _default_actor_summary,
     )
 
-    grouped: OrderedDict[str, list[dict[str, object]]] = OrderedDict()
+    grouped: OrderedDict[str, list[TodoItem]] = OrderedDict()
     for section in DEFAULT_SECTION_ORDER:
         grouped[section] = []
     for item in items:
-        section = str(item.get("section") or "Captured Work")
+        section = item["section"] or "Captured Work"
         grouped.setdefault(section, [])
         grouped[section].append(item)
 
@@ -272,13 +346,13 @@ def create_todo_item(
     managed_key: str = "",
     item_id: str = "",
     timestamp: str | None = None,
-) -> dict[str, object]:
+) -> TodoItem:
     current_items = todo_items(work_dir)
-    used_ids = {str(item["id"]).upper() for item in current_items}
+    used_ids = {item["id"] for item in current_items}
     normalized_id = item_id.upper().strip() if item_id else ""
     if not is_todo_id(normalized_id) or normalized_id in used_ids:
         normalized_id = _next_todo_id(used_ids)
-    payload: dict[str, object] = {
+    payload: TodoCreateEvent = {
         "op": "create",
         "id": normalized_id,
         "section": section.strip() or "Captured Work",
@@ -287,8 +361,8 @@ def create_todo_item(
         "managed_key": managed_key.strip(),
         "timestamp": timestamp or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    append_jsonl(todo_state_path(work_dir), payload)
-    return payload
+    append_jsonl(todo_state_path(work_dir), dict(payload))
+    return _todo_item_from_create_event(payload)
 
 
 def ensure_managed_todo_item(
@@ -297,10 +371,10 @@ def ensure_managed_todo_item(
     section: str,
     text: str,
     managed_key: str,
-) -> dict[str, object]:
+) -> TodoItem:
     current = todo_items(work_dir)
     for item in current:
-        if str(item.get("managed_key") or "") == managed_key:
+        if item["managed_key"] == managed_key:
             return item
     return create_todo_item(
         work_dir,
@@ -311,37 +385,40 @@ def ensure_managed_todo_item(
     )
 
 
-def set_todo_checked(
-    work_dir: Path, item_id: str, *, checked: bool
-) -> dict[str, object] | None:
+def set_todo_checked(work_dir: Path, item_id: str, *, checked: bool) -> TodoItem | None:
     normalized = item_id.strip().upper()
     if not is_todo_id(normalized):
         raise SystemExit(f"invalid TODO item id: {item_id}")
-    current = {str(item["id"]).upper(): item for item in todo_items(work_dir)}
+    current = {item["id"]: item for item in todo_items(work_dir)}
     item = current.get(normalized)
     if item is None:
         raise SystemExit(f"no TODO item matched id: {normalized}")
-    if bool(item["checked"]) == checked:
+    if item["checked"] == checked:
         return None
-    payload: dict[str, object] = {
+    payload: TodoCheckEvent = {
         "op": "check",
         "id": normalized,
         "checked": checked,
         "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    append_jsonl(todo_state_path(work_dir), payload)
-    updated = dict(item)
-    updated["checked"] = checked
-    return updated
+    append_jsonl(todo_state_path(work_dir), dict(payload))
+    return {
+        "id": item["id"],
+        "section": item["section"],
+        "text": item["text"],
+        "checked": checked,
+        "managed_key": item["managed_key"],
+        "created_at": item["created_at"],
+    }
 
 
-def resolve_todo_item(work_dir: Path, *, item_id: str) -> dict[str, object]:
+def resolve_todo_item(work_dir: Path, *, item_id: str) -> TodoItem:
     normalized = item_id.strip().upper()
     if not is_todo_id(normalized):
         raise SystemExit(
             f"invalid TODO item id: {item_id}. run `gotta todo show` and pass printed ids"
         )
     for item in todo_items(work_dir):
-        if str(item["id"]).upper() == normalized:
+        if item["id"] == normalized:
             return item
     raise SystemExit(f"no TODO item matched id: {normalized}")

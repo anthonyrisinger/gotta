@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from gotta.logs import LogRecord
 
-def _record_lines(record: dict[str, object], *, default_actor: str) -> list[str]:
+from .model import SessionLogRecord
+
+
+def _record_lines(record: LogRecord, *, default_actor: str) -> list[str]:
     timestamp = str(record.get("timestamp") or "unknown-time")
     actor = str(record.get("actor") or default_actor)
     message = str(record.get("message") or "").strip() or "unspecified log entry"
@@ -17,7 +21,7 @@ def render_follow_text(
     *,
     follow_command: str,
     entry_count: int,
-    entries: list[dict[str, object]],
+    entries: list[LogRecord],
     default_actor: str,
 ) -> str:
     lines = [f"logs: {follow_command}", f"entries: {entry_count}"]
@@ -30,7 +34,7 @@ def render_session_text(
     *,
     actor_count: int,
     entry_count: int,
-    entries: list[dict[str, object]],
+    entries: list[SessionLogRecord],
 ) -> str:
     lines = [
         f"logs: session-wide across {actor_count} actor(s)",

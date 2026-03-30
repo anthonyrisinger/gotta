@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypedDict
 
 from gotta.actor import session_actor, writer_role
 from gotta.compat import UTC, datetime
@@ -14,15 +15,46 @@ from gotta.projection import append_jsonl, read_jsonl_records
 LOGS_LOG_NAME = "logs.jsonl"
 
 
+class LogRecord(TypedDict):
+    timestamp: str
+    message: str
+    actor: str
+    channel: str
+
+
+class LogsPayload(TypedDict):
+    state_path: str
+    locator: str
+    follow_command: str
+    entry_count: int
+    entries: list[LogRecord]
+
+
 def logs_state_path(work_dir: Path) -> Path:
     return work_dir / "state" / LOGS_LOG_NAME
 
 
-def log_records(work_dir: Path) -> list[dict[str, object]]:
-    return read_jsonl_records(logs_state_path(work_dir))
+def _normalize_log_record(value: object) -> LogRecord | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "timestamp": str(value.get("timestamp") or "").strip(),
+        "message": str(value.get("message") or ""),
+        "actor": str(value.get("actor") or "").strip(),
+        "channel": str(value.get("channel") or "logs").strip() or "logs",
+    }
 
 
-def visible_log_records(work_dir: Path) -> list[dict[str, object]]:
+def log_records(work_dir: Path) -> list[LogRecord]:
+    records: list[LogRecord] = []
+    for record in read_jsonl_records(logs_state_path(work_dir)):
+        normalized = _normalize_log_record(record)
+        if normalized is not None:
+            records.append(normalized)
+    return records
+
+
+def visible_log_records(work_dir: Path) -> list[LogRecord]:
     target_actor = (
         session_actor(work_dir) if work_dir.resolve().parent.name == "actors" else ""
     )
@@ -37,7 +69,7 @@ def visible_log_records(work_dir: Path) -> list[dict[str, object]]:
     ]
 
 
-def logs_payload(work_dir: Path, *, limit: int = 0) -> dict[str, object]:
+def logs_payload(work_dir: Path, *, limit: int = 0) -> LogsPayload:
     records = sorted(
         visible_log_records(work_dir), key=lambda item: str(item.get("timestamp") or "")
     )
@@ -59,7 +91,7 @@ def _repo_display_name(work_dir: Path) -> str:
     return Path(repo_path).name.capitalize() or "Session"
 
 
-def render_logs_markdown(work_dir: Path, records: list[dict[str, object]]) -> str:
+def render_logs_markdown(work_dir: Path, records: list[LogRecord]) -> str:
     lines = [
         "# Logs",
         "",
@@ -91,15 +123,15 @@ def append_log_record(
     message: str,
     actor: str = "",
     timestamp: str | None = None,
-) -> dict[str, object]:
-    payload: dict[str, object] = {
+) -> LogRecord:
+    payload: LogRecord = {
         "timestamp": timestamp or datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "message": message,
         "actor": actor or session_identity(work_dir),
         "channel": "logs",
     }
     log_path = logs_state_path(work_dir)
-    append_jsonl(log_path, payload)
+    append_jsonl(log_path, dict(payload))
     return payload
 
 
