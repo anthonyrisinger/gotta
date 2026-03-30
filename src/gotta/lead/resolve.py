@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from collections.abc import Sequence
+from typing import Mapping
+
 from gotta.content.model import ContentError, ContentSnapshot
 from gotta.content.path import content_locator
 
+from .aggregate import aggregate_lead_sources
+from .edge import build_lead_edges
+from .model import LeadResolution
 from .snapshot import (
     snapshot_artifact_locator,
     snapshot_display_name,
@@ -15,7 +22,7 @@ from .snapshot import (
 def resolve_lead_snapshots(
     target: str,
     snapshots: list[ContentSnapshot],
-    manifest_entries: list[dict[str, object]],
+    manifest_entries: Sequence[Mapping[str, object]],
 ) -> list[ContentSnapshot]:
     ordered = sorted(snapshots, key=snapshot_sort_key, reverse=True)
     requested = target.strip()
@@ -76,4 +83,30 @@ def resolve_lead_snapshots(
     raise ContentError(
         "unsupported session leads target. Use an emitted artifact locator, "
         "content locator, stored artifact name, digest prefix, or a materialized source locator."
+    )
+
+
+def resolve_lead_resolution(
+    target: str,
+    snapshots: list[ContentSnapshot],
+    manifest_entries: Sequence[Mapping[str, object]],
+    *,
+    classify_kind: Callable[[str, str], str],
+) -> LeadResolution:
+    selected_snapshots = resolve_lead_snapshots(target, snapshots, manifest_entries)
+    selected_digests = {snapshot.digest for snapshot in selected_snapshots}
+    edge_records = [
+        edge
+        for edge in build_lead_edges(
+            snapshots,
+            manifest_entries,
+            classify_kind=classify_kind,
+        )
+        if edge["sourceChecksum"] in selected_digests
+    ]
+    lead_sources = aggregate_lead_sources(edge_records)
+    return LeadResolution(
+        selected_snapshots=selected_snapshots,
+        edge_records=edge_records,
+        lead_sources=lead_sources,
     )

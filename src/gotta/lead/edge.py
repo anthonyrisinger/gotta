@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Mapping
+
 from gotta.content.model import ContentSnapshot
 from gotta.content.path import content_locator
 from gotta.source.visibility import (
@@ -9,7 +12,7 @@ from gotta.source.visibility import (
     classify_visibility_metadata,
 )
 
-from .model import LeadEdgeRecord
+from .model import LeadEdge
 from .cache import lead_mentions_for_snapshot
 from .rank import edge_best_first_sort_key, is_first_party_target
 from .snapshot import (
@@ -24,7 +27,7 @@ from .snapshot import (
 
 
 def materialized_source_index(
-    manifest_entries: list[dict[str, object]],
+    manifest_entries: Sequence[Mapping[str, object]],
     snapshot_by_digest: dict[str, ContentSnapshot],
 ) -> dict[str, set[str]]:
     index: dict[str, set[str]] = {}
@@ -68,21 +71,21 @@ def materialized_target_visibility(
     )
 
 
-def build_lead_edge_records(
+def build_lead_edges(
     snapshots: list[ContentSnapshot],
-    manifest_entries: list[dict[str, object]],
+    manifest_entries: Sequence[Mapping[str, object]],
     *,
     classify_kind,
-) -> list[LeadEdgeRecord]:
+) -> list[LeadEdge]:
     snapshot_by_digest = {snapshot.digest: snapshot for snapshot in snapshots}
     source_index = materialized_source_index(manifest_entries, snapshot_by_digest)
-    rendered: list[LeadEdgeRecord] = []
+    rendered: list[LeadEdge] = []
     for snapshot in sorted(snapshots, key=snapshot_sort_key, reverse=True):
         source_locator = snapshot_locator(snapshot)
         source_search_like = snapshot_is_search_like(snapshot)
         source_provider = snapshot_provider(snapshot)
         source_subcommand = snapshot_subcommand(snapshot)
-        edge_state: dict[str, LeadEdgeRecord] = {}
+        edge_state: dict[str, LeadEdge] = {}
         for mention in lead_mentions_for_snapshot(snapshot):
             target_locator = mention.canonical_locator.strip()
             if not target_locator or target_locator == source_locator:

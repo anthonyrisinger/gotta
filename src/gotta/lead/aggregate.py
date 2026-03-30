@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from gotta.source.visibility import best_visibility_metadata
 
-from .model import LeadEdgeRecord, LeadSearchOrigin, LeadSourceSummary
+from .model import LeadEdge, LeadSearchOrigin, LeadSourceSummary
 from .rank import lead_source_best_first_sort_key
 
 
@@ -33,7 +33,7 @@ class _AggregatedLeadSourceState:
 
 
 def aggregate_lead_sources(
-    edge_records: list[LeadEdgeRecord],
+    edge_records: list[LeadEdge],
 ) -> list[LeadSourceSummary]:
     aggregated: dict[str, _AggregatedLeadSourceState] = {}
     for edge in edge_records:

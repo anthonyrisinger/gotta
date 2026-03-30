@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from gotta.lead.model import LeadEdgeRecord, LeadSourceSummary, LeadVisibility
+from gotta.lead.model import LeadEdge, LeadSourceSummary, LeadVisibility
 
 
 class ProviderCountRecord(TypedDict):
@@ -26,7 +26,7 @@ class LeadArtifact(LeadVisibility):
     contentLocator: str
     lastFetchedAt: str
     leadCount: int
-    leads: list[LeadEdgeRecord]
+    leads: list[LeadEdge]
 
 
 class LeadsPayload(TypedDict):

@@ -473,6 +473,26 @@ This file is the execution queue.
   exact species would not; the next honest move is to treat this phase as
   settled and switch to hot-kernel reduction, starting with the session lead
   and analyze hotspots that are now the real pressure centers.
+- [x] Lead-kernel hot-kernel tranche landed.
+  - `src/gotta/lead/model.py` now centers:
+    - `LeadMention`
+    - `LeadEdge`
+    - `LeadSourceSummary`
+    - `LeadResolution`
+  - Deleted the stale `LeadEdgeRecord` noun from the live lead core.
+  - `src/gotta/lead/resolve.py` now owns the shared lead-kernel synthesis path:
+    - `resolve_lead_resolution(...)`
+  - `src/gotta/plugins/session/lead/payload.py` no longer synthesizes target
+    selection, edge building, and source aggregation inline; it consumes the
+    named lead-kernel resolution and only performs session-surface assembly.
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/lead src/gotta/plugins/session/lead`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it replaced one more overloaded hot kernel with a
+  named executable center and deleted stale lead-kernel residue. More
+  lead-kernel taxonomy cleanup of this exact species would not; the next honest
+  move is the `session analyze` render hotspot, not another lead rename pass.
 
 ## Current Tranche
 
@@ -504,10 +524,13 @@ This file is the execution queue.
 - [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
   payload surfaces.
 - [x] Type the event-sourced `todo` core and payload seam.
-- [ ] Next tranche: treat the shared-core contract-collapse phase as settled
-  and switch to hot-kernel reduction, starting with:
-  - `src/gotta/plugins/session/lead/payload.py`
+- [x] Start hot-kernel reduction in the lead kernel by landing:
+  - `LeadEdge`
+  - `LeadResolution`
+  - `resolve_lead_resolution(...)`
+- [ ] Next tranche: continue hot-kernel reduction in:
   - `src/gotta/plugins/session/analyze/render.py`
+  - `src/gotta/plugins/session/lead/render.py`
 
 ## Non-Negotiable Invariants
 
@@ -632,11 +655,11 @@ This file is the execution queue.
 
 ## Phase 2: Type The Exported Payload Families
 
-- [ ] Type the lead kernel:
-  - `LeadMention`
-  - `LeadEdge`
-  - `LeadSourceSummary`
-  - `LeadResolution`
+- [x] Type the lead kernel:
+  - [x] `LeadMention`
+  - [x] `LeadEdge`
+  - [x] `LeadSourceSummary`
+  - [x] `LeadResolution`
 - [ ] Type the derived view payload families:
   - `GraphPayload`
   - [x] `TimelineEvent`
@@ -788,7 +811,7 @@ This file is the execution queue.
   views to it.
 - [ ] Keep pushing derived views toward ledger/state contracts instead of
   concrete filesystem ownership.
-- [ ] Type the lead kernel.
+- [x] Type the lead kernel.
 - [x] Type the first analyze/graph/timeline/session payload families.
 - [ ] Replace anonymous manifest and lead aggregate records with named types.
 - [ ] Fix `gsheets` capture semantics.
@@ -796,7 +819,7 @@ This file is the execution queue.
 - [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
   read payload surfaces.
 - [x] Type the event-sourced `todo` core and payload seam.
-- [ ] Switch from shared-core contract collapse to hot-kernel reduction once
+- [x] Switch from shared-core contract collapse to hot-kernel reduction once
   the last authored-state seam is typed.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 

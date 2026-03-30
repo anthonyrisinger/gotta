@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from gotta.content.model import ContentSnapshot
 from typing import TypedDict
 
 LEADS_CACHE_NAME = "leads.json"
@@ -35,7 +37,7 @@ class LeadSearchOrigin(TypedDict):
     sourceLocator: str
 
 
-class LeadEdgeRecord(LeadVisibility):
+class LeadEdge(LeadVisibility):
     sourceChecksum: str
     sourceLocator: str
     sourceArtifactLocator: str
@@ -78,3 +80,10 @@ class LeadSourceSummary(LeadVisibility):
     bestSearchRank: int
     searchLikeSourceCount: int
     searchOrigins: list[LeadSearchOrigin]
+
+
+@dataclass(frozen=True, slots=True)
+class LeadResolution:
+    selected_snapshots: list[ContentSnapshot]
+    edge_records: list[LeadEdge]
+    lead_sources: list[LeadSourceSummary]

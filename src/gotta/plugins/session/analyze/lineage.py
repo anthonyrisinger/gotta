@@ -8,7 +8,7 @@ from gotta.content.backend import scan_content_snapshots
 from gotta.content.model import ContentSnapshot
 from gotta.content.path import content_locator
 from gotta.lead.aggregate import aggregate_lead_sources
-from gotta.lead.edge import build_lead_edge_records
+from gotta.lead.edge import build_lead_edges
 from gotta.lead.snapshot import (
     snapshot_artifact_locator,
     snapshot_display_name,
@@ -260,7 +260,7 @@ def lineage_payload(dirs, *, session_ref: str = "") -> LineagePayload:
         for (source, checksum), plugins in sorted(edge_plugins.items())
     ]
     revision_edges = _revision_edges(snapshots)
-    lead_edges = build_lead_edge_records(
+    lead_edges = build_lead_edges(
         snapshots,
         entries,
         classify_kind=lead_kind,
