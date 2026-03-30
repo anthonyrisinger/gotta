@@ -1114,6 +1114,41 @@ This file is the execution queue.
   primarily provider-local pressure, with one shared lead aggregation kernel
   still available if a later cycle wants to squeeze non-provider density even
   further.
+- [x] Lead aggregation-state hardening landed.
+  - `src/gotta/lead/aggregate.py` now centers state-owned aggregation methods:
+    - `_AggregatedLeadSourceState.from_edge(...)`
+    - `_AggregatedLeadSourceState.absorb(...)`
+    - `_AggregatedLeadSourceState.render_summary(...)`
+  - `aggregate_lead_sources(...)` no longer owns all of:
+    - edge accumulation
+    - search-origin deduplication
+    - context/example capture
+    - visibility folding
+    - final summary rendering
+    inline inside one function.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/lead/aggregate.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'test_session_leads_orders_best_first_without_quality_thresholds or test_session_leads_shows_low_signal_only_case_without_hiding_it or test_session_leads_preserve_search_result_order_within_search_artifacts or test_default_lead_index_backend_derives_leads_from_current_ledger'`
+    - `4 passed`
+    - `uv run ruff check src/gotta/lead/aggregate.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/lead/aggregate.py:aggregate_lead_sources` dropped off the
+      hotspot board
+    - the remaining heat is now overwhelmingly provider- or surface-local:
+      - GitHub search/parse/render
+      - Jira coercion/rendering
+      - Slack retrieval/search
+      - GDrive/Granola projectors
+      - Confluence draw.io rendering
+      - `src/gotta/plugins/oops.py:cmd_oops`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed the last shared lead aggregation kernel
+  without reopening lead contracts. More shared-core hardening of this exact
+  species would likely be churn now. What remains is minor-release-safe future
+  work: provider-local pressure plus one local authored-state surface kernel in
+  `oops`.
 
 ## Current Tranche
 
@@ -1457,10 +1492,9 @@ This file is the execution queue.
   - `src/gotta/plugins/github/render.py`
 - [ ] Reduce density and typing pressure in the lead kernel:
   - `src/gotta/plugins/session/lead/payload.py`
-  - `src/gotta/lead/aggregate.py`
   - `src/gotta/lead/rank.py`
   - `src/gotta/lead/edge.py`
-- [ ] Reduce provider-local contract density in:
+- [ ] Reduce provider-local or local-surface contract density in:
   - `src/gotta/plugins/jira.py`
   - `src/gotta/plugins/oops.py`
   - `src/gotta/plugins/slack.py`

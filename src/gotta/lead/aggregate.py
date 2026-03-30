@@ -31,75 +31,107 @@ class _AggregatedLeadSourceState:
     contexts: list[str] = field(default_factory=list)
     visibility: dict[str, object] = field(default_factory=dict)
 
-
-def aggregate_lead_sources(
-    edge_records: list[LeadEdge],
-) -> list[LeadSourceSummary]:
-    aggregated: dict[str, _AggregatedLeadSourceState] = {}
-    for edge in edge_records:
-        locator = edge["targetLocator"]
-        state = aggregated.setdefault(
-            locator,
-            _AggregatedLeadSourceState(
-                locator=locator,
-                provider=edge["provider"],
-                kind=edge["kind"],
-                follow_command=edge["followCommand"],
-                first_party=edge["firstParty"],
-                search_seed=edge["searchSeed"],
-                materialized=edge["materialized"],
-            ),
+    @classmethod
+    def from_edge(cls, edge: LeadEdge) -> _AggregatedLeadSourceState:
+        return cls(
+            locator=edge["targetLocator"],
+            provider=edge["provider"],
+            kind=edge["kind"],
+            follow_command=edge["followCommand"],
+            first_party=edge["firstParty"],
+            search_seed=edge["searchSeed"],
+            materialized=edge["materialized"],
         )
-        state.first_party = bool(state.first_party or edge["firstParty"])
-        state.search_seed = bool(state.search_seed or edge["searchSeed"])
-        state.materialized = bool(state.materialized or edge["materialized"])
-        state.occurrence_count += int(edge["occurrenceCount"])
-        state.relation_kinds.add(edge["relation"])
-        state.source_checksums.add(edge["sourceChecksum"])
-        if edge["sourceSearchLike"]:
-            state.search_like_checksums.add(edge["sourceChecksum"])
-            search_rank = int(edge["sourceRank"] or 0)
-            if search_rank > 0:
-                search_origin: LeadSearchOrigin = {
-                    "provider": edge["sourceProvider"],
-                    "subcommand": edge["sourceSubcommand"],
-                    "rank": search_rank,
-                    "artifactLocator": edge["sourceArtifactLocator"],
-                    "sourceLocator": edge["sourceLocator"],
-                }
-                origin_key = (
-                    search_origin["provider"],
-                    search_origin["subcommand"],
-                    search_origin["rank"],
-                    search_origin["artifactLocator"],
-                    search_origin["sourceLocator"],
-                )
-                if origin_key not in state.search_origin_keys:
-                    state.search_origin_keys.add(origin_key)
-                    state.search_origins.append(search_origin)
-        if not state.example_raw:
-            raws = [str(value) for value in edge["rawExamples"] if str(value)]
-            if raws:
-                state.example_raw = raws[0]
+
+    def absorb(self, edge: LeadEdge) -> None:
+        self.first_party = bool(self.first_party or edge["firstParty"])
+        self.search_seed = bool(self.search_seed or edge["searchSeed"])
+        self.materialized = bool(self.materialized or edge["materialized"])
+        self.occurrence_count += int(edge["occurrenceCount"])
+        self.relation_kinds.add(edge["relation"])
+        self.source_checksums.add(edge["sourceChecksum"])
+        self._record_search_origin(edge)
+        self._record_examples(edge)
+        self._record_targets(edge)
+        self._record_contexts(edge)
+        self.visibility = best_visibility_metadata(self.visibility, edge)
+
+    def render_summary(self) -> LeadSourceSummary:
+        search_origins = self._sorted_search_origins()
+        rendered_item: LeadSourceSummary = {
+            "locator": self.locator,
+            "provider": self.provider,
+            "kind": self.kind,
+            "followCommand": self.follow_command,
+            "firstParty": self.first_party,
+            "searchSeed": self.search_seed,
+            "materialized": self.materialized,
+            "occurrenceCount": self.occurrence_count,
+            "artifactCount": len(self.source_checksums),
+            "relationKinds": sorted(str(value) for value in self.relation_kinds),
+            "artifactLocators": sorted(str(value) for value in self.artifact_locators),
+            "contentLocators": sorted(str(value) for value in self.content_locators),
+            "exampleRaw": self.example_raw,
+            "contexts": list(self.contexts),
+            "bestSearchRank": int(search_origins[0].get("rank") or 0)
+            if search_origins
+            else 0,
+            "searchLikeSourceCount": len(self.search_like_checksums),
+            "searchOrigins": search_origins[:5],
+        }
+        for key, value in best_visibility_metadata(self.visibility).items():
+            if value:
+                rendered_item[key] = value
+        return rendered_item
+
+    def _record_search_origin(self, edge: LeadEdge) -> None:
+        if not edge["sourceSearchLike"]:
+            return
+        self.search_like_checksums.add(edge["sourceChecksum"])
+        search_rank = int(edge["sourceRank"] or 0)
+        if search_rank <= 0:
+            return
+        search_origin: LeadSearchOrigin = {
+            "provider": edge["sourceProvider"],
+            "subcommand": edge["sourceSubcommand"],
+            "rank": search_rank,
+            "artifactLocator": edge["sourceArtifactLocator"],
+            "sourceLocator": edge["sourceLocator"],
+        }
+        origin_key = (
+            search_origin["provider"],
+            search_origin["subcommand"],
+            search_origin["rank"],
+            search_origin["artifactLocator"],
+            search_origin["sourceLocator"],
+        )
+        if origin_key in self.search_origin_keys:
+            return
+        self.search_origin_keys.add(origin_key)
+        self.search_origins.append(search_origin)
+
+    def _record_examples(self, edge: LeadEdge) -> None:
+        if self.example_raw:
+            return
+        raws = [str(value) for value in edge["rawExamples"] if str(value)]
+        if raws:
+            self.example_raw = raws[0]
+
+    def _record_targets(self, edge: LeadEdge) -> None:
         for artifact_locator_value in edge["targetArtifactLocators"]:
-            state.artifact_locators.add(str(artifact_locator_value))
+            self.artifact_locators.add(str(artifact_locator_value))
         for content_locator_value in edge["targetContentLocators"]:
-            state.content_locators.add(str(content_locator_value))
+            self.content_locators.add(str(content_locator_value))
+
+    def _record_contexts(self, edge: LeadEdge) -> None:
         for snippet in edge["contexts"]:
             value = str(snippet).strip()
-            if value and value not in state.contexts and len(state.contexts) < 3:
-                state.contexts.append(value)
-        state.visibility = best_visibility_metadata(
-            state.visibility,
-            edge,
-        )
-    rendered: list[LeadSourceSummary] = []
-    for locator, state in aggregated.items():
-        relation_kinds = {str(value) for value in state.relation_kinds}
-        artifact_count = len(state.source_checksums)
-        search_like_source_count = len(state.search_like_checksums)
-        search_origins: list[LeadSearchOrigin] = sorted(
-            list(state.search_origins),
+            if value and value not in self.contexts and len(self.contexts) < 3:
+                self.contexts.append(value)
+
+    def _sorted_search_origins(self) -> list[LeadSearchOrigin]:
+        return sorted(
+            list(self.search_origins),
             key=lambda item: (
                 int(item.get("rank") or 0)
                 if int(item.get("rank") or 0) > 0
@@ -109,36 +141,19 @@ def aggregate_lead_sources(
                 str(item.get("artifactLocator") or "").casefold(),
             ),
         )
-        visibility = best_visibility_metadata(state.visibility)
-        rendered_item: LeadSourceSummary = {
-            "locator": locator,
-            "provider": state.provider,
-            "kind": state.kind,
-            "followCommand": state.follow_command,
-            "firstParty": state.first_party,
-            "searchSeed": state.search_seed,
-            "materialized": state.materialized,
-            "occurrenceCount": state.occurrence_count,
-            "artifactCount": artifact_count,
-            "relationKinds": sorted(relation_kinds),
-            "artifactLocators": sorted(str(value) for value in state.artifact_locators),
-            "contentLocators": sorted(str(value) for value in state.content_locators),
-            "exampleRaw": state.example_raw,
-            "contexts": list(state.contexts),
-            "bestSearchRank": int(search_origins[0].get("rank") or 0)
-            if search_origins
-            else 0,
-            "searchLikeSourceCount": search_like_source_count,
-            "searchOrigins": search_origins[:5],
-        }
-        for key in (
-            "visibility_level",
-            "visibility_boundary",
-            "visibility_confidence",
-            "visibility_basis",
-        ):
-            value = visibility.get(key)
-            if value:
-                rendered_item[key] = value
-        rendered.append(rendered_item)
-    return sorted(rendered, key=lead_source_best_first_sort_key)
+
+
+def aggregate_lead_sources(
+    edge_records: list[LeadEdge],
+) -> list[LeadSourceSummary]:
+    aggregated: dict[str, _AggregatedLeadSourceState] = {}
+    for edge in edge_records:
+        locator = edge["targetLocator"]
+        state = aggregated.setdefault(
+            locator, _AggregatedLeadSourceState.from_edge(edge)
+        )
+        state.absorb(edge)
+    return sorted(
+        (state.render_summary() for state in aggregated.values()),
+        key=lead_source_best_first_sort_key,
+    )
