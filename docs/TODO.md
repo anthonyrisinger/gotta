@@ -715,6 +715,65 @@ This file is the execution queue.
   architectural residue. More shared-core collapse of this exact species would
   now be churn. The next honest move is provider-local / algorithmic pressure
   unless runtime-selected alternate backends become real code instead of prose.
+- [x] Analyze focus-kernel tranche landed.
+  - `src/gotta/plugins/session/analyze/focus.py` now owns the focus-selection
+    kernel instead of leaving focus synthesis split across both payload
+    builders.
+  - The named focus owner now centers:
+    - `LineageFocusSelection`
+    - `SemanticFocusSelection`
+    - `select_lineage_focus(...)`
+    - `select_semantic_focus(...)`
+  - `src/gotta/plugins/session/analyze/lineage.py` now assembles
+    `LineageFocusPayload` around the named selection instead of owning:
+    - candidate scoring
+    - seed selection
+    - neighborhood expansion
+    - neighbor pruning
+  - `src/gotta/plugins/session/analyze/semantic.py` now assembles
+    `SemanticFocusPayload` around the named selection instead of owning:
+    - node scoring
+    - seed selection
+    - incident-edge collection
+    - neighbor ranking
+  - Focused validation is clean:
+    - `uv run pytest -q tests/test_session.py -k 'session_analyze_focus or session_analyze_lineage_focus or session_analyze_all_mode_focus_returns_combined_outputs'`
+    - `5 passed`
+    - `uvx pyright src/gotta/plugins/session/analyze/focus.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it replaced two overloaded focus payload builders with
+  one truthful focus-selection owner. More focus-kernel reshuffling of this
+  exact species would likely become helper confetti. The next honest move was
+  the still-hot analyze render seam, not more registry or storage churn.
+- [x] Analyze render-access tranche landed.
+  - `src/gotta/plugins/session/analyze/render.py` no longer spelunks optional
+    TypedDict payloads directly across mermaid, text, and markdown rendering.
+  - The render seam now goes through one local render-access layer:
+    - `_mapping(...)`
+    - `_mapping_list_field(...)`
+    - `_text_field(...)`
+    - `_int_field(...)`
+    - `_bool_field(...)`
+    - `_string_list_field(...)`
+  - This tranche deleted the dominant type-pressure center in the analyze
+    render surface without reopening payload contracts.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/analyze/render.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'analyze'`
+    - `22 passed`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/analyze/render.py` dropped off the type board
+    - overall type pressure dropped from `316 diagnostics` to `106 diagnostics`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed the dominant render/type-pressure seam from
+  the current analyze surface and made the next pressure centers clearer. More
+  render access cleanup of this exact species would likely be churn. Fresh
+  study says the next honest pressure centers are:
+  - `src/gotta/plugins/session/analyze/focus.py:select_lineage_focus`
+  - `src/gotta/plugins/session/analyze/lineage.py:lineage_payload`
+  - then provider-local kernels like GitHub search and Jira field coercion
 
 ## Current Tranche
 
@@ -766,8 +825,14 @@ This file is the execution queue.
   implicit local-command fallback.
 - [x] Land explicit graph/lead/semantic derived-backend contracts and delete the
   stale generic `IndexStore` placeholder.
-- [ ] Next tranche: shift into provider-local / algorithmic pressure unless a
-  genuinely missing executable backend owner survives fresh study.
+- [x] Collapse the `session analyze` focus seam into one truthful focus-kernel
+  owner.
+- [x] Collapse the `session analyze` render seam onto one render-access layer
+  and remove its direct optional-payload spelunking.
+- [ ] Next tranche: reduce the still-hot analyze kernels first, starting with
+  `select_lineage_focus(...)` and `lineage_payload(...)`, then reassess whether
+  the remaining honest work is still shared algorithmic pressure or fully
+  provider-local pressure.
 
 ## Non-Negotiable Invariants
 

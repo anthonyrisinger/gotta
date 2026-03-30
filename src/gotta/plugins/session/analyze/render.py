@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from ..core import (
     ANALYZE_ANCHOR_PREVIEW_LIMIT,
     ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT,
@@ -20,6 +22,48 @@ from .model import (
     SemanticFocusPayload,
     SemanticPayload,
 )
+
+
+def _mapping(value: object) -> dict[str, object]:
+    return cast(dict[str, object], value) if isinstance(value, dict) else {}
+
+
+def _mapping_list_field(item: object, key: str) -> list[dict[str, object]]:
+    value = _mapping(item).get(key)
+    if not isinstance(value, list):
+        return []
+    return [_mapping(entry) for entry in value]
+
+
+def _text_field(item: object, key: str) -> str:
+    value = _mapping(item).get(key)
+    return str(value or "")
+
+
+def _bool_field(item: object, key: str) -> bool:
+    return bool(_mapping(item).get(key))
+
+
+def _int_field(item: object, key: str) -> int:
+    value = _mapping(item).get(key)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int | float):
+        return int(value)
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        return int(text)
+    except ValueError:
+        return 0
+
+
+def _string_list_field(item: object, key: str) -> list[str]:
+    value = _mapping(item).get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(entry) for entry in value if str(entry)]
 
 
 def render_semantic_mermaid(payload: SemanticPayload | SemanticFocusPayload) -> str:
@@ -42,24 +86,24 @@ def render_semantic_mermaid(payload: SemanticPayload | SemanticFocusPayload) -> 
         )
         return "\n".join(lines)
     if payload.get("nextStep"):
-        lines.append(f'  note["{mermaid_label(str(payload["nextStep"]))}"]')
+        lines.append(f'  note["{mermaid_label(_text_field(payload, "nextStep"))}"]')
         lines.append("  class note emptyState")
-    for node in payload["nodes"]:
-        node_id = analysis_mermaid_id("sem", str(node["id"]))
-        label = mermaid_label(str(node["label"]))
-        kind = str(node["kind"]).replace("-", "_")
+    for node in _mapping_list_field(payload, "nodes"):
+        node_id = analysis_mermaid_id("sem", _text_field(node, "id"))
+        label = mermaid_label(_text_field(node, "label"))
+        kind = _text_field(node, "kind").replace("-", "_")
         if (
-            str(node.get("kind")) == "source"
-            and not bool(node.get("materialized"))
-            and bool(node.get("discovered"))
+            _text_field(node, "kind") == "source"
+            and not _bool_field(node, "materialized")
+            and _bool_field(node, "discovered")
         ):
             kind = "source_gap"
         lines.append(f'  {node_id}["{label}"]')
         lines.append(f"  class {node_id} {kind}")
-    for edge in payload["edges"]:
-        source_id = analysis_mermaid_id("sem", str(edge["source"]))
-        target_id = analysis_mermaid_id("sem", str(edge["target"]))
-        label = mermaid_label(str(edge["label"]))
+    for edge in _mapping_list_field(payload, "edges"):
+        source_id = analysis_mermaid_id("sem", _text_field(edge, "source"))
+        target_id = analysis_mermaid_id("sem", _text_field(edge, "target"))
+        label = mermaid_label(_text_field(edge, "label"))
         lines.append(f"  {source_id} -->|{label}| {target_id}")
     lines.extend(
         [
@@ -102,40 +146,40 @@ def render_analysis_mermaid(payload: LineagePayload | LineageFocusPayload) -> st
         )
         return "\n".join(lines)
     if payload.get("nextStep"):
-        lines.append(f'  note["{mermaid_label(str(payload["nextStep"]))}"]')
+        lines.append(f'  note["{mermaid_label(_text_field(payload, "nextStep"))}"]')
         lines.append("  class note emptyState")
-    for source in payload["sources"]:
-        locator = str(source["locator"])
+    for source in _mapping_list_field(payload, "sources"):
+        locator = _text_field(source, "locator")
         node_id = analysis_mermaid_id("src", locator)
-        actors = ", ".join(str(value) for value in source.get("actors") or [])
+        actors = ", ".join(_string_list_field(source, "actors"))
         label_parts = [locator]
         if actors:
             label_parts.append(f"actor: {actors}")
-        if source.get("variant"):
-            label_parts.append(f"renderings: {int(source.get('variantCount') or 0)}")
-        elif source.get("duplicateMaterialization"):
+        if _bool_field(source, "variant"):
+            label_parts.append(f"renderings: {_int_field(source, 'variantCount')}")
+        elif _bool_field(source, "duplicateMaterialization"):
             label_parts.append(
-                f"materializations: {int(source.get('contentCount') or 0)}"
+                f"materializations: {_int_field(source, 'contentCount')}"
             )
         label = mermaid_label("\n".join(label_parts))
         lines.append(f'  {node_id}["{label}"]')
-        if source["collision"]:
+        if _bool_field(source, "collision"):
             lines.append(f"  class {node_id} collision")
-        elif source.get("variant"):
+        elif _bool_field(source, "variant"):
             lines.append(f"  class {node_id} variant")
-        elif source.get("duplicateMaterialization"):
+        elif _bool_field(source, "duplicateMaterialization"):
             lines.append(f"  class {node_id} duplicate")
         else:
             lines.append(f"  class {node_id} source")
-    for content in payload["content"]:
-        checksum = str(content["checksum"])
-        providers = ", ".join(str(value) for value in content.get("providers") or [])
-        actors = ", ".join(str(value) for value in content.get("actors") or [])
-        label_parts = [str(content["preferredName"])]
+    for content in _mapping_list_field(payload, "content"):
+        checksum = _text_field(content, "checksum")
+        providers = ", ".join(_string_list_field(content, "providers"))
+        actors = ", ".join(_string_list_field(content, "actors"))
+        label_parts = [_text_field(content, "preferredName")]
         resource_hints = [
-            str(value) for value in content.get("resourceHints") or [] if str(value)
+            value for value in _string_list_field(content, "resourceHints") if value
         ]
-        if bool(content.get("nameCollision")) and resource_hints:
+        if _bool_field(content, "nameCollision") and resource_hints:
             label_parts.append(resource_hints[0])
         if providers:
             label_parts.append(providers)
@@ -146,39 +190,42 @@ def render_analysis_mermaid(payload: LineagePayload | LineageFocusPayload) -> st
         node_id = analysis_mermaid_id("art", checksum)
         lines.append(f'  {node_id}["{label}"]')
         lines.append(f"  class {node_id} content")
-    for edge in payload["sourceEdges"]:
-        source_id = analysis_mermaid_id("src", str(edge["source"]))
-        content_id = analysis_mermaid_id("art", str(edge["checksum"]))
-        label_parts = [", ".join(edge["plugins"])]
-        actors = ", ".join(str(value) for value in edge.get("actors") or [])
+    for edge in _mapping_list_field(payload, "sourceEdges"):
+        source_id = analysis_mermaid_id("src", _text_field(edge, "source"))
+        content_id = analysis_mermaid_id("art", _text_field(edge, "checksum"))
+        label_parts = [", ".join(_string_list_field(edge, "plugins"))]
+        actors = ", ".join(_string_list_field(edge, "actors"))
         if actors:
             label_parts.append(f"actor: {actors}")
         label = mermaid_label("\n".join(part for part in label_parts if part))
         lines.append(f"  {source_id} -->|{label}| {content_id}")
-    for edge in payload["revisionEdges"]:
-        from_id = analysis_mermaid_id("art", str(edge["from"]))
-        to_id = analysis_mermaid_id("art", str(edge["to"]))
+    for edge in _mapping_list_field(payload, "revisionEdges"):
+        from_id = analysis_mermaid_id("art", _text_field(edge, "from"))
+        to_id = analysis_mermaid_id("art", _text_field(edge, "to"))
         label = mermaid_label(
-            f"revision:{str(edge['locator'])}\n{str(edge.get('rendering') or '')}".rstrip()
+            f"revision:{_text_field(edge, 'locator')}\n{_text_field(edge, 'rendering')}".rstrip()
         )
         lines.append(f"  {from_id} -->|{label}| {to_id}")
-    seen_source_nodes = {str(source["locator"]) for source in payload["sources"]}
-    for lead_source in payload.get("leadSources") or []:
-        locator = str(lead_source["locator"])
+    seen_source_nodes = {
+        _text_field(source, "locator")
+        for source in _mapping_list_field(payload, "sources")
+    }
+    for lead_source in _mapping_list_field(payload, "leadSources"):
+        locator = _text_field(lead_source, "locator")
         if locator in seen_source_nodes:
             continue
         node_id = analysis_mermaid_id("src", locator)
-        label_parts = [locator, f"lead: {str(lead_source['provider'])}"]
-        if not bool(lead_source.get("materialized")):
+        label_parts = [locator, f"lead: {_text_field(lead_source, 'provider')}"]
+        if not _bool_field(lead_source, "materialized"):
             label_parts.append("not yet materialized")
         label = mermaid_label("\n".join(label_parts))
         lines.append(f'  {node_id}["{label}"]')
         lines.append(f"  class {node_id} leadgap")
-    for edge in payload.get("leadEdges") or []:
-        content_id = analysis_mermaid_id("art", str(edge["sourceChecksum"]))
-        source_id = analysis_mermaid_id("src", str(edge["targetLocator"]))
-        relation = str(edge.get("relation") or "links_to")
-        count = int(edge.get("occurrenceCount") or 0)
+    for edge in _mapping_list_field(payload, "leadEdges"):
+        content_id = analysis_mermaid_id("art", _text_field(edge, "sourceChecksum"))
+        source_id = analysis_mermaid_id("src", _text_field(edge, "targetLocator"))
+        relation = _text_field(edge, "relation") or "links_to"
+        count = _int_field(edge, "occurrenceCount")
         label = relation if count <= 1 else f"{relation} x{count}"
         lines.append(f"  {content_id} -.->|{mermaid_label(label)}| {source_id}")
     lines.extend(
@@ -198,79 +245,89 @@ def render_analysis_mermaid(payload: LineagePayload | LineageFocusPayload) -> st
 
 def render_analysis_overview_text(payload: AnalysisOverviewPayload) -> str:
     lines = [
-        f"session: {payload['sessionDir']}",
-        f"content: {payload['contentDir']}",
+        f"session: {_text_field(payload, 'sessionDir')}",
+        f"content: {_text_field(payload, 'contentDir')}",
         (
             "artifacts: "
-            f"{payload['contentCount']} "
-            f"(discovery {payload['discoveryArtifactCount']}, "
-            f"evidence {payload['evidenceArtifactCount']})"
+            f"{_int_field(payload, 'contentCount')} "
+            f"(discovery {_int_field(payload, 'discoveryArtifactCount')}, "
+            f"evidence {_int_field(payload, 'evidenceArtifactCount')})"
         ),
         (
             "graph: "
-            f"{payload['sourceCount']} sources, "
-            f"{payload['leadSourceCount']} lead sources, "
-            f"{payload['leadEdgeCount']} lead edges"
+            f"{_int_field(payload, 'sourceCount')} sources, "
+            f"{_int_field(payload, 'leadSourceCount')} lead sources, "
+            f"{_int_field(payload, 'leadEdgeCount')} lead edges"
         ),
         (
             "semantic: "
-            f"{payload['semanticNodeCount']} nodes, "
-            f"{payload['semanticEdgeCount']} edges"
+            f"{_int_field(payload, 'semanticNodeCount')} nodes, "
+            f"{_int_field(payload, 'semanticEdgeCount')} edges"
         ),
     ]
     shape_parts: list[str] = []
     if bool(payload.get("sourceHeavy")):
         shape_parts.append(
-            f"source-heavy ({int(payload['sourceNodeCount'])}/{int(payload['semanticNodeCount'])} source/query/provider nodes)"
+            f"source-heavy ({_int_field(payload, 'sourceNodeCount')}/{_int_field(payload, 'semanticNodeCount')} source/query/provider nodes)"
         )
     if bool(payload.get("structuralHeavy")):
         shape_parts.append(
-            f"structural-edge-heavy ({int(payload['structuralEdgeCount'])}/{int(payload['semanticEdgeCount'])} structural edges)"
+            f"structural-edge-heavy ({_int_field(payload, 'structuralEdgeCount')}/{_int_field(payload, 'semanticEdgeCount')} structural edges)"
         )
     if shape_parts:
         lines.append("shape: " + "; ".join(shape_parts))
     if payload.get("nextStep"):
-        lines.append(f"next: {payload['nextStep']}")
-    if payload["providerClusters"]:
+        lines.append(f"next: {_text_field(payload, 'nextStep')}")
+    provider_clusters = _mapping_list_field(payload, "providerClusters")
+    if provider_clusters:
         lines.append("provider clusters:")
-        for cluster in payload["providerClusters"]:
-            lines.append(f"  - {cluster['provider']}: {cluster['nodeCount']} nodes")
-    if payload["dominantKinds"]:
+        for cluster in provider_clusters:
+            lines.append(
+                f"  - {_text_field(cluster, 'provider')}: {_int_field(cluster, 'nodeCount')} nodes"
+            )
+    dominant_kinds = _mapping_list_field(payload, "dominantKinds")
+    if dominant_kinds:
         lines.append("dominant node kinds:")
-        for item in payload["dominantKinds"]:
-            lines.append(f"  - {item['kind']}: {item['nodeCount']}")
-    if payload["dominantRelations"]:
+        for item in dominant_kinds:
+            lines.append(
+                f"  - {_text_field(item, 'kind')}: {_int_field(item, 'nodeCount')}"
+            )
+    dominant_relations = _mapping_list_field(payload, "dominantRelations")
+    if dominant_relations:
         lines.append("dominant relations:")
-        for item in payload["dominantRelations"]:
-            lines.append(f"  - {item['label']}: {item['edgeCount']}")
-    if payload["materializedAnchors"]:
+        for item in dominant_relations:
+            lines.append(
+                f"  - {_text_field(item, 'label')}: {_int_field(item, 'edgeCount')}"
+            )
+    anchors = _mapping_list_field(payload, "materializedAnchors")
+    if anchors:
         lines.append("materialized anchors:")
-        for anchor in payload["materializedAnchors"]:
-            providers = ", ".join(str(value) for value in anchor.get("providers") or [])
+        for anchor in anchors:
+            providers = ", ".join(_string_list_field(anchor, "providers"))
             visibility = visibility_summary(anchor)
             lines.append(
-                f"  - [{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']}"
+                f"  - [{_text_field(anchor, 'artifactKind') or 'artifact'}] {_text_field(anchor, 'preferredName')}"
             )
             if providers:
                 lines.append(f"    providers: {providers}")
             if visibility:
                 lines.append(f"    visibility: {visibility}")
-            lines.append(f"    follow: `{anchor['followCommand']}`")
-    if payload["querySeeds"]:
+            lines.append(f"    follow: `{_text_field(anchor, 'followCommand')}`")
+    query_seeds = _mapping_list_field(payload, "querySeeds")
+    if query_seeds:
         lines.append("query seeds:")
-        for node in payload["querySeeds"]:
-            lines.append(f"  - {node['label']}")
-    if payload["bestLeads"]:
+        for node in query_seeds:
+            lines.append(f"  - {_text_field(node, 'label')}")
+    best_leads = _mapping_list_field(payload, "bestLeads")
+    if best_leads:
         lines.append("best leads:")
-        for lead in payload["bestLeads"]:
-            relation = ", ".join(
-                str(value) for value in lead.get("relationKinds") or [] if str(value)
-            )
+        for lead in best_leads:
+            relation = ", ".join(_string_list_field(lead, "relationKinds"))
             lines.append(
                 f"  - [{'; '.join(lead_signal_labels(lead, aggregated=True))}] "
-                f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+                f"{_text_field(lead, 'locator')} ({_text_field(lead, 'provider')}, {relation or 'lead'})"
             )
-            lines.append(f"    follow: `{lead['followCommand']}`")
+            lines.append(f"    follow: `{_text_field(lead, 'followCommand')}`")
     lines.append(
         "focus: use `gotta session analyze --focus <locator|keyword> --session <session>` "
         "to inspect one local neighborhood instead of dumping the full graph."
@@ -284,155 +341,167 @@ def render_lineage_overview_text(
     limit: int,
 ) -> str:
     lines = [
-        f"session: {payload['sessionDir']}",
-        f"content: {payload['contentDir']}",
+        f"session: {_text_field(payload, 'sessionDir')}",
+        f"content: {_text_field(payload, 'contentDir')}",
         (
             "artifacts: "
-            f"{payload['contentCount']} "
-            f"(discovery {payload['discoveryArtifactCount']}, "
-            f"evidence {payload['evidenceArtifactCount']})"
+            f"{_int_field(payload, 'contentCount')} "
+            f"(discovery {_int_field(payload, 'discoveryArtifactCount')}, "
+            f"evidence {_int_field(payload, 'evidenceArtifactCount')})"
         ),
         (
             "graph: "
-            f"{payload['sourceCount']} sources, "
-            f"{payload['leadSourceCount']} lead sources, "
-            f"{payload['leadEdgeCount']} lead edges"
+            f"{_int_field(payload, 'sourceCount')} sources, "
+            f"{_int_field(payload, 'leadSourceCount')} lead sources, "
+            f"{_int_field(payload, 'leadEdgeCount')} lead edges"
         ),
     ]
     if payload.get("nextStep"):
-        lines.append(f"next: {payload['nextStep']}")
-    sources = [dict(item) for item in (payload.get("sources") or [])[: max(limit, 0)]]
+        lines.append(f"next: {_text_field(payload, 'nextStep')}")
+    sources = _mapping_list_field(payload, "sources")[: max(limit, 0)]
     if sources:
         lines.append("materialized sources:")
         for source in sources:
             lines.append(
-                f"  - {source['locator']} "
-                f"({int(source.get('contentCount') or 0)} materializations)"
+                f"  - {_text_field(source, 'locator')} "
+                f"({_int_field(source, 'contentCount')} materializations)"
             )
-    if payload["leadSources"]:
+    lead_sources = _mapping_list_field(payload, "leadSources")
+    if lead_sources:
         lines.append("best leads:")
-        for lead in (payload.get("leadSources") or [])[: max(limit, 0)]:
-            relation = ", ".join(
-                str(value) for value in lead.get("relationKinds") or [] if str(value)
-            )
+        for lead in lead_sources[: max(limit, 0)]:
+            relation = ", ".join(_string_list_field(lead, "relationKinds"))
             lines.append(
                 f"  - [{'; '.join(lead_signal_labels(lead, aggregated=True))}] "
-                f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+                f"{_text_field(lead, 'locator')} ({_text_field(lead, 'provider')}, {relation or 'lead'})"
             )
-            lines.append(f"    follow: `{lead['followCommand']}`")
+            lines.append(f"    follow: `{_text_field(lead, 'followCommand')}`")
     return "\n".join(lines)
 
 
 def render_semantic_overview_text(payload: AnalysisOverviewPayload) -> str:
     lines = [
-        f"session: {payload['sessionDir']}",
-        f"content: {payload['contentDir']}",
+        f"session: {_text_field(payload, 'sessionDir')}",
+        f"content: {_text_field(payload, 'contentDir')}",
         (
             "artifacts: "
-            f"{payload['contentCount']} "
-            f"(discovery {payload['discoveryArtifactCount']}, "
-            f"evidence {payload['evidenceArtifactCount']})"
+            f"{_int_field(payload, 'contentCount')} "
+            f"(discovery {_int_field(payload, 'discoveryArtifactCount')}, "
+            f"evidence {_int_field(payload, 'evidenceArtifactCount')})"
         ),
         (
             "semantic: "
-            f"{payload['semanticNodeCount']} nodes, "
-            f"{payload['semanticEdgeCount']} edges"
+            f"{_int_field(payload, 'semanticNodeCount')} nodes, "
+            f"{_int_field(payload, 'semanticEdgeCount')} edges"
         ),
     ]
     shape_parts: list[str] = []
     if bool(payload.get("sourceHeavy")):
         shape_parts.append(
-            f"source-heavy ({int(payload['sourceNodeCount'])}/{int(payload['semanticNodeCount'])} source/query/provider nodes)"
+            f"source-heavy ({_int_field(payload, 'sourceNodeCount')}/{_int_field(payload, 'semanticNodeCount')} source/query/provider nodes)"
         )
     if bool(payload.get("structuralHeavy")):
         shape_parts.append(
-            f"structural-edge-heavy ({int(payload['structuralEdgeCount'])}/{int(payload['semanticEdgeCount'])} structural edges)"
+            f"structural-edge-heavy ({_int_field(payload, 'structuralEdgeCount')}/{_int_field(payload, 'semanticEdgeCount')} structural edges)"
         )
     if shape_parts:
         lines.append("shape: " + "; ".join(shape_parts))
     if payload.get("nextStep"):
-        lines.append(f"next: {payload['nextStep']}")
-    if payload["providerClusters"]:
+        lines.append(f"next: {_text_field(payload, 'nextStep')}")
+    provider_clusters = _mapping_list_field(payload, "providerClusters")
+    if provider_clusters:
         lines.append("provider clusters:")
-        for cluster in payload["providerClusters"]:
-            lines.append(f"  - {cluster['provider']}: {cluster['nodeCount']} nodes")
-    if payload["dominantKinds"]:
+        for cluster in provider_clusters:
+            lines.append(
+                f"  - {_text_field(cluster, 'provider')}: {_int_field(cluster, 'nodeCount')} nodes"
+            )
+    dominant_kinds = _mapping_list_field(payload, "dominantKinds")
+    if dominant_kinds:
         lines.append("dominant node kinds:")
-        for item in payload["dominantKinds"]:
-            lines.append(f"  - {item['kind']}: {item['nodeCount']}")
-    if payload["dominantRelations"]:
+        for item in dominant_kinds:
+            lines.append(
+                f"  - {_text_field(item, 'kind')}: {_int_field(item, 'nodeCount')}"
+            )
+    dominant_relations = _mapping_list_field(payload, "dominantRelations")
+    if dominant_relations:
         lines.append("dominant relations:")
-        for item in payload["dominantRelations"]:
-            lines.append(f"  - {item['label']}: {item['edgeCount']}")
-    if payload["querySeeds"]:
+        for item in dominant_relations:
+            lines.append(
+                f"  - {_text_field(item, 'label')}: {_int_field(item, 'edgeCount')}"
+            )
+    query_seeds = _mapping_list_field(payload, "querySeeds")
+    if query_seeds:
         lines.append("query seeds:")
-        for node in payload["querySeeds"]:
-            lines.append(f"  - {node['label']}")
+        for node in query_seeds:
+            lines.append(f"  - {_text_field(node, 'label')}")
     return "\n".join(lines)
 
 
 def render_analysis_focus_text(payload: SemanticFocusPayload) -> str:
     lines = [
-        f"session: {payload['sessionDir']}",
-        f"focus: {payload['focus'] or '(empty)'}",
+        f"session: {_text_field(payload, 'sessionDir')}",
+        f"focus: {_text_field(payload, 'focus') or '(empty)'}",
     ]
     if not payload.get("matched"):
         if payload.get("nextStep"):
-            lines.append(f"next: {payload['nextStep']}")
+            lines.append(f"next: {_text_field(payload, 'nextStep')}")
         return "\n".join(lines)
-    root = payload["root"]
-    lines.append(f"matched: {root['label']} ({root['kind']}, {root['group']})")
-    if int(payload.get("matchedCount") or 0) > 1:
+    root = _mapping(payload.get("root"))
+    lines.append(
+        f"matched: {_text_field(root, 'label')} ({_text_field(root, 'kind')}, {_text_field(root, 'group')})"
+    )
+    if _int_field(payload, "matchedCount") > 1:
         lines.append(
-            f"signal: {int(payload['matchedCount'])} anchors matched this focus; "
+            f"signal: {_int_field(payload, 'matchedCount')} anchors matched this focus; "
             "showing the strongest root plus nearby corroborating anchors"
         )
     state_bits = []
-    if root.get("artifactKind"):
-        state_bits.append(f"artifact_kind={root['artifactKind']}")
-    if bool(root.get("materialized")):
+    if _text_field(root, "artifactKind"):
+        state_bits.append(f"artifact_kind={_text_field(root, 'artifactKind')}")
+    if _bool_field(root, "materialized"):
         state_bits.append("materialized")
-    if bool(root.get("discovered")) and not bool(root.get("materialized")):
+    if _bool_field(root, "discovered") and not _bool_field(root, "materialized"):
         state_bits.append("discovered-only")
     if state_bits:
         lines.append("state: " + ", ".join(state_bits))
-    if root.get("followCommand"):
-        lines.append(f"follow: `{root['followCommand']}`")
-    anchors = payload.get("anchors") or []
+    if _text_field(root, "followCommand"):
+        lines.append(f"follow: `{_text_field(root, 'followCommand')}`")
+    anchors = _mapping_list_field(payload, "anchors")
     if anchors:
         lines.append("also matched:")
         for anchor in anchors:
-            lines.append(f"  - {anchor['label']} ({anchor['kind']}, {anchor['group']})")
-            if anchor.get("followCommand"):
-                lines.append(f"    follow: `{anchor['followCommand']}`")
-    if int(payload.get("suppressedStructuralEdgeCount") or 0) > 0:
+            lines.append(
+                f"  - {_text_field(anchor, 'label')} ({_text_field(anchor, 'kind')}, {_text_field(anchor, 'group')})"
+            )
+            if _text_field(anchor, "followCommand"):
+                lines.append(f"    follow: `{_text_field(anchor, 'followCommand')}`")
+    if _int_field(payload, "suppressedStructuralEdgeCount") > 0:
         lines.append(
             "signal: "
-            f"suppressed {payload['suppressedStructuralEdgeCount']} lower-signal structural edges "
+            f"suppressed {_int_field(payload, 'suppressedStructuralEdgeCount')} lower-signal structural edges "
             "to keep this neighborhood readable"
         )
-    if payload["neighbors"]:
+    neighbors = _mapping_list_field(payload, "neighbors")
+    if neighbors:
         lines.append("neighbors:")
-        for neighbor in payload["neighbors"]:
-            relation = ", ".join(
-                str(value) for value in neighbor.get("relations") or [] if str(value)
-            )
+        for neighbor in neighbors:
+            relation = ", ".join(_string_list_field(neighbor, "relations"))
             lines.append(
-                f"  - {neighbor['label']} ({neighbor['kind']}, {neighbor['group']}; {relation or 'adjacent'})"
+                f"  - {_text_field(neighbor, 'label')} ({_text_field(neighbor, 'kind')}, {_text_field(neighbor, 'group')}; {relation or 'adjacent'})"
             )
             bits = []
-            if neighbor.get("artifactKind"):
-                bits.append(f"artifact_kind={neighbor['artifactKind']}")
-            if bool(neighbor.get("materialized")):
+            if _text_field(neighbor, "artifactKind"):
+                bits.append(f"artifact_kind={_text_field(neighbor, 'artifactKind')}")
+            if _bool_field(neighbor, "materialized"):
                 bits.append("materialized")
-            if bool(neighbor.get("discovered")) and not bool(
-                neighbor.get("materialized")
+            if _bool_field(neighbor, "discovered") and not _bool_field(
+                neighbor, "materialized"
             ):
                 bits.append("discovered-only")
             if bits:
                 lines.append("    state: " + ", ".join(bits))
-            if neighbor.get("followCommand"):
-                lines.append(f"    follow: `{neighbor['followCommand']}`")
+            if _text_field(neighbor, "followCommand"):
+                lines.append(f"    follow: `{_text_field(neighbor, 'followCommand')}`")
     else:
         lines.append("neighbors: none")
     return "\n".join(lines)
@@ -440,55 +509,58 @@ def render_analysis_focus_text(payload: SemanticFocusPayload) -> str:
 
 def render_lineage_focus_text(payload: LineageFocusPayload) -> str:
     lines = [
-        f"session: {payload['sessionDir']}",
-        f"focus: {payload['focus'] or '(empty)'}",
+        f"session: {_text_field(payload, 'sessionDir')}",
+        f"focus: {_text_field(payload, 'focus') or '(empty)'}",
     ]
     if not payload.get("matched"):
         if payload.get("nextStep"):
-            lines.append(f"next: {payload['nextStep']}")
+            lines.append(f"next: {_text_field(payload, 'nextStep')}")
         return "\n".join(lines)
-    root = payload["root"]
-    lines.append(f"matched: {root['label']} ({root['kind']})")
-    if int(payload.get("matchedCount") or 0) > 1:
+    root = _mapping(payload.get("root"))
+    lines.append(f"matched: {_text_field(root, 'label')} ({_text_field(root, 'kind')})")
+    if _int_field(payload, "matchedCount") > 1:
         lines.append(
-            f"signal: {int(payload['matchedCount'])} anchors matched this focus; "
+            f"signal: {_int_field(payload, 'matchedCount')} anchors matched this focus; "
             "showing the strongest root plus nearby corroborating anchors"
         )
     state_bits = []
-    if root.get("artifactKind"):
-        state_bits.append(f"artifact_kind={root['artifactKind']}")
-    if bool(root.get("materialized")):
+    if _text_field(root, "artifactKind"):
+        state_bits.append(f"artifact_kind={_text_field(root, 'artifactKind')}")
+    if _bool_field(root, "materialized"):
         state_bits.append("materialized")
     else:
         state_bits.append("discovered-only")
     if state_bits:
         lines.append("state: " + ", ".join(state_bits))
-    if root.get("followCommand"):
-        lines.append(f"follow: `{root['followCommand']}`")
-    anchors = payload.get("anchors") or []
+    if _text_field(root, "followCommand"):
+        lines.append(f"follow: `{_text_field(root, 'followCommand')}`")
+    anchors = _mapping_list_field(payload, "anchors")
     if anchors:
         lines.append("also matched:")
         for anchor in anchors:
-            lines.append(f"  - {anchor['label']} ({anchor['kind']})")
-            if anchor.get("followCommand"):
-                lines.append(f"    follow: `{anchor['followCommand']}`")
-    if payload["neighbors"]:
-        lines.append("neighbors:")
-        for neighbor in payload["neighbors"]:
             lines.append(
-                f"  - {neighbor['label']} ({neighbor['kind']}; {neighbor['relation']})"
+                f"  - {_text_field(anchor, 'label')} ({_text_field(anchor, 'kind')})"
+            )
+            if _text_field(anchor, "followCommand"):
+                lines.append(f"    follow: `{_text_field(anchor, 'followCommand')}`")
+    neighbors = _mapping_list_field(payload, "neighbors")
+    if neighbors:
+        lines.append("neighbors:")
+        for neighbor in neighbors:
+            lines.append(
+                f"  - {_text_field(neighbor, 'label')} ({_text_field(neighbor, 'kind')}; {_text_field(neighbor, 'relation')})"
             )
             bits = []
-            if neighbor.get("artifactKind"):
-                bits.append(f"artifact_kind={neighbor['artifactKind']}")
+            if _text_field(neighbor, "artifactKind"):
+                bits.append(f"artifact_kind={_text_field(neighbor, 'artifactKind')}")
             bits.append(
                 "materialized"
-                if bool(neighbor.get("materialized"))
+                if _bool_field(neighbor, "materialized")
                 else "discovered-only"
             )
             lines.append("    state: " + ", ".join(bits))
-            if neighbor.get("followCommand"):
-                lines.append(f"    follow: `{neighbor['followCommand']}`")
+            if _text_field(neighbor, "followCommand"):
+                lines.append(f"    follow: `{_text_field(neighbor, 'followCommand')}`")
     else:
         lines.append("neighbors: none")
     return "\n".join(lines)
@@ -520,38 +592,36 @@ def render_lineage_overview_markdown(payload: LineagePayload, *, limit: int) -> 
     lines = [
         "# gotta session analyze",
         "",
-        f"Session: `{payload['sessionDir']}`",
+        f"Session: `{_text_field(payload, 'sessionDir')}`",
         "",
         (
-            f"Artifacts: {payload['contentCount']} total "
-            f"(discovery {payload['discoveryArtifactCount']}, "
-            f"evidence {payload['evidenceArtifactCount']})"
+            f"Artifacts: {_int_field(payload, 'contentCount')} total "
+            f"(discovery {_int_field(payload, 'discoveryArtifactCount')}, "
+            f"evidence {_int_field(payload, 'evidenceArtifactCount')})"
         ),
         (
-            f"Lineage: {payload['sourceCount']} sources, "
-            f"{payload['leadSourceCount']} lead sources, "
-            f"{payload['leadEdgeCount']} lead edges"
+            f"Lineage: {_int_field(payload, 'sourceCount')} sources, "
+            f"{_int_field(payload, 'leadSourceCount')} lead sources, "
+            f"{_int_field(payload, 'leadEdgeCount')} lead edges"
         ),
         "",
     ]
-    next_step = str(payload.get("nextStep") or "").strip()
+    next_step = _text_field(payload, "nextStep").strip()
     if next_step:
         lines.extend(["## Synthesis", "", next_step, ""])
     sources = [
-        f"{source['locator']} ({int(source.get('contentCount') or 0)} materializations)"
-        for source in list(payload.get("sources") or [])[: max(limit, 0)]
+        f"{_text_field(source, 'locator')} ({_int_field(source, 'contentCount')} materializations)"
+        for source in _mapping_list_field(payload, "sources")[: max(limit, 0)]
     ]
     _render_markdown_list(lines, "Materialized Sources", sources)
     leads_preview = []
-    for lead in list(payload.get("leadSources") or [])[: max(limit, 0)]:
-        relation = ", ".join(
-            str(value) for value in lead.get("relationKinds") or [] if str(value)
-        )
+    for lead in _mapping_list_field(payload, "leadSources")[: max(limit, 0)]:
+        relation = ", ".join(_string_list_field(lead, "relationKinds"))
         label = (
             f"[{'; '.join(lead_signal_labels(lead, aggregated=True))}] "
-            f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+            f"{_text_field(lead, 'locator')} ({_text_field(lead, 'provider')}, {relation or 'lead'})"
         )
-        follow = str(lead.get("followCommand") or "").strip()
+        follow = _text_field(lead, "followCommand").strip()
         if follow:
             label += f" via `{follow}`"
         leads_preview.append(label)
@@ -565,54 +635,56 @@ def render_semantic_overview_markdown(payload: AnalysisOverviewPayload) -> str:
     lines = [
         "# gotta session analyze",
         "",
-        f"Session: `{payload['sessionDir']}`",
+        f"Session: `{_text_field(payload, 'sessionDir')}`",
         "",
         (
-            f"Artifacts: {payload['contentCount']} total "
-            f"(discovery {payload['discoveryArtifactCount']}, "
-            f"evidence {payload['evidenceArtifactCount']})"
+            f"Artifacts: {_int_field(payload, 'contentCount')} total "
+            f"(discovery {_int_field(payload, 'discoveryArtifactCount')}, "
+            f"evidence {_int_field(payload, 'evidenceArtifactCount')})"
         ),
         (
-            f"Semantic: {payload['semanticNodeCount']} nodes, "
-            f"{payload['semanticEdgeCount']} edges"
+            f"Semantic: {_int_field(payload, 'semanticNodeCount')} nodes, "
+            f"{_int_field(payload, 'semanticEdgeCount')} edges"
         ),
         "",
     ]
     shape_parts: list[str] = []
     if bool(payload.get("sourceHeavy")):
         shape_parts.append(
-            f"source-heavy ({int(payload['sourceNodeCount'])}/{int(payload['semanticNodeCount'])} source/query/provider nodes)"
+            f"source-heavy ({_int_field(payload, 'sourceNodeCount')}/{_int_field(payload, 'semanticNodeCount')} source/query/provider nodes)"
         )
     if bool(payload.get("structuralHeavy")):
         shape_parts.append(
-            f"structural-edge-heavy ({int(payload['structuralEdgeCount'])}/{int(payload['semanticEdgeCount'])} structural edges)"
+            f"structural-edge-heavy ({_int_field(payload, 'structuralEdgeCount')}/{_int_field(payload, 'semanticEdgeCount')} structural edges)"
         )
     if shape_parts:
         lines.extend(["## Shape", "", "; ".join(shape_parts), ""])
-    next_step = str(payload.get("nextStep") or "").strip()
+    next_step = _text_field(payload, "nextStep").strip()
     if next_step:
         lines.extend(["## Synthesis", "", next_step, ""])
     provider_clusters = [
-        f"{cluster['provider']}: {cluster['nodeCount']} nodes"
-        for cluster in list(payload.get("providerClusters") or [])[
+        f"{_text_field(cluster, 'provider')}: {_int_field(cluster, 'nodeCount')} nodes"
+        for cluster in _mapping_list_field(payload, "providerClusters")[
             :SUMMARY_BUCKET_LIMIT
         ]
     ]
     _render_markdown_list(lines, "Provider Clusters", provider_clusters)
     dominant_kinds = [
-        f"{item['kind']}: {item['nodeCount']}"
-        for item in list(payload.get("dominantKinds") or [])[:SUMMARY_BUCKET_LIMIT]
+        f"{_text_field(item, 'kind')}: {_int_field(item, 'nodeCount')}"
+        for item in _mapping_list_field(payload, "dominantKinds")[:SUMMARY_BUCKET_LIMIT]
     ]
     _render_markdown_list(lines, "Dominant Node Kinds", dominant_kinds)
     dominant_relations = [
-        f"{item['label']}: {item['edgeCount']} edges"
-        for item in list(payload.get("dominantRelations") or [])[:SUMMARY_BUCKET_LIMIT]
+        f"{_text_field(item, 'label')}: {_int_field(item, 'edgeCount')} edges"
+        for item in _mapping_list_field(payload, "dominantRelations")[
+            :SUMMARY_BUCKET_LIMIT
+        ]
     ]
     _render_markdown_list(lines, "Dominant Relations", dominant_relations)
     query_seeds = [
-        str(node.get("label") or "").strip()
-        for node in list(payload.get("querySeeds") or [])[:SUMMARY_BUCKET_LIMIT]
-        if str(node.get("label") or "").strip()
+        _text_field(node, "label").strip()
+        for node in _mapping_list_field(payload, "querySeeds")[:SUMMARY_BUCKET_LIMIT]
+        if _text_field(node, "label").strip()
     ]
     _render_markdown_list(lines, "Query Seeds", query_seeds)
     while lines and lines[-1] == "":
@@ -629,39 +701,43 @@ def render_lineage_focus_markdown_section(payload: LineageFocusPayload) -> list[
             lines.append(f"- Next: {next_step}")
         lines.append("")
         return lines
-    root = payload["root"]
-    lines.append(f"- Matched: `{root['label']}` ({root['kind']})")
-    if int(payload.get("matchedCount") or 0) > 1:
+    root = _mapping(payload.get("root"))
+    lines.append(
+        f"- Matched: `{_text_field(root, 'label')}` ({_text_field(root, 'kind')})"
+    )
+    if _int_field(payload, "matchedCount") > 1:
         lines.append(
-            f"- Signal: {int(payload['matchedCount'])} anchors matched this focus; showing the strongest root plus nearby corroborating anchors"
+            f"- Signal: {_int_field(payload, 'matchedCount')} anchors matched this focus; showing the strongest root plus nearby corroborating anchors"
         )
     state_bits = []
-    if root.get("artifactKind"):
-        state_bits.append(f"artifact_kind={root['artifactKind']}")
+    if _text_field(root, "artifactKind"):
+        state_bits.append(f"artifact_kind={_text_field(root, 'artifactKind')}")
     state_bits.append(
-        "materialized" if bool(root.get("materialized")) else "discovered-only"
+        "materialized" if _bool_field(root, "materialized") else "discovered-only"
     )
     if state_bits:
         lines.append(f"- State: {', '.join(state_bits)}")
-    follow = str(root.get("followCommand") or "").strip()
+    follow = _text_field(root, "followCommand").strip()
     if follow:
         lines.append(f"- Follow: `{follow}`")
-    anchors = list(payload.get("anchors") or [])[:ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT]
+    anchors = _mapping_list_field(payload, "anchors")[
+        :ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT
+    ]
     if anchors:
         lines.extend(["", "### Also Matched", ""])
         for anchor in anchors:
-            entry = f"`{anchor['label']}` ({anchor['kind']})"
-            follow = str(anchor.get("followCommand") or "").strip()
+            entry = f"`{_text_field(anchor, 'label')}` ({_text_field(anchor, 'kind')})"
+            follow = _text_field(anchor, "followCommand").strip()
             if follow:
                 entry += f" via `{follow}`"
             lines.append(f"- {entry}")
         hidden_anchors = max(
-            int(len(payload.get("anchors") or [])) - len(anchors),
+            len(_mapping_list_field(payload, "anchors")) - len(anchors),
             0,
         )
         if hidden_anchors > 0:
             lines.append(f"- ... {hidden_anchors} additional matched anchors hidden")
-    neighbors = list(payload.get("neighbors") or [])[
+    neighbors = _mapping_list_field(payload, "neighbors")[
         :ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT
     ]
     lines.extend(["", "### Neighbors", ""])
@@ -669,22 +745,22 @@ def render_lineage_focus_markdown_section(payload: LineageFocusPayload) -> list[
         for neighbor in neighbors:
             bits = []
             if neighbor.get("artifactKind"):
-                bits.append(f"artifact_kind={neighbor['artifactKind']}")
+                bits.append(f"artifact_kind={_text_field(neighbor, 'artifactKind')}")
             bits.append(
                 "materialized"
-                if bool(neighbor.get("materialized"))
+                if _bool_field(neighbor, "materialized")
                 else "discovered-only"
             )
             entry = (
-                f"`{neighbor['label']}` ({neighbor['kind']}; {neighbor['relation']}; "
+                f"`{_text_field(neighbor, 'label')}` ({_text_field(neighbor, 'kind')}; {_text_field(neighbor, 'relation')}; "
                 f"{', '.join(bits)})"
             )
-            follow = str(neighbor.get("followCommand") or "").strip()
+            follow = _text_field(neighbor, "followCommand").strip()
             if follow:
                 entry += f" via `{follow}`"
             lines.append(f"- {entry}")
         hidden_neighbors = max(
-            int(len(payload.get("neighbors") or [])) - len(neighbors),
+            len(_mapping_list_field(payload, "neighbors")) - len(neighbors),
             0,
         )
         if hidden_neighbors > 0:
@@ -704,76 +780,78 @@ def render_semantic_focus_markdown_section(payload: SemanticFocusPayload) -> lis
             lines.append(f"- Next: {next_step}")
         lines.append("")
         return lines
-    root = payload["root"]
-    lines.append(f"- Matched: `{root['label']}` ({root['kind']}, {root['group']})")
-    if int(payload.get("matchedCount") or 0) > 1:
+    root = _mapping(payload.get("root"))
+    lines.append(
+        f"- Matched: `{_text_field(root, 'label')}` ({_text_field(root, 'kind')}, {_text_field(root, 'group')})"
+    )
+    if _int_field(payload, "matchedCount") > 1:
         lines.append(
-            f"- Signal: {int(payload['matchedCount'])} anchors matched this focus; showing the strongest root plus nearby corroborating anchors"
+            f"- Signal: {_int_field(payload, 'matchedCount')} anchors matched this focus; showing the strongest root plus nearby corroborating anchors"
         )
     state_bits = []
-    if root.get("artifactKind"):
-        state_bits.append(f"artifact_kind={root['artifactKind']}")
-    if bool(root.get("materialized")):
+    if _text_field(root, "artifactKind"):
+        state_bits.append(f"artifact_kind={_text_field(root, 'artifactKind')}")
+    if _bool_field(root, "materialized"):
         state_bits.append("materialized")
-    if bool(root.get("discovered")) and not bool(root.get("materialized")):
+    if _bool_field(root, "discovered") and not _bool_field(root, "materialized"):
         state_bits.append("discovered-only")
     if state_bits:
         lines.append(f"- State: {', '.join(state_bits)}")
-    follow = str(root.get("followCommand") or "").strip()
+    follow = _text_field(root, "followCommand").strip()
     if follow:
         lines.append(f"- Follow: `{follow}`")
-    anchors = list(payload.get("anchors") or [])[:ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT]
+    anchors = _mapping_list_field(payload, "anchors")[
+        :ANALYZE_FOCUS_MATCH_PREVIEW_LIMIT
+    ]
     if anchors:
         lines.extend(["", "### Also Matched", ""])
         for anchor in anchors:
-            entry = f"`{anchor['label']}` ({anchor['kind']}, {anchor['group']})"
-            follow = str(anchor.get("followCommand") or "").strip()
+            entry = f"`{_text_field(anchor, 'label')}` ({_text_field(anchor, 'kind')}, {_text_field(anchor, 'group')})"
+            follow = _text_field(anchor, "followCommand").strip()
             if follow:
                 entry += f" via `{follow}`"
             lines.append(f"- {entry}")
         hidden_anchors = max(
-            int(len(payload.get("anchors") or [])) - len(anchors),
+            len(_mapping_list_field(payload, "anchors")) - len(anchors),
             0,
         )
         if hidden_anchors > 0:
             lines.append(f"- ... {hidden_anchors} additional matched anchors hidden")
-    suppressed = int(payload.get("suppressedStructuralEdgeCount") or 0)
+    suppressed = _int_field(payload, "suppressedStructuralEdgeCount")
     if suppressed > 0:
         lines.append("")
         lines.append(
             f"- Signal: suppressed {suppressed} lower-signal structural edges to keep this neighborhood readable"
         )
-    neighbors = list(payload.get("neighbors") or [])[
+    neighbors = _mapping_list_field(payload, "neighbors")[
         :ANALYZE_FOCUS_NEIGHBOR_PREVIEW_LIMIT
     ]
     lines.extend(["", "### Neighbors", ""])
     if neighbors:
         for neighbor in neighbors:
-            relation = ", ".join(
-                str(value) for value in neighbor.get("relations") or [] if str(value)
-            )
+            relation = ", ".join(_string_list_field(neighbor, "relations"))
             bits = []
-            if neighbor.get("artifactKind"):
-                bits.append(f"artifact_kind={neighbor['artifactKind']}")
-            if bool(neighbor.get("materialized")):
+            if _text_field(neighbor, "artifactKind"):
+                bits.append(f"artifact_kind={_text_field(neighbor, 'artifactKind')}")
+            if _bool_field(neighbor, "materialized"):
                 bits.append("materialized")
-            if bool(neighbor.get("discovered")) and not bool(
-                neighbor.get("materialized")
+            if _bool_field(neighbor, "discovered") and not _bool_field(
+                neighbor, "materialized"
             ):
                 bits.append("discovered-only")
             entry = (
-                f"`{neighbor['label']}` ({neighbor['kind']}, {neighbor['group']}; "
+                f"`{_text_field(neighbor, 'label')}` ({_text_field(neighbor, 'kind')}, {_text_field(neighbor, 'group')}; "
                 f"{relation or 'adjacent'}"
             )
             if bits:
                 entry += f"; {', '.join(bits)}"
             entry += ")"
-            follow = str(neighbor.get("followCommand") or "").strip()
+            follow = _text_field(neighbor, "followCommand").strip()
             if follow:
                 entry += f" via `{follow}`"
             lines.append(f"- {entry}")
         hidden_neighbors = max(
-            int(len(payload.get("neighbors") or [])) - len(neighbors),
+            len(_mapping_list_field(payload, "neighbors")) - len(neighbors),
             0,
         )
         if hidden_neighbors > 0:
@@ -793,7 +871,7 @@ def render_combined_focus_markdown(
     lines = [
         "# gotta session analyze",
         "",
-        f"Session: `{lineage['sessionDir']}`",
+        f"Session: `{_text_field(lineage, 'sessionDir')}`",
         "",
         f"Focus: `{focus or '(empty)'}`",
         "",
@@ -834,74 +912,76 @@ def render_analysis_overview_markdown(
     lines = [
         "# gotta session analyze",
         "",
-        f"Session: `{overview['sessionDir']}`",
+        f"Session: `{_text_field(overview, 'sessionDir')}`",
         "",
         (
-            f"Artifacts: {overview['contentCount']} total "
-            f"(discovery {overview['discoveryArtifactCount']}, "
-            f"evidence {overview['evidenceArtifactCount']})"
+            f"Artifacts: {_int_field(overview, 'contentCount')} total "
+            f"(discovery {_int_field(overview, 'discoveryArtifactCount')}, "
+            f"evidence {_int_field(overview, 'evidenceArtifactCount')})"
         ),
         (
-            f"Lineage: {overview['sourceCount']} sources, "
-            f"{overview['leadSourceCount']} lead sources, "
-            f"{overview['leadEdgeCount']} lead edges"
+            f"Lineage: {_int_field(overview, 'sourceCount')} sources, "
+            f"{_int_field(overview, 'leadSourceCount')} lead sources, "
+            f"{_int_field(overview, 'leadEdgeCount')} lead edges"
         ),
         (
-            f"Semantic: {overview['semanticNodeCount']} nodes, "
-            f"{overview['semanticEdgeCount']} edges"
+            f"Semantic: {_int_field(overview, 'semanticNodeCount')} nodes, "
+            f"{_int_field(overview, 'semanticEdgeCount')} edges"
         ),
         "",
     ]
-    next_step = str(overview.get("nextStep") or "").strip()
+    next_step = _text_field(overview, "nextStep").strip()
     if next_step:
         lines.extend(["## Synthesis", "", next_step, ""])
     provider_clusters = [
-        f"{item['provider']}: {item['nodeCount']} nodes"
-        for item in list(overview.get("providerClusters") or [])[:SUMMARY_BUCKET_LIMIT]
+        f"{_text_field(item, 'provider')}: {_int_field(item, 'nodeCount')} nodes"
+        for item in _mapping_list_field(overview, "providerClusters")[
+            :SUMMARY_BUCKET_LIMIT
+        ]
     ]
     _render_markdown_list(lines, "Provider Clusters", provider_clusters)
     dominant_relations = [
-        f"{item['label']}: {item['edgeCount']} edges"
-        for item in list(overview.get("dominantRelations") or [])[:SUMMARY_BUCKET_LIMIT]
+        f"{_text_field(item, 'label')}: {_int_field(item, 'edgeCount')} edges"
+        for item in _mapping_list_field(overview, "dominantRelations")[
+            :SUMMARY_BUCKET_LIMIT
+        ]
     ]
     _render_markdown_list(lines, "Dominant Relations", dominant_relations)
     anchors = []
-    for anchor in list(overview.get("materializedAnchors") or [])[
+    for anchor in _mapping_list_field(overview, "materializedAnchors")[
         : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
     ]:
-        follow = str(anchor.get("followCommand") or "").strip()
+        follow = _text_field(anchor, "followCommand").strip()
         if follow:
             anchors.append(
-                f"[{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']} via `{follow}`"
+                f"[{_text_field(anchor, 'artifactKind') or 'artifact'}] {_text_field(anchor, 'preferredName')} via `{follow}`"
             )
         else:
             anchors.append(
-                f"[{anchor.get('artifactKind') or 'artifact'}] {anchor['preferredName']}"
+                f"[{_text_field(anchor, 'artifactKind') or 'artifact'}] {_text_field(anchor, 'preferredName')}"
             )
     _render_markdown_list(lines, "Anchor Shortlist", anchors)
     lineage_preview = [
-        f"{item['locator']} ({int(item.get('contentCount') or 0)} materializations)"
-        for item in list(lineage.get("sources") or [])[
+        f"{_text_field(item, 'locator')} ({_int_field(item, 'contentCount')} materializations)"
+        for item in _mapping_list_field(lineage, "sources")[
             : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
         ]
     ]
     _render_markdown_list(lines, "Lineage Preview", lineage_preview)
     semantic_preview = [
-        f"{item['label']} ({item['kind']})"
-        for item in list(overview.get("querySeeds") or [])[
+        f"{_text_field(item, 'label')} ({_text_field(item, 'kind')})"
+        for item in _mapping_list_field(overview, "querySeeds")[
             : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
         ]
     ]
     _render_markdown_list(lines, "Semantic Preview", semantic_preview)
     leads_preview = []
-    for lead in list(overview.get("bestLeads") or [])[
+    for lead in _mapping_list_field(overview, "bestLeads")[
         : max(limit, ANALYZE_ANCHOR_PREVIEW_LIMIT)
     ]:
-        follow = str(lead.get("followCommand") or "").strip()
-        relation = ", ".join(
-            str(value) for value in lead.get("relationKinds") or [] if str(value)
-        )
-        label = f"{lead['locator']} ({lead['provider']}, {relation or 'lead'})"
+        follow = _text_field(lead, "followCommand").strip()
+        relation = ", ".join(_string_list_field(lead, "relationKinds"))
+        label = f"{_text_field(lead, 'locator')} ({_text_field(lead, 'provider')}, {relation or 'lead'})"
         if follow:
             label += f" via `{follow}`"
         leads_preview.append(label)
