@@ -808,6 +808,37 @@ This file is the execution queue.
   churn. The next honest move is the still-hot analyze focus/overview pressure,
   starting with `select_lineage_focus(...)`, before shifting fully into
   provider-local kernels.
+- [x] Analyze focus-state tranche landed.
+  - `src/gotta/plugins/session/analyze/focus.py` now centers one mutable
+    lineage selection owner:
+    - `_LineageFocusState`
+  - `select_lineage_focus(...)` no longer owns all of:
+    - seed-state unpacking
+    - selection expansion
+    - lead-edge absorption
+    - neighbor pruning
+    - focused payload projection
+    inline inside one function
+  - The focus seam now drives those transitions through one state owner
+    instead of ad hoc local set choreography.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/analyze/focus.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'focus or lineage_focus or semantic_focus or all_mode_focus'`
+    - `6 passed`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/analyze/focus.py:select_lineage_focus`
+      dropped off the hotspot board
+    - remaining analyze pressure is now centered in:
+      - `src/gotta/plugins/session/analyze/overview.py:analysis_overview_payload`
+      - `src/gotta/plugins/session/analyze/semantic.py`
+      - then shared render pressure in `src/gotta/plugins/session/lead/render.py`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because the focus selector was still one overloaded
+  algorithmic center, not just a hot file. More focus-kernel cleanup of this
+  exact species would likely be churn now. The next honest move is the analyze
+  overview/semantic seam, and only after that should the pressure shift fully
+  into provider-local kernels.
 
 ## Current Tranche
 
@@ -865,10 +896,12 @@ This file is the execution queue.
   and remove its direct optional-payload spelunking.
 - [x] Collapse the `session analyze` lineage seam onto typed local build
   records and explicit analyze-owned lead summaries.
-- [ ] Next tranche: reduce the still-hot analyze kernels first, starting with
-  `select_lineage_focus(...)`, then reassess between
-  `analysis_overview_payload(...)`, `semantic.py`, and the first honest
-  provider-local kernels.
+- [x] Collapse the `session analyze` lineage focus selector onto one mutable
+  selection-state owner.
+- [ ] Next tranche: reduce the remaining analyze pressure first, choosing
+  between `analysis_overview_payload(...)` and `semantic.py`, then reassess
+  whether the next honest move is still shared algorithmic pressure or the
+  first provider-local kernels.
 
 ## Non-Negotiable Invariants
 

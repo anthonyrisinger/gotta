@@ -96,6 +96,214 @@ class _LineageFocusIndexes:
     lead_index: dict[str, LeadSourceSummary]
 
 
+@dataclass(slots=True)
+class _LineageFocusState:
+    payload: LineagePayload
+    indexes: _LineageFocusIndexes
+    seen_seed_keys: set[tuple[str, str]]
+    selected_sources: set[str]
+    selected_content: set[str]
+    selected_leads: set[str]
+    matched_sources: set[str]
+    matched_leads: set[str]
+
+    @classmethod
+    def from_candidates(
+        cls,
+        payload: LineagePayload,
+        indexes: _LineageFocusIndexes,
+        *,
+        seeds: list[LineageCandidate],
+        matches: list[LineageCandidate],
+    ) -> _LineageFocusState:
+        return cls(
+            payload=payload,
+            indexes=indexes,
+            seen_seed_keys={_lineage_seed_key(candidate) for candidate in seeds},
+            selected_sources={
+                str(candidate.get("locator") or "")
+                for candidate in seeds
+                if str(candidate.get("kind") or "") == "source"
+            },
+            selected_content={
+                str(candidate.get("checksum") or "")
+                for candidate in seeds
+                if str(candidate.get("kind") or "") == "content"
+            },
+            selected_leads={
+                str(candidate.get("locator") or "")
+                for candidate in seeds
+                if str(candidate.get("kind") or "") == "lead"
+            },
+            matched_sources={
+                str(candidate.get("locator") or "")
+                for candidate in matches
+                if str(candidate.get("kind") or "") == "source"
+            },
+            matched_leads={
+                str(candidate.get("locator") or "")
+                for candidate in matches
+                if str(candidate.get("kind") or "") == "lead"
+            },
+        )
+
+    def expand(self) -> None:
+        _expand_lineage_selection(
+            self.payload,
+            selected_sources=self.selected_sources,
+            selected_content=self.selected_content,
+        )
+        for edge in self.payload.get("leadEdges") or []:
+            source_checksum = str(edge.get("sourceChecksum") or "")
+            target_locator = str(edge.get("targetLocator") or "")
+            target_matches_focus = (
+                target_locator in self.matched_sources
+                or target_locator in self.matched_leads
+            )
+            if source_checksum in self.selected_content and (
+                target_locator in self.selected_sources
+                or target_locator in self.selected_leads
+                or target_matches_focus
+            ):
+                if target_locator in self.indexes.source_index:
+                    self.selected_sources.add(target_locator)
+                else:
+                    self.selected_leads.add(target_locator)
+            if (
+                target_locator in self.selected_sources
+                or target_locator in self.selected_leads
+            ):
+                self.selected_content.add(source_checksum)
+        _expand_lineage_selection(
+            self.payload,
+            selected_sources=self.selected_sources,
+            selected_content=self.selected_content,
+        )
+
+    def neighbors(self, *, limit: int) -> list[LineageNeighbor]:
+        return _ordered_lineage_neighbors(
+            self.indexes,
+            selected_sources=self.selected_sources,
+            selected_content=self.selected_content,
+            selected_leads=self.selected_leads,
+            seen_seed_keys=self.seen_seed_keys,
+            limit=limit,
+        )
+
+    def prune_to_neighbors(self, neighbors: list[LineageNeighbor]) -> None:
+        neighbor_source_labels = {
+            str(item.get("label") or "")
+            for item in neighbors
+            if str(item.get("kind") or "") == "source"
+        }
+        neighbor_content_labels = {
+            str(item.get("label") or "")
+            for item in neighbors
+            if str(item.get("kind") or "") == "content"
+        }
+        neighbor_content_checksums = {
+            checksum
+            for checksum, item in self.indexes.content_index.items()
+            if str(item.get("preferredName") or checksum) in neighbor_content_labels
+        }
+        neighbor_lead_labels = {
+            str(item.get("label") or "")
+            for item in neighbors
+            if str(item.get("kind") or "") == "lead"
+        }
+        seed_source_labels = {
+            value for kind, value in self.seen_seed_keys if kind == "source"
+        }
+        seed_content_checksums = {
+            value for kind, value in self.seen_seed_keys if kind == "content"
+        }
+        seed_lead_labels = {
+            value for kind, value in self.seen_seed_keys if kind == "lead"
+        }
+        self.selected_sources = {
+            locator
+            for locator in self.selected_sources
+            if locator in seed_source_labels or locator in neighbor_source_labels
+        }
+        self.selected_content = {
+            checksum
+            for checksum in self.selected_content
+            if checksum in seed_content_checksums
+            or checksum in neighbor_content_checksums
+        }
+        self.selected_leads = {
+            locator
+            for locator in self.selected_leads
+            if locator in seed_lead_labels or locator in neighbor_lead_labels
+        }
+
+    def build_selection(
+        self,
+        *,
+        root: LineageCandidate,
+        anchors: list[LineageCandidate],
+        neighbors: list[LineageNeighbor],
+    ) -> LineageFocusSelection:
+        selected_source_items = [
+            item
+            for item in self.indexes.sources
+            if str(item.get("locator") or "") in self.selected_sources
+        ]
+        selected_content_items = [
+            item
+            for item in self.indexes.content
+            if str(item.get("checksum") or "") in self.selected_content
+        ]
+        selected_lead_items = [
+            item
+            for item in self.indexes.lead_sources
+            if str(item.get("locator") or "") in self.selected_leads
+            and str(item.get("locator") or "") not in self.selected_sources
+        ]
+        selected_source_edges = [
+            edge
+            for edge in self.payload.get("sourceEdges") or []
+            if str(edge.get("source") or "") in self.selected_sources
+            and str(edge.get("checksum") or "") in self.selected_content
+        ]
+        selected_revision_edges = [
+            edge
+            for edge in self.payload.get("revisionEdges") or []
+            if str(edge.get("from") or "") in self.selected_content
+            and str(edge.get("to") or "") in self.selected_content
+        ]
+        selected_lead_targets = self.selected_leads.union(self.selected_sources)
+        selected_lead_edges = [
+            edge
+            for edge in self.payload.get("leadEdges") or []
+            if str(edge.get("sourceChecksum") or "") in self.selected_content
+            and str(edge.get("targetLocator") or "") in selected_lead_targets
+        ]
+        discovery_count = sum(
+            1
+            for item in selected_content_items
+            if str(item.get("artifactKind") or "") == "discovery"
+        )
+        evidence_count = sum(
+            1
+            for item in selected_content_items
+            if str(item.get("artifactKind") or "") == "evidence"
+        )
+        return LineageFocusSelection(
+            root=root,
+            anchors=anchors,
+            neighbors=neighbors,
+            sources=selected_source_items,
+            content=selected_content_items,
+            source_edges=selected_source_edges,
+            revision_edges=selected_revision_edges,
+            lead_sources=selected_lead_items,
+            lead_edges=selected_lead_edges,
+            discovery_artifact_count=discovery_count,
+            evidence_artifact_count=evidence_count,
+        )
+
+
 def _lineage_indexes(payload: LineagePayload) -> _LineageFocusIndexes:
     sources = list(payload.get("sources") or [])
     content_items = list(payload.get("content") or [])
@@ -359,168 +567,19 @@ def select_lineage_focus(
         return None
 
     root = seeds[0]
-    seen_seed_keys = {_lineage_seed_key(candidate) for candidate in seeds}
-    selected_sources = {
-        str(candidate.get("locator") or "")
-        for candidate in seeds
-        if str(candidate.get("kind") or "") == "source"
-    }
-    selected_content = {
-        str(candidate.get("checksum") or "")
-        for candidate in seeds
-        if str(candidate.get("kind") or "") == "content"
-    }
-    selected_leads = {
-        str(candidate.get("locator") or "")
-        for candidate in seeds
-        if str(candidate.get("kind") or "") == "lead"
-    }
-    matched_sources = {
-        str(candidate.get("locator") or "")
-        for candidate in matches
-        if str(candidate.get("kind") or "") == "source"
-    }
-    matched_leads = {
-        str(candidate.get("locator") or "")
-        for candidate in matches
-        if str(candidate.get("kind") or "") == "lead"
-    }
-
-    _expand_lineage_selection(
+    state = _LineageFocusState.from_candidates(
         payload,
-        selected_sources=selected_sources,
-        selected_content=selected_content,
-    )
-    for edge in payload.get("leadEdges") or []:
-        source_checksum = str(edge.get("sourceChecksum") or "")
-        target_locator = str(edge.get("targetLocator") or "")
-        target_is_source = target_locator in indexes.source_index
-        target_matches_focus = (
-            target_locator in matched_sources or target_locator in matched_leads
-        )
-        if source_checksum in selected_content and (
-            target_locator in selected_sources
-            or target_locator in selected_leads
-            or target_matches_focus
-        ):
-            if target_is_source:
-                selected_sources.add(target_locator)
-            else:
-                selected_leads.add(target_locator)
-        if target_locator in selected_sources or target_locator in selected_leads:
-            selected_content.add(source_checksum)
-    _expand_lineage_selection(
-        payload,
-        selected_sources=selected_sources,
-        selected_content=selected_content,
-    )
-
-    neighbors = _ordered_lineage_neighbors(
         indexes,
-        selected_sources=selected_sources,
-        selected_content=selected_content,
-        selected_leads=selected_leads,
-        seen_seed_keys=seen_seed_keys,
-        limit=limit,
+        seeds=seeds,
+        matches=matches,
     )
-    neighbor_source_labels = {
-        str(item.get("label") or "")
-        for item in neighbors
-        if str(item.get("kind") or "") == "source"
-    }
-    neighbor_content_labels = {
-        str(item.get("label") or "")
-        for item in neighbors
-        if str(item.get("kind") or "") == "content"
-    }
-    neighbor_content_checksums = {
-        checksum
-        for checksum, item in indexes.content_index.items()
-        if str(item.get("preferredName") or checksum) in neighbor_content_labels
-    }
-    neighbor_lead_labels = {
-        str(item.get("label") or "")
-        for item in neighbors
-        if str(item.get("kind") or "") == "lead"
-    }
-    seed_source_labels = {value for kind, value in seen_seed_keys if kind == "source"}
-    seed_content_checksums = {
-        value for kind, value in seen_seed_keys if kind == "content"
-    }
-    seed_lead_labels = {value for kind, value in seen_seed_keys if kind == "lead"}
-    selected_sources = {
-        locator
-        for locator in selected_sources
-        if locator in seed_source_labels or locator in neighbor_source_labels
-    }
-    selected_content = {
-        checksum
-        for checksum in selected_content
-        if checksum in seed_content_checksums or checksum in neighbor_content_checksums
-    }
-    selected_leads = {
-        locator
-        for locator in selected_leads
-        if locator in seed_lead_labels or locator in neighbor_lead_labels
-    }
-
-    selected_source_items = [
-        item
-        for item in indexes.sources
-        if str(item.get("locator") or "") in selected_sources
-    ]
-    selected_content_items = [
-        item
-        for item in indexes.content
-        if str(item.get("checksum") or "") in selected_content
-    ]
-    selected_lead_items = [
-        item
-        for item in indexes.lead_sources
-        if str(item.get("locator") or "") in selected_leads
-        and str(item.get("locator") or "") not in selected_sources
-    ]
-    selected_source_edges = [
-        edge
-        for edge in payload.get("sourceEdges") or []
-        if str(edge.get("source") or "") in selected_sources
-        and str(edge.get("checksum") or "") in selected_content
-    ]
-    selected_revision_edges = [
-        edge
-        for edge in payload.get("revisionEdges") or []
-        if str(edge.get("from") or "") in selected_content
-        and str(edge.get("to") or "") in selected_content
-    ]
-    selected_lead_edges = [
-        edge
-        for edge in payload.get("leadEdges") or []
-        if str(edge.get("sourceChecksum") or "") in selected_content
-        and str(edge.get("targetLocator") or "")
-        in selected_leads.union(selected_sources)
-    ]
-    discovery_count = sum(
-        1
-        for item in selected_content_items
-        if str(item.get("artifactKind") or "") == "discovery"
-    )
-    evidence_count = sum(
-        1
-        for item in selected_content_items
-        if str(item.get("artifactKind") or "") == "evidence"
-    )
-    return LineageFocusSelection(
+    state.expand()
+    neighbors = state.neighbors(limit=limit)
+    state.prune_to_neighbors(neighbors)
+    return state.build_selection(
         root=root,
         anchors=seeds[1:],
         neighbors=neighbors,
-        sources=selected_source_items,
-        content=selected_content_items,
-        source_edges=selected_source_edges,
-        revision_edges=selected_revision_edges,
-        lead_sources=selected_lead_items,
-        lead_edges=selected_lead_edges,
-        discovery_artifact_count=discovery_count,
-        evidence_artifact_count=evidence_count,
     )
 
 
