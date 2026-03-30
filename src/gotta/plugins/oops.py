@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import sys
 from pathlib import Path
@@ -58,6 +59,187 @@ class OopsPayload(FrictionSummary, total=False):
     state_paths: dict[str, str]
     locators: dict[str, str]
     follow_commands: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _OopsWriteState:
+    session_dir: Path
+    writer: str
+    surface: str
+    command: str
+    kind: str
+    affordance: str
+    workaround: str
+    severity: str
+    reproducibility: str
+    resolution_state: str
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> _OopsWriteState:
+        session_dir = session_scope._session_dir(
+            explicit_session=getattr(args, "session", None),
+            explicit_actor=getattr(args, "actor", None),
+        )
+        writer = writer_name()
+        actor_branch = session_dir.resolve().parent.name == "actors"
+        target_actor = session_actor(session_dir) if actor_branch else ""
+        if target_actor:
+            require_writer(
+                session_dir,
+                target_actor,
+                writer=writer,
+                action="write into this actor branch",
+            )
+        return cls(
+            session_dir=session_dir,
+            writer=writer,
+            surface=args.surface or "",
+            command=args.command or "",
+            kind=args.kind or "",
+            affordance=args.affordance or "",
+            workaround=args.workaround or "",
+            severity=args.severity or "medium",
+            reproducibility=args.reproducibility,
+            resolution_state=args.resolution_state,
+        )
+
+    def append(
+        self, values: list[str], *, from_file: str | None, use_stdin: bool
+    ) -> int:
+        message_text = _read_text_source(
+            session_root=self.session_dir,
+            inline=(" ".join(values) if values else None),
+            from_file=from_file,
+            use_stdin=use_stdin,
+            input_name="oops entry text",
+        )
+        self._append_record(_normalize_text(message_text, input_name="oops entry text"))
+        print("appended oops entry")
+        return 0
+
+    def extend(
+        self, values: list[str], *, from_file: str | None, use_stdin: bool
+    ) -> int:
+        entries = _read_text_items_source(
+            session_root=self.session_dir,
+            inline_items=values,
+            from_file=from_file,
+            use_stdin=use_stdin,
+            input_name="oops entry text",
+        )
+        for entry in entries:
+            self._append_record(_normalize_text(entry, input_name="oops entry text"))
+        print(f"extended oops entries: {len(entries)} item(s)")
+        return 0
+
+    def _append_record(self, message: str) -> None:
+        append_oops_record(
+            self.session_dir,
+            message=message,
+            actor=self.writer,
+            surface=self.surface,
+            command=self.command,
+            kind=self.kind,
+            affordance=self.affordance,
+            workaround=self.workaround,
+            severity=self.severity,
+            reproducibility=self.reproducibility,
+            resolution_state=self.resolution_state,
+        )
+
+
+@dataclass(frozen=True)
+class _OopsReadState:
+    session_dir: Path
+    scoped_actor: str | None
+    explicit_actor: str | None
+    surface: str
+    command: str
+    kind: str
+    severity: str
+    output: str
+    limit: int
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> _OopsReadState:
+        session_dir, scoped_actor = session_scope._observation_scope(
+            explicit_session=getattr(args, "session", None),
+            explicit_actor=getattr(args, "actor", None),
+        )
+        return cls(
+            session_dir=session_dir,
+            scoped_actor=scoped_actor,
+            explicit_actor=getattr(args, "actor", None),
+            surface=args.surface or "",
+            command=args.command or "",
+            kind=args.kind or "",
+            severity=args.severity or "",
+            output=args.output,
+            limit=args.limit,
+        )
+
+    def show(self) -> int:
+        actor_ids, records = self._loaded_records()
+        payload = self._payload(actor_ids, records)
+        self._emit(payload, actor_ids)
+        return 0
+
+    def _loaded_records(self) -> tuple[list[str], list[OopsDisplayRecord]]:
+        if self.scoped_actor:
+            return [self.scoped_actor], _filtered_display_records(
+                self.session_dir,
+                scoped_actor=self.scoped_actor,
+                surface=self.surface,
+                command=self.command,
+                kind=self.kind,
+                severity=self.severity,
+            )
+        actor_ids, records = _aggregate_oops_records(
+            self.session_dir,
+            surface=self.surface,
+            command=self.command,
+            kind=self.kind,
+            severity=self.severity,
+        )
+        if actor_ids or _is_exact_session_root(self.session_dir):
+            return actor_ids, records or _filtered_display_records(
+                self.session_dir,
+                surface=self.surface,
+                command=self.command,
+                kind=self.kind,
+                severity=self.severity,
+            )
+        raise SystemExit(
+            "no actors bound for this session; bind one intentionally with "
+            + session_registry._actor_bind_examples(prefix="gotta actor bind")
+        )
+
+    def _payload(
+        self, actor_ids: list[str], records: list[OopsDisplayRecord]
+    ) -> OopsPayload:
+        if actor_ids:
+            return _read_payload(
+                self.session_dir,
+                actor_ids,
+                records,
+                explicit_actor=self.explicit_actor,
+                scoped_actor=self.scoped_actor,
+                limit=self.limit,
+            )
+        return _root_payload(self.session_dir, records, limit=self.limit)
+
+    def _emit(self, payload: OopsPayload, actor_ids: list[str]) -> None:
+        if self.output == "json":
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return
+        if actor_ids:
+            _print_scoped_payload_text(
+                payload,
+                actor_count=len(actor_ids),
+                actor_scoped=bool(self.explicit_actor or self.scoped_actor),
+            )
+            return
+        _print_root_payload_text(payload)
 
 
 def _has_explicit_write_source(argv: list[str]) -> bool:
@@ -317,6 +499,35 @@ def _aggregate_oops_records(
     return actor_ids, records
 
 
+def _filtered_display_records(
+    session_dir: Path,
+    *,
+    scoped_actor: str | None = None,
+    surface: str = "",
+    command: str = "",
+    kind: str = "",
+    severity: str = "",
+) -> list[OopsDisplayRecord]:
+    records = [
+        cast(OopsDisplayRecord, dict(record))
+        for record in filtered_oops_records(
+            oops_records(session_dir),
+            surface=surface,
+            command=command,
+            kind=kind,
+            severity=severity,
+        )
+    ]
+    if not scoped_actor:
+        return records
+    return [
+        record
+        for record in records
+        if writer_role(session_dir, scoped_actor, writer=str(record.get("actor") or ""))
+        != "foreign"
+    ]
+
+
 def _explicit_read_redirect(action_token: str) -> SystemExit:
     return SystemExit(
         f"`gotta oops {action_token}` has been folded into `gotta oops show`; "
@@ -395,6 +606,23 @@ def _read_payload(
     return payload
 
 
+def _root_payload(
+    session_dir: Path, records: list[OopsDisplayRecord], *, limit: int
+) -> OopsPayload:
+    limited = _limited_records(records, limit=limit)
+    return {
+        "session_root": str(session_dir),
+        "actor_count": 0,
+        "actors": [],
+        "shown_count": len(limited),
+        "entries": limited,
+        "state_path": str(oops_log_path(session_dir)),
+        "locator": session_charter._native_surface_locator("oops"),
+        "follow_command": session_charter._native_surface_follow_command("oops"),
+        **oops_summary(records),
+    }
+
+
 def _is_exact_session_root(work_dir: Path) -> bool:
     resolved = work_dir.resolve()
     return (
@@ -432,181 +660,7 @@ def _resolved_action(args: argparse.Namespace) -> tuple[str, list[str]]:
     raise _unknown_action(action_token)
 
 
-def cmd_oops(args: argparse.Namespace) -> int:
-    action, values = _resolved_action(args)
-    if action == "append":
-        session_dir = session_scope._session_dir(
-            explicit_session=getattr(args, "session", None),
-            explicit_actor=getattr(args, "actor", None),
-        )
-        writer = writer_name()
-        actor_branch = session_dir.resolve().parent.name == "actors"
-        target_actor = session_actor(session_dir) if actor_branch else ""
-        if target_actor:
-            require_writer(
-                session_dir,
-                target_actor,
-                writer=writer,
-                action="write into this actor branch",
-            )
-        message_text = _read_text_source(
-            session_root=session_dir,
-            inline=(" ".join(values) if values else None),
-            from_file=args.from_file,
-            use_stdin=args.use_stdin,
-            input_name="oops entry text",
-        )
-        append_oops_record(
-            session_dir,
-            message=_normalize_text(message_text, input_name="oops entry text"),
-            actor=writer,
-            surface=args.surface or "",
-            command=args.command or "",
-            kind=args.kind or "",
-            affordance=args.affordance or "",
-            workaround=args.workaround or "",
-            severity=args.severity or "medium",
-            reproducibility=args.reproducibility,
-            resolution_state=args.resolution_state,
-        )
-        print("appended oops entry")
-        return 0
-    if action == "extend":
-        session_dir = session_scope._session_dir(
-            explicit_session=getattr(args, "session", None),
-            explicit_actor=getattr(args, "actor", None),
-        )
-        writer = writer_name()
-        actor_branch = session_dir.resolve().parent.name == "actors"
-        target_actor = session_actor(session_dir) if actor_branch else ""
-        if target_actor:
-            require_writer(
-                session_dir,
-                target_actor,
-                writer=writer,
-                action="write into this actor branch",
-            )
-        entries = _read_text_items_source(
-            session_root=session_dir,
-            inline_items=values,
-            from_file=args.from_file,
-            use_stdin=args.use_stdin,
-            input_name="oops entry text",
-        )
-        for entry in entries:
-            append_oops_record(
-                session_dir,
-                message=_normalize_text(entry, input_name="oops entry text"),
-                actor=writer,
-                surface=args.surface or "",
-                command=args.command or "",
-                kind=args.kind or "",
-                affordance=args.affordance or "",
-                workaround=args.workaround or "",
-                severity=args.severity or "medium",
-                reproducibility=args.reproducibility,
-                resolution_state=args.resolution_state,
-            )
-        print(f"extended oops entries: {len(entries)} item(s)")
-        return 0
-
-    session_dir, scoped_actor = session_scope._observation_scope(
-        explicit_session=getattr(args, "session", None),
-        explicit_actor=getattr(args, "actor", None),
-    )
-    explicit_actor = getattr(args, "actor", None)
-    if scoped_actor:
-        records = [
-            cast(OopsDisplayRecord, dict(record))
-            for record in filtered_oops_records(
-                oops_records(session_dir),
-                surface=args.surface or "",
-                command=args.command or "",
-                kind=args.kind or "",
-                severity=args.severity or "",
-            )
-        ]
-        records = [
-            record
-            for record in records
-            if writer_role(
-                session_dir, scoped_actor, writer=str(record.get("actor") or "")
-            )
-            != "foreign"
-        ]
-        actor_ids = [scoped_actor]
-    else:
-        actor_ids, records = _aggregate_oops_records(
-            session_dir,
-            surface=args.surface or "",
-            command=args.command or "",
-            kind=args.kind or "",
-            severity=args.severity or "",
-        )
-        if not actor_ids:
-            if not _is_exact_session_root(session_dir):
-                raise SystemExit(
-                    "no actors bound for this session; bind one intentionally with "
-                    + session_registry._actor_bind_examples(prefix="gotta actor bind")
-                )
-            records = [
-                cast(OopsDisplayRecord, dict(record))
-                for record in filtered_oops_records(
-                    oops_records(session_dir),
-                    surface=args.surface or "",
-                    command=args.command or "",
-                    kind=args.kind or "",
-                    severity=args.severity or "",
-                )
-            ]
-            payload: OopsPayload = {
-                "session_root": str(session_dir),
-                "actor_count": 0,
-                "actors": [],
-                "shown_count": len(_limited_records(records, limit=args.limit)),
-                "entries": _limited_records(records, limit=args.limit),
-                "state_path": str(oops_log_path(session_dir)),
-                "locator": session_charter._native_surface_locator("oops"),
-                "follow_command": session_charter._native_surface_follow_command(
-                    "oops"
-                ),
-                **oops_summary(records),
-            }
-            if args.output == "json":
-                print(json.dumps(payload, indent=2, sort_keys=True))
-                return 0
-            print(f"oops: {payload.get('follow_command', '')}")
-            print(
-                f"entries: {payload['entry_count']} "
-                f"(showing {payload.get('shown_count', 0)})"
-            )
-            print(f"severity_counts: {payload['severity_counts']}")
-            print(f"kind_counts: {payload['kind_counts']}")
-            print(f"surface_counts: {payload['surface_counts']}")
-            print(f"resolution_counts: {payload['resolution_counts']}")
-            print(f"reproducibility_counts: {payload['reproducibility_counts']}")
-            print(f"affordance_counts: {payload['affordance_counts']}")
-            for record in payload.get("entries", []):
-                timestamp = record["timestamp"] or "unknown-time"
-                actor = record["actor"] or "session"
-                message = record["message"].strip() or "unspecified oops entry"
-                print(f"- `{timestamp}` [{actor}] {message}")
-            return 0
-    payload = _read_payload(
-        session_dir,
-        actor_ids,
-        records,
-        explicit_actor=explicit_actor,
-        scoped_actor=scoped_actor,
-        limit=args.limit,
-    )
-    if args.output == "json":
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-    if explicit_actor or scoped_actor:
-        print(f"oops: {payload.get('follow_command', '')}")
-    else:
-        print(f"oops: session-wide across {len(actor_ids)} actor(s)")
+def _print_payload_counts(payload: OopsPayload) -> None:
     print(
         f"entries: {payload['entry_count']} (showing {payload.get('shown_count', 0)})"
     )
@@ -616,6 +670,26 @@ def cmd_oops(args: argparse.Namespace) -> int:
     print(f"resolution_counts: {payload['resolution_counts']}")
     print(f"reproducibility_counts: {payload['reproducibility_counts']}")
     print(f"affordance_counts: {payload['affordance_counts']}")
+
+
+def _print_root_payload_text(payload: OopsPayload) -> None:
+    print(f"oops: {payload.get('follow_command', '')}")
+    _print_payload_counts(payload)
+    for record in payload.get("entries", []):
+        timestamp = record["timestamp"] or "unknown-time"
+        actor = record["actor"] or "session"
+        message = record["message"].strip() or "unspecified oops entry"
+        print(f"- `{timestamp}` [{actor}] {message}")
+
+
+def _print_scoped_payload_text(
+    payload: OopsPayload, *, actor_count: int, actor_scoped: bool
+) -> None:
+    if actor_scoped:
+        print(f"oops: {payload.get('follow_command', '')}")
+    else:
+        print(f"oops: session-wide across {actor_count} actor(s)")
+    _print_payload_counts(payload)
     for record in payload.get("entries", []):
         actor = record["actor"] or "unknown-actor"
         print(
@@ -626,7 +700,23 @@ def cmd_oops(args: argparse.Namespace) -> int:
             f"{record['surface'] or 'unspecified'} :: "
             f"{record['message']}"
         )
-    return 0
+
+
+def cmd_oops(args: argparse.Namespace) -> int:
+    action, values = _resolved_action(args)
+    if action == "append":
+        return _OopsWriteState.from_args(args).append(
+            values,
+            from_file=args.from_file,
+            use_stdin=args.use_stdin,
+        )
+    if action == "extend":
+        return _OopsWriteState.from_args(args).extend(
+            values,
+            from_file=args.from_file,
+            use_stdin=args.use_stdin,
+        )
+    return _OopsReadState.from_args(args).show()
 
 
 def run(argv: list[str], *, command_name: str = "gotta oops") -> int:

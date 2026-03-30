@@ -1149,6 +1149,36 @@ This file is the execution queue.
   species would likely be churn now. What remains is minor-release-safe future
   work: provider-local pressure plus one local authored-state surface kernel in
   `oops`.
+- [x] Oops orchestration-state hardening landed.
+  - `src/gotta/plugins/oops.py` now centers:
+    - `_OopsWriteState`
+    - `_OopsReadState`
+  - `cmd_oops(...)` no longer owns all of:
+    - write-branch session resolution and writer enforcement
+    - append versus extend input handling
+    - read-branch observation scoping
+    - payload assembly
+    - text rendering
+    inline inside one command function.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/oops.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_oops.py tests/test_cli.py -k 'oops'`
+    - `25 passed`
+    - `uv run ruff check src/gotta/plugins/oops.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/oops.py:cmd_oops` dropped off the hotspot and
+      complexity boards
+    - the remaining heat is now overwhelmingly provider-local, with one small
+      local-surface tail in:
+      - `src/gotta/plugins/session/analyze/main.py:cmd_analyze`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed the last non-provider orchestration kernel
+  from the active hotspot board without reopening settled contracts. More local
+  hardening of this exact species would likely be churn before release. The
+  honest next work is provider-local or local-surface pressure, not shared-core
+  ambiguity.
 
 ## Current Tranche
 
@@ -1229,7 +1259,7 @@ This file is the execution queue.
   - `src/gotta/plugins/granola.py`
   - `src/gotta/plugins/confluence.py`
   - one small local tail in:
-    - `src/gotta/plugins/session/analyze/focus.py:_LineageFocusState.build_selection`
+    - `src/gotta/plugins/session/analyze/main.py:cmd_analyze`
 
 ## Non-Negotiable Invariants
 
@@ -1496,7 +1526,6 @@ This file is the execution queue.
   - `src/gotta/lead/edge.py`
 - [ ] Reduce provider-local or local-surface contract density in:
   - `src/gotta/plugins/jira.py`
-  - `src/gotta/plugins/oops.py`
   - `src/gotta/plugins/slack.py`
   - `src/gotta/plugins/gdrive.py`
 - [ ] Reduce remaining type pressure in the local/provider cores:
