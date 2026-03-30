@@ -526,6 +526,30 @@ This file is the execution queue.
   payload typing of the old species would be churn now; the next honest move is
   the remaining provider-knowledge leak in canonicalization and dispatch, then
   the provider-local and algorithmic phase.
+- [x] Generic canonicalization tranche landed.
+  - `src/gotta/resolve/canon.py` no longer hard-codes provider-specific
+    canonicalizer helpers for:
+    - GitHub
+    - Slack
+    - Confluence
+    - Jira
+    - Google Docs
+    - Google Drive
+    - Google Sheets
+  - The core canonicalization center is now:
+    - installed surface `canonical_locator(...)`, or
+    - generic `plugin:invocation_locator(...)` fallback
+  - The provider-specific canonical shapes are now fully owned by installed
+    surface bindings rather than core fallback code.
+  - The generic fallback is pinned directly in:
+    - `tests/test_dispatch.py`
+      - `test_canonical_locator_falls_back_to_generic_surface_free_shape(...)`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted another still-live provider-knowledge seam
+  from the core. More core canonicalization cleanup of the same species would
+  be churn now; the next honest move is the remaining provider-name branch in
+  `src/gotta/dispatch/main.py`, then reassess whether the core-collapse phase is
+  honestly over.
 
 ## Current Tranche
 
@@ -563,8 +587,9 @@ This file is the execution queue.
   - `resolve_lead_resolution(...)`
 - [x] Move provider artifact-intent classification out of the core and into
   installed surface contracts.
+- [x] Delete provider-specific canonicalization fallback from the core and keep
+  only surface-owned canonical locators plus a generic fallback.
 - [ ] Next tranche: continue provider-core decoupling in:
-  - `src/gotta/resolve/canon.py`
   - `src/gotta/dispatch/main.py`
 
 ## Non-Negotiable Invariants
@@ -616,6 +641,8 @@ This file is the execution queue.
 - [x] Type the event-sourced `todo` core and payload seam.
 - [x] Move provider artifact-intent classification out of the core and into
   installed surface contracts.
+- [x] Delete provider-specific canonicalization fallback from the core and keep
+  only surface-owned canonical locators plus a generic fallback.
 
 ## Phase 0: Freeze The Vocabulary In Code
 
@@ -860,6 +887,8 @@ This file is the execution queue.
 - [x] Type the event-sourced `todo` core and payload seam.
 - [x] Move provider artifact-intent classification out of the core and into
   installed surface contracts.
+- [x] Delete provider-specific canonicalization fallback from the core and keep
+  only surface-owned canonical locators plus a generic fallback.
 - [x] Switch from shared-core contract collapse to hot-kernel reduction once
   the last authored-state seam is typed.
 - [ ] Delete the remaining provider-specific canonicalization and dispatch

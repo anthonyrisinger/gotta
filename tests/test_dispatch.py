@@ -21,6 +21,7 @@ import gotta.cli.notice as cli_notice
 import gotta.dispatch.budget as dispatch_budget
 import gotta.dispatch.main as dispatch
 import gotta.dispatch.materialize as dispatch_materialize
+import gotta.resolve.canon as resolve_canon
 import gotta.resolve.intent as resolve_intent
 import gotta.resolve.invoke as invocation
 from gotta.actor import ACTOR_ID_ENV
@@ -936,6 +937,17 @@ def test_canonical_locator_normalizes_reordered_read_search_locators() -> None:
     assert second == first
     assert first.startswith("slack:search --workspace example-workspace --limit 10 ")
     assert "ABC reboot" in first
+
+
+def test_canonical_locator_falls_back_to_generic_surface_free_shape(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(resolve_canon, "get_surface", lambda _plugin: None)
+
+    assert (
+        resolve_canon.canonical_locator("demo", ["subcommand", "--limit", "5", "abc"])
+        == "demo:subcommand --limit 5 abc"
+    )
 
 
 def test_materialize_invocation_attributes_delegated_read_to_provider(
