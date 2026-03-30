@@ -4,27 +4,17 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
+from ..scan import model as scan_model
+
+AnalyzeScanEntry = scan_model.ScanEntry
+AnalyzeScanPayload = scan_model.ScanPayload
+
 
 class AnalyzeVisibility(TypedDict, total=False):
     visibility_level: str
     visibility_boundary: str
     visibility_confidence: str
     visibility_basis: list[str]
-
-
-class AnalyzeScanEntry(TypedDict, total=False):
-    checksum: str
-    canonical_locator: str
-    locator: str
-    lastFetchedAt: str
-    fetched_at: str
-    hitCount: int
-    artifactKind: str
-    artifact_kind: str
-
-
-class AnalyzeScanPayload(TypedDict, total=False):
-    entries: list[AnalyzeScanEntry]
 
 
 class LineageSource(AnalyzeVisibility, total=False):

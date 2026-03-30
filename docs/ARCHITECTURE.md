@@ -377,7 +377,12 @@ The deeper stable storage split is:
 - `LedgerStore`
 - `BlobStore`
 - `StateStore`
-- `IndexStore`
+
+The derived-query/backend split is:
+
+- `GraphIndexBackend`
+- `LeadIndexBackend`
+- `SemanticIndexBackend`
 
 For 1.0:
 
@@ -608,13 +613,13 @@ formats.
 - appends channel records
 - stores and retrieves actor state
 
-`IndexStore`
+`GraphIndexBackend` / `LeadIndexBackend` / `SemanticIndexBackend`
 
-- optional derived backend
-- ingests artifact and state records
-- rebuilds from ledger truth
-- answers derived queries
-- reports health and staleness
+- optional derived backends
+- ingest artifact and state truth
+- rebuild from ledger truth
+- answer typed graph, lead, and semantic queries
+- report health and staleness
 
 ### Exported Record Families
 
@@ -674,7 +679,7 @@ named above.
 | `LedgerStore` | `src/gotta/content/store.py` |
 | `BlobStore` | `src/gotta/content/store.py` and `src/gotta/content/file.py` |
 | `StateStore` | `src/gotta/notes/`, `src/gotta/logs.py`, `src/gotta/todo.py`, and `src/gotta/session/` |
-| `IndexStore` | in-process derived views in `src/gotta/lead/` and `src/gotta/plugins/session/` |
+| `GraphIndexBackend` / `LeadIndexBackend` / `SemanticIndexBackend` | `src/gotta/plugins/session/backend.py` with in-process builders in `src/gotta/lead/` and `src/gotta/plugins/session/` |
 | `ProviderBundle` | provider-facing plugin surfaces under `src/gotta/plugins/` and shared provider helpers under `src/gotta/providers/` |
 | `SurfaceSpec` | top-level dispatch through `src/gotta/builtin.py`, `src/gotta/cli/`, and plugin runners |
 | `SurfaceBinding` | registry names, config, and entry-point names |

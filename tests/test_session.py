@@ -42,6 +42,7 @@ from gotta.plugins import goal
 from gotta.plugins.logs import main as logs
 from gotta.plugins.notes import main as notes
 from gotta.plugins import actor
+from gotta.plugins.session import backend as session_backend
 import gotta.plugins.session.analyze.lineage as session_analyze_lineage
 import gotta.plugins.session.analyze.render as session_analyze_render
 import gotta.plugins.session.analyze.semantic as session_analyze_semantic
@@ -4193,6 +4194,35 @@ def test_session_analyze_reports_duplicate_materializations_without_variant_drif
     assert "materializations: 2" in mermaid
 
 
+def test_default_graph_index_backend_derives_graph_from_current_ledger(
+    tmp_path: Path,
+) -> None:
+    dirs = initialize_session(tmp_path / "local")
+    url = "https://github.com/acme/widgets"
+    materialize_bytes(
+        b"widget summary",
+        dirs=dirs,
+        preferred_name="widgets.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "github",
+            "locator": url,
+            "canonical_locator": url,
+            "content_type": "text/markdown",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+
+    backend = session_backend.default_graph_index_backend()
+    payload = backend.query_graph(dirs)
+
+    assert payload["sourceCount"] == 1
+    assert payload["contentCount"] == 1
+    assert payload["sources"][0]["locator"] == url
+    assert backend.health(dirs)["backend"] == "graph-in-process"
+    assert backend.staleness(dirs)["stale"] is False
+
+
 def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
     tmp_path: Path,
 ) -> None:
@@ -4275,6 +4305,58 @@ def test_session_analyze_extracts_explicit_leads_and_surfaces_gaps(
     )
 
 
+def test_default_semantic_index_backend_derives_analysis_from_current_ledger(
+    tmp_path: Path,
+) -> None:
+    dirs = initialize_session(tmp_path / "local")
+    materialize_bytes(
+        (
+            "# ABC-1\n\n"
+            "Depends on ABC-2.\n"
+            "Design doc: confluence:12345\n"
+            "PR: https://github.com/acme/widgets/pull/7\n"
+        ).encode("utf-8"),
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    materialize_bytes(
+        b"# ABC-2\n\nDone.\n",
+        dirs=dirs,
+        preferred_name="ABC-2.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-2",
+            "canonical_locator": "jira:ABC-2",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    backend = session_backend.default_semantic_index_backend()
+    lineage = backend.query_lineage(dirs)
+    semantic = backend.query_semantic(lineage)
+    overview = backend.query_overview(lineage, semantic, limit=4)
+    combined = backend.query_combined(
+        focus="",
+        lineage=lineage,
+        semantic=semantic,
+    )
+
+    assert lineage["leadSourceCount"] == 3
+    assert semantic["nodeCount"] > 0
+    assert overview["semanticNodeCount"] == semantic["nodeCount"]
+    assert combined["mode"] == "all"
+    assert backend.health(dirs)["backend"] == "semantic-in-process"
+    assert backend.staleness(dirs)["stale"] is False
+
+
 def test_session_leads_can_focus_one_artifact_by_artifact_locator(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -4336,6 +4418,45 @@ def test_session_leads_can_focus_one_artifact_by_artifact_locator(
         and lead["materialized"] is False
         for lead in payload["artifacts"][0]["leads"]
     )
+
+
+def test_default_lead_index_backend_derives_leads_from_current_ledger(
+    tmp_path: Path,
+) -> None:
+    dirs = initialize_session(tmp_path / "local")
+    materialize_bytes(
+        b"# ABC-1\n\nDepends on ABC-2.\n",
+        dirs=dirs,
+        preferred_name="ABC-1.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-1",
+            "canonical_locator": "jira:ABC-1",
+        },
+        timestamp="2026-03-11T00:00:00.000001Z",
+    )
+    materialize_bytes(
+        b"# ABC-2\n\nDone.\n",
+        dirs=dirs,
+        preferred_name="ABC-2.md",
+        metadata={
+            "tool": "gotta",
+            "plugin": "jira",
+            "locator": "get ABC-2",
+            "canonical_locator": "jira:ABC-2",
+        },
+        timestamp="2026-03-11T00:00:01.000001Z",
+    )
+
+    backend = session_backend.default_lead_index_backend()
+    payload = backend.query_leads(dirs)
+
+    assert payload["leadCount"] == 1
+    assert payload["artifactCount"] == 2
+    assert payload["leadSources"][0]["locator"] == "jira:ABC-2"
+    assert backend.health(dirs)["backend"] == "lead-in-process"
+    assert backend.staleness(dirs)["stale"] is False
 
 
 def test_session_leads_orders_best_first_without_quality_thresholds(

@@ -137,7 +137,11 @@ This file is the execution queue.
     - `BlobStore`
     - `LedgerStore`
     - `StateStore`
-    - `IndexStore`
+  - The temporary generic `IndexStore` placeholder from this phase was later
+    deleted in favor of explicit:
+    - `GraphIndexBackend`
+    - `LeadIndexBackend`
+    - `SemanticIndexBackend`
   - `src/gotta/content/filesystem.py` is now the filesystem implementation:
     - `FileSystemBlobStore`
     - `FileSystemLedgerStore`
@@ -687,6 +691,30 @@ This file is the execution queue.
   just a hot file. More shared-core provider-decoupling of the old species
   would be churn now. The next honest move is derived-backend contracts or a
   shift into provider-local / algorithmic pressure.
+- [x] Derived-backend contract tranche landed.
+  - `src/gotta/plugins/session/backend.py` now centers:
+    - `GraphIndexBackend`
+    - `LeadIndexBackend`
+    - `SemanticIndexBackend`
+    - `default_graph_index_backend(...)`
+    - `default_lead_index_backend(...)`
+    - `default_semantic_index_backend(...)`
+  - `src/gotta/content/store.py` no longer carries the stale generic
+    `IndexStore` placeholder.
+  - `gotta session graph`, `gotta session leads`, and `gotta session analyze`
+    now query explicit derived backends instead of reaching directly into the
+    in-process builders.
+  - Focused validation is clean:
+    - `uv run pytest -q tests/test_session.py -k 'default_graph_index_backend or default_lead_index_backend or default_semantic_index_backend or session_analyze_extracts_explicit_leads_and_surfaces_gaps or session_leads_can_focus_one_artifact_by_artifact_locator or session_analyze_treats_multiple_renderings_as_variants_not_collisions'`
+    - `6 passed`
+    - `uvx pyright src/gotta/plugins/session/backend.py src/gotta/plugins/session/graph/main.py src/gotta/plugins/session/lead/main.py src/gotta/plugins/session/analyze/main.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because explicit graph/lead/semantic backends were still a
+  missing executable center and the generic `IndexStore` had become stale
+  architectural residue. More shared-core collapse of this exact species would
+  now be churn. The next honest move is provider-local / algorithmic pressure
+  unless runtime-selected alternate backends become real code instead of prose.
 
 ## Current Tranche
 
@@ -736,9 +764,10 @@ This file is the execution queue.
   onto installed surface contracts.
 - [x] Land the explicit `exec` surface as canonical evidence instead of
   implicit local-command fallback.
-- [ ] Next tranche: choose between derived-backend contracts and
-  provider-local / algorithmic pressure based on which still replaces a
-  missing architectural center instead of reshuffling settled seams.
+- [x] Land explicit graph/lead/semantic derived-backend contracts and delete the
+  stale generic `IndexStore` placeholder.
+- [ ] Next tranche: shift into provider-local / algorithmic pressure unless a
+  genuinely missing executable backend owner survives fresh study.
 
 ## Non-Negotiable Invariants
 
@@ -831,7 +860,6 @@ This file is the execution queue.
   - `LedgerStore`
   - `BlobStore`
   - `StateStore`
-  - `IndexStore`
 - [ ] Type the ledger records first:
   - [x] `ArtifactRecord`
   - [x] `ArtifactMetadata`
@@ -943,18 +971,18 @@ This file is the execution queue.
 
 ## Phase 5: Derived Backend Contracts
 
-- [ ] Introduce explicit backend interfaces for optional derived indexes:
+- [x] Introduce explicit backend interfaces for optional derived indexes:
   - `GraphIndexBackend`
   - `LeadIndexBackend`
   - `SemanticIndexBackend`
-- [ ] Make backend contracts typed around:
+- [x] Make backend contracts typed around:
   - ingest
   - rebuild
   - query
   - health
   - staleness
-- [ ] Make derived views backend-aware without surrendering ledger truth.
-- [ ] Keep Memgraph, Kuzu, DuckDB, and similar systems strictly optional,
+- [x] Make derived views backend-aware without surrendering ledger truth.
+- [x] Keep Memgraph, Kuzu, DuckDB, and similar systems strictly optional,
   rebuildable accelerators.
 
 ## Phase 6: Land The Explicit `exec` Surface
@@ -1014,7 +1042,7 @@ This file is the execution queue.
 - [x] Introduce the first real ledger record types.
 - [x] Start extracting logical ledger operations from `content/store.py`.
 - [x] Replace filesystem-shaped exported records in `content/model.py`.
-- [x] Introduce `LedgerStore`, `BlobStore`, `StateStore`, and `IndexStore`.
+- [x] Introduce `LedgerStore`, `BlobStore`, and `StateStore`.
 - [x] Split `content/store.py` into storage contracts and concrete filesystem
   implementation.
 - [x] Remove remaining internal dependence on dead legacy properties from the
@@ -1053,7 +1081,7 @@ This file is the execution queue.
   fallback in the shared core is still load-bearing.
 - [x] Reassess whether provider-specific visibility classification in shared
   core is still architectural or should move onto installed surface contracts.
-- [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
+- [x] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 
 ## What Not To Do
 
@@ -1077,7 +1105,7 @@ This file is the execution queue.
   semantic aggregates.
 - [ ] Provider packaging can be externalized cleanly.
 - [ ] Multi-binding installs like `gotta ask sre` are first-class.
-- [ ] Derived backend interfaces exist without becoming storage truth.
+- [x] Derived backend interfaces exist without becoming storage truth.
 - [x] `gotta exec` exists as explicit evidence rather than implicit fallback.
 - [ ] The lead kernel and major derived payloads are typed.
 - [ ] Remaining work is primarily provider-local or algorithm-local, not

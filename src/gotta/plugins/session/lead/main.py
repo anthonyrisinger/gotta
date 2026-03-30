@@ -5,15 +5,15 @@ from __future__ import annotations
 import argparse
 import json
 
+from ..backend import default_lead_index_backend
 from ..parse import explicit_session_ref, require_started_session, session_dirs_for_read
-from .payload import leads_payload
 from .render import render_leads_text
 
 
 def cmd_leads(args: argparse.Namespace) -> int:
     dirs = session_dirs_for_read(args)
     require_started_session(dirs)
-    payload = leads_payload(
+    payload = default_lead_index_backend().query_leads(
         dirs,
         target=args.target or "",
         filter_query=str(getattr(args, "filter", "") or ""),

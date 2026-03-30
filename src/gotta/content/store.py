@@ -4,7 +4,6 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
 from gotta.content.model import (
-    ArtifactRecord,
     ContentSnapshot,
     ManifestEntry,
     Materialization,
@@ -52,20 +51,8 @@ class StateStore(Protocol):
     def read_actor_state(self, actor: str) -> dict[str, Any] | None: ...
 
 
-@runtime_checkable
-class IndexStore(Protocol):
-    def ingest_artifact(self, artifact: ArtifactRecord) -> None: ...
-
-    def ingest_state_record(self, channel: str, payload: Mapping[str, Any]) -> None: ...
-
-    def rebuild(self) -> None: ...
-
-    def health(self) -> Mapping[str, Any]: ...
-
-
 __all__ = [
     "BlobStore",
     "LedgerStore",
     "StateStore",
-    "IndexStore",
 ]

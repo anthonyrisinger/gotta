@@ -5,14 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 
+from ..backend import default_semantic_index_backend
 from ..parse import explicit_session_ref, require_started_session, session_dirs_for_read
 from ..scan.payload import scan_payload
-from .lineage import lineage_focus_payload, lineage_payload
 from .model import LineageFocusPayload, SemanticFocusPayload
-from .overview import (
-    analysis_overview_payload,
-    combined_analysis_payload,
-)
 from .render import (
     render_analysis_focus_text,
     render_analysis_mermaid,
@@ -30,20 +26,20 @@ from .render import (
     render_single_focus_markdown,
     render_text_bundle,
 )
-from .semantic import semantic_focus_payload, semantic_payload
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     dirs = session_dirs_for_read(args)
     require_started_session(dirs)
     session_ref = explicit_session_ref(args)
-    lineage_graph = lineage_payload(dirs, session_ref=session_ref)
+    backend = default_semantic_index_backend()
+    lineage_graph = backend.query_lineage(dirs, session_ref=session_ref)
     lineage_mermaid = render_analysis_mermaid(lineage_graph)
-    semantic_graph = semantic_payload(lineage_graph)
+    semantic_graph = backend.query_semantic(lineage_graph)
     semantic_mermaid = render_semantic_mermaid(semantic_graph)
     focus_query = str(getattr(args, "focus", "") or "").strip()
     focus_limit = max(int(getattr(args, "limit", 8) or 0), 0)
-    overview = analysis_overview_payload(
+    overview = backend.query_overview(
         lineage_graph,
         semantic_graph,
         limit=focus_limit,
@@ -58,13 +54,13 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             include_all=True,
             session_ref=session_ref,
         )
-        lineage_focus = lineage_focus_payload(
+        lineage_focus = backend.query_lineage_focus(
             lineage_graph,
             focus=focus_query,
             limit=focus_limit,
             scan_payload=focus_scan,
         )
-        semantic_focus = semantic_focus_payload(
+        semantic_focus = backend.query_semantic_focus(
             lineage_graph,
             semantic_graph,
             focus=focus_query,
@@ -118,7 +114,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         else:
             print(
                 json.dumps(
-                    combined_analysis_payload(
+                    backend.query_combined(
                         focus=focus_query,
                         lineage=(
                             lineage_focus
@@ -139,7 +135,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         if args.mode == "lineage":
             print(
                 render_single_focus_markdown(
-                    session_dir=str(lineage_focus["sessionDir"]),
+                    session_dir=str(lineage_focus.get("sessionDir") or ""),
                     focus=str(lineage_focus.get("focus") or ""),
                     section_lines=render_lineage_focus_markdown_section(lineage_focus),
                 )
@@ -150,7 +146,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         elif args.mode == "semantic":
             print(
                 render_single_focus_markdown(
-                    session_dir=str(semantic_focus["sessionDir"]),
+                    session_dir=str(semantic_focus.get("sessionDir") or ""),
                     focus=str(semantic_focus.get("focus") or ""),
                     section_lines=render_semantic_focus_markdown_section(
                         semantic_focus

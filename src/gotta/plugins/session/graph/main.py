@@ -5,16 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 
+from ..backend import default_graph_index_backend
 from ..parse import explicit_session_ref, require_started_session, session_dirs_for_read
 from .mermaid import render_mermaid
-from .payload import graph_payload
 from .render import render_graph_text
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
     dirs = session_dirs_for_read(args)
     require_started_session(dirs)
-    payload = graph_payload(
+    payload = default_graph_index_backend().query_graph(
         dirs,
         filter_query=str(getattr(args, "filter", "") or ""),
         session_ref=explicit_session_ref(args),

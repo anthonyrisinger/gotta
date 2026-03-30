@@ -7,9 +7,21 @@ from collections import Counter
 from .model import (
     AnalysisOverviewPayload,
     CombinedAnalysisPayload,
+    DominantKind,
+    DominantRelation,
+    LeadSourceSummary,
+    LineageContent,
+    LineageFocusPayload,
     LineagePayload,
+    ProviderCluster,
+    SemanticFocusPayload,
+    SemanticNode,
     SemanticPayload,
 )
+
+
+def _int(value: object) -> int:
+    return value if isinstance(value, int) else 0
 
 
 def analysis_overview_payload(
@@ -33,16 +45,16 @@ def analysis_overview_payload(
         for edge in semantic.get("edges") or []
         if str(edge.get("label") or "")
     )
-    provider_clusters = [
+    provider_clusters: list[ProviderCluster] = [
         {"provider": provider, "nodeCount": count}
         for provider, count in node_groups.most_common(max(limit, 0))
         if provider != "content"
     ]
-    dominant_kinds = [
+    dominant_kinds: list[DominantKind] = [
         {"kind": kind, "nodeCount": count}
         for kind, count in node_kinds.most_common(max(limit, 0))
     ]
-    dominant_relations = [
+    dominant_relations: list[DominantRelation] = [
         {"label": label, "edgeCount": count}
         for label, count in edge_labels.most_common(max(limit, 0))
     ]
@@ -57,46 +69,46 @@ def analysis_overview_payload(
         if kind in {"source", "query", "provider"}
     )
     anchors = sorted(
-        [dict(item) for item in lineage.get("content") or []],
+        [item for item in lineage.get("content") or []],
         key=lambda item: (
             1 if str(item.get("artifactKind") or "") == "evidence" else 0,
-            int(item.get("fetchCount") or 0),
+            _int(item.get("fetchCount")),
             str(item.get("lastFetchedAt") or ""),
             str(item.get("preferredName") or ""),
         ),
         reverse=True,
     )[: max(limit, 0)]
-    queries = [
-        dict(node)
+    materialized_anchors: list[LineageContent] = anchors
+    queries: list[SemanticNode] = [
+        node
         for node in semantic.get("nodes") or []
         if str(node.get("kind") or "") == "query"
     ][: max(limit, 0)]
-    lead_sources = [
-        dict(item) for item in (lineage.get("leadSources") or [])[: max(limit, 0)]
+    lead_sources: list[LeadSourceSummary] = [
+        item for item in (lineage.get("leadSources") or [])[: max(limit, 0)]
     ]
     return {
-        "sessionDir": lineage["sessionDir"],
-        "contentDir": lineage["contentDir"],
-        "manifestPath": lineage["manifestPath"],
-        "contentCount": int(lineage.get("contentCount") or 0),
-        "sourceCount": int(lineage.get("sourceCount") or 0),
-        "leadSourceCount": int(lineage.get("leadSourceCount") or 0),
-        "leadEdgeCount": int(lineage.get("leadEdgeCount") or 0),
-        "semanticNodeCount": int(semantic.get("nodeCount") or 0),
-        "semanticEdgeCount": int(semantic.get("edgeCount") or 0),
-        "discoveryArtifactCount": int(lineage.get("discoveryArtifactCount") or 0),
-        "evidenceArtifactCount": int(lineage.get("evidenceArtifactCount") or 0),
+        "sessionDir": str(lineage.get("sessionDir") or ""),
+        "contentDir": str(lineage.get("contentDir") or ""),
+        "manifestPath": str(lineage.get("manifestPath") or ""),
+        "contentCount": _int(lineage.get("contentCount")),
+        "sourceCount": _int(lineage.get("sourceCount")),
+        "leadSourceCount": _int(lineage.get("leadSourceCount")),
+        "leadEdgeCount": _int(lineage.get("leadEdgeCount")),
+        "semanticNodeCount": _int(semantic.get("nodeCount")),
+        "semanticEdgeCount": _int(semantic.get("edgeCount")),
+        "discoveryArtifactCount": _int(lineage.get("discoveryArtifactCount")),
+        "evidenceArtifactCount": _int(lineage.get("evidenceArtifactCount")),
         "nextStep": str(lineage.get("nextStep") or semantic.get("nextStep") or ""),
         "providerClusters": provider_clusters,
         "dominantKinds": dominant_kinds,
         "dominantRelations": dominant_relations,
-        "materializedAnchors": anchors,
+        "materializedAnchors": materialized_anchors,
         "querySeeds": queries,
         "bestLeads": lead_sources,
-        "sourceHeavy": source_node_count * 2
-        >= max(int(semantic.get("nodeCount") or 0), 1),
+        "sourceHeavy": source_node_count * 2 >= max(_int(semantic.get("nodeCount")), 1),
         "structuralHeavy": structural_edge_count * 2
-        >= max(int(semantic.get("edgeCount") or 0), 1),
+        >= max(_int(semantic.get("edgeCount")), 1),
         "sourceNodeCount": source_node_count,
         "structuralEdgeCount": structural_edge_count,
     }
@@ -105,8 +117,8 @@ def analysis_overview_payload(
 def combined_analysis_payload(
     *,
     focus: str,
-    lineage: LineagePayload,
-    semantic: SemanticPayload,
+    lineage: LineagePayload | LineageFocusPayload,
+    semantic: SemanticPayload | SemanticFocusPayload,
 ) -> CombinedAnalysisPayload:
     return {
         "mode": "all",
