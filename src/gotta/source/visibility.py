@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from gotta.builtin import get_binding
 
 VISIBILITY_LEVELS = {
     "personal",
@@ -159,215 +160,17 @@ def _classify_local_gotta_visibility(
     )
 
 
-def _slack_channel_value(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    channel = payload.get("channel")
-    if isinstance(channel, Mapping):
-        return channel
-    return payload
-
-
-def _mapping_bool(payload: Mapping[str, Any], *keys: str) -> bool:
-    for key in keys:
-        if key in payload:
-            return bool(payload.get(key))
-    return False
-
-
-def _mapping_str(payload: Mapping[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = str(payload.get(key) or "").strip()
-        if value:
-            return value
-    return ""
-
-
-def _slack_channel_type(payload: Mapping[str, Any]) -> str:
-    explicit = _mapping_str(payload, "type")
-    if explicit:
-        return explicit
-    channel_id = _mapping_str(payload, "id", "channelId")
-    if _mapping_bool(payload, "is_mpim"):
-        return "mpim"
-    if channel_id.startswith("D"):
-        return "im"
-    if _mapping_bool(payload, "is_private", "isPrivate"):
-        return "private_channel"
-    if channel_id:
-        return "public_channel"
-    return ""
-
-
-def _classify_slack_visibility(payload: Mapping[str, Any]) -> dict[str, Any]:
-    channel = _slack_channel_value(payload)
-    channel_type = _slack_channel_type(channel)
-    if not channel_type:
-        return unknown_visibility(provider="slack")
-    is_shared = _mapping_bool(channel, "is_shared", "isShared")
-    is_ext_shared = _mapping_bool(channel, "is_ext_shared", "isExtShared")
-    boundary = "cross_company" if (is_shared or is_ext_shared) else "same_company"
-    if channel_type in {"im", "mpim"}:
-        level = "direct"
-    elif channel_type == "private_channel":
-        level = "restricted"
-    elif channel_type == "public_channel":
-        level = "internal"
-    else:
-        return unknown_visibility(
-            provider="slack",
-            basis=[f"channel.type={channel_type}"],
-        )
-    if boundary == "cross_company" and channel_type in {
-        "private_channel",
-        "public_channel",
-    }:
-        level = "restricted"
-    basis = ["provider=slack", f"channel.type={channel_type}"]
-    if is_shared:
-        basis.append("channel.is_shared=true")
-    if is_ext_shared:
-        basis.append("channel.is_ext_shared=true")
-    return visibility_metadata(
-        level=level,
-        boundary=boundary,
-        confidence="high",
-        basis=basis,
-    )
-
-
-def _extract_github_visibility(payload: Mapping[str, Any]) -> str:
-    for key in ("visibility", "repositoryVisibility", "repoVisibility"):
-        value = str(payload.get(key) or "").strip().lower()
-        if value:
-            return value
-    repository = payload.get("repository")
-    if isinstance(repository, Mapping):
-        for key in ("visibility", "repositoryVisibility", "repoVisibility"):
-            value = str(repository.get(key) or "").strip().lower()
-            if value:
-                return value
-    return ""
-
-
-def _classify_github_visibility(payload: Mapping[str, Any]) -> dict[str, Any]:
-    visibility = _extract_github_visibility(payload)
-    if visibility == "public":
-        return visibility_metadata(
-            level="public",
-            boundary="internet",
-            confidence="high",
-            basis=["provider=github", "repo.visibility=public"],
-        )
-    if visibility == "internal":
-        return visibility_metadata(
-            level="internal",
-            boundary="same_company",
-            confidence="high",
-            basis=["provider=github", "repo.visibility=internal"],
-        )
-    if visibility == "private":
-        return visibility_metadata(
-            level="restricted",
-            boundary="same_company",
-            confidence="high",
-            basis=["provider=github", "repo.visibility=private"],
-        )
-    return unknown_visibility(provider="github")
-
-
-def _jira_security_name(payload: Mapping[str, Any]) -> str:
-    for key in ("security", "securityLevel"):
-        value = payload.get(key)
-        if isinstance(value, Mapping):
-            name = str(value.get("name") or value.get("id") or "").strip()
-            if name:
-                return name
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
-
-
-def _jira_issue_like_payload(payload: Mapping[str, Any]) -> bool:
-    if str(payload.get("issueUrl") or "").strip():
-        return True
-    if (
-        str(payload.get("siteUrl") or "").strip()
-        and str(payload.get("key") or "").strip()
-    ):
-        return True
-    project = payload.get("project")
-    if isinstance(project, Mapping) and str(project.get("key") or "").strip():
-        return True
-    return False
-
-
-def _classify_jira_visibility(
-    payload: Mapping[str, Any],
+def _surface_visibility_metadata(
+    provider: str,
+    payload: Any,
     *,
     subcommand: str,
     locator: str,
 ) -> dict[str, Any]:
-    security_name = _jira_security_name(payload)
-    if security_name:
-        return visibility_metadata(
-            level="restricted",
-            boundary="same_company",
-            confidence="high",
-            basis=[
-                "provider=jira",
-                f"issue.security={security_name}",
-            ],
-        )
-    results = payload.get("results")
-    if isinstance(results, list):
-        for item in results:
-            if not isinstance(item, Mapping):
-                continue
-            security_name = _jira_security_name(item)
-            if security_name:
-                return visibility_metadata(
-                    level="restricted",
-                    boundary="same_company",
-                    confidence="high",
-                    basis=[
-                        "provider=jira",
-                        f"search.result.security={security_name}",
-                    ],
-                )
-        if results:
-            return visibility_metadata(
-                level="restricted",
-                boundary="same_company",
-                confidence="medium",
-                basis=[
-                    "provider=jira",
-                    "search.results=present",
-                    "classification=authenticated_jira_surface",
-                ],
-            )
-    if _jira_issue_like_payload(payload):
-        return visibility_metadata(
-            level="restricted",
-            boundary="same_company",
-            confidence="medium",
-            basis=[
-                "provider=jira",
-                "issue.url=present",
-                "classification=authenticated_jira_surface",
-            ],
-        )
-    if subcommand in {"get", "search", "jql"} or locator.startswith("jira:"):
-        return visibility_metadata(
-            level="restricted",
-            boundary="same_company",
-            confidence="medium",
-            basis=[
-                "provider=jira",
-                f"subcommand={subcommand or 'default'}",
-                "classification=authenticated_jira_surface",
-            ],
-        )
-    return unknown_visibility(provider="jira")
+    binding = get_binding(provider)
+    if binding is None or binding.classify_visibility is None:
+        return {}
+    return dict(binding.classify_visibility(payload, subcommand, locator))
 
 
 def classify_visibility_metadata(
@@ -397,33 +200,14 @@ def classify_visibility_metadata(
             subcommand=normalized_subcommand,
             locator=locator.strip(),
         )
-    if normalized_provider == "slack" and isinstance(payload, Mapping):
-        return _classify_slack_visibility(payload)
-    if normalized_provider == "github" and isinstance(payload, Mapping):
-        return _classify_github_visibility(payload)
-    if normalized_provider == "jira" and isinstance(payload, Mapping):
-        return _classify_jira_visibility(
-            payload,
-            subcommand=normalized_subcommand,
-            locator=locator.strip(),
-        )
-    if normalized_provider == "jira":
-        return _classify_jira_visibility(
-            {},
-            subcommand=normalized_subcommand,
-            locator=locator.strip(),
-        )
-    if normalized_provider == "web":
-        return unknown_visibility(provider="web")
-    if normalized_provider in {
-        "confluence",
-        "gdocs",
-        "gdrive",
-        "grafana",
-        "granola",
-        "gsheets",
-    }:
-        return unknown_visibility(provider=normalized_provider)
+    classified = _surface_visibility_metadata(
+        normalized_provider,
+        payload,
+        subcommand=normalized_subcommand,
+        locator=locator.strip(),
+    )
+    if classified:
+        return classified
     return unknown_visibility(provider=normalized_provider or "unknown")
 
 

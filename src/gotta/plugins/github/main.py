@@ -10,6 +10,7 @@ from typing import Any
 
 from gotta.capture import Capture
 from gotta.projection import Projection
+from gotta.source.visibility import unknown_visibility, visibility_metadata
 
 from .api import (
     default_branch_name,
@@ -61,6 +62,7 @@ __all__ = [
     "ParsedArgs",
     "_canonicalize_capture_value",
     "artifact_intent",
+    "classify_visibility",
     "canonical_locator",
     "capture",
     "main",
@@ -81,6 +83,37 @@ def artifact_intent(argv: list[str]) -> str:
     if argv[0] == "search":
         return "discovery"
     return "evidence"
+
+
+def classify_visibility(payload: Any, subcommand: str, locator: str) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        for key in ("visibility", "repositoryVisibility", "repoVisibility"):
+            value = str(payload.get(key) or "").strip().lower()
+            if value == "public":
+                return visibility_metadata(
+                    level="public",
+                    boundary="internet",
+                    confidence="high",
+                    basis=["provider=github", "repo.visibility=public"],
+                )
+            if value == "internal":
+                return visibility_metadata(
+                    level="internal",
+                    boundary="same_company",
+                    confidence="high",
+                    basis=["provider=github", "repo.visibility=internal"],
+                )
+            if value == "private":
+                return visibility_metadata(
+                    level="restricted",
+                    boundary="same_company",
+                    confidence="high",
+                    basis=["provider=github", "repo.visibility=private"],
+                )
+        repository = payload.get("repository")
+        if isinstance(repository, dict):
+            return classify_visibility(repository, subcommand, locator)
+    return unknown_visibility(provider="github")
 
 
 def _capture_deps() -> CaptureDeps:

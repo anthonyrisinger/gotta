@@ -14,7 +14,7 @@ import signal
 import sys
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.projection import Projection, projection_bytes
@@ -28,7 +28,11 @@ from gotta.source.render import (
     render_visibility_metadata_lines,
 )
 from gotta.source.stamp import derive_source_metadata_from_payload
-from gotta.source.visibility import with_visibility_metadata
+from gotta.source.visibility import (
+    unknown_visibility,
+    visibility_metadata,
+    with_visibility_metadata,
+)
 from gotta.providers import atlassian as atl
 
 OAUTH_DIR = atl.OAUTH_DIR
@@ -1986,6 +1990,103 @@ def _with_jira_visibility(
         subcommand=subcommand,
         locator=locator,
     )
+
+
+def _visibility_security_name(payload: Mapping[str, Any]) -> str:
+    for key in ("security", "securityLevel"):
+        value = payload.get(key)
+        if isinstance(value, Mapping):
+            name = str(value.get("name") or value.get("id") or "").strip()
+            if name:
+                return name
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _visibility_issue_like_payload(payload: Mapping[str, Any]) -> bool:
+    if str(payload.get("issueUrl") or "").strip():
+        return True
+    if (
+        str(payload.get("siteUrl") or "").strip()
+        and str(payload.get("key") or "").strip()
+    ):
+        return True
+    project = payload.get("project")
+    if isinstance(project, Mapping) and str(project.get("key") or "").strip():
+        return True
+    return False
+
+
+def classify_visibility(
+    payload: Any,
+    subcommand: str,
+    locator: str,
+) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        payload = {}
+    security_name = _visibility_security_name(payload)
+    if security_name:
+        return visibility_metadata(
+            level="restricted",
+            boundary="same_company",
+            confidence="high",
+            basis=[
+                "provider=jira",
+                f"issue.security={security_name}",
+            ],
+        )
+    results = payload.get("results")
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, Mapping):
+                continue
+            security_name = _visibility_security_name(item)
+            if security_name:
+                return visibility_metadata(
+                    level="restricted",
+                    boundary="same_company",
+                    confidence="high",
+                    basis=[
+                        "provider=jira",
+                        f"search.result.security={security_name}",
+                    ],
+                )
+        if results:
+            return visibility_metadata(
+                level="restricted",
+                boundary="same_company",
+                confidence="medium",
+                basis=[
+                    "provider=jira",
+                    "search.results=present",
+                    "classification=authenticated_jira_surface",
+                ],
+            )
+    if _visibility_issue_like_payload(payload):
+        return visibility_metadata(
+            level="restricted",
+            boundary="same_company",
+            confidence="medium",
+            basis=[
+                "provider=jira",
+                "issue.url=present",
+                "classification=authenticated_jira_surface",
+            ],
+        )
+    if subcommand in {"get", "search", "jql"} or locator.startswith("jira:"):
+        return visibility_metadata(
+            level="restricted",
+            boundary="same_company",
+            confidence="medium",
+            basis=[
+                "provider=jira",
+                f"subcommand={subcommand or 'default'}",
+                "classification=authenticated_jira_surface",
+            ],
+        )
+    return unknown_visibility(provider="jira")
 
 
 def normalize_issue(

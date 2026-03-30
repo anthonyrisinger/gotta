@@ -635,6 +635,35 @@ This file is the execution queue.
   dispatch-side cleanup of the same species would now be churn; the next honest
   shared-core seam is provider-specific visibility classification in
   `src/gotta/source/visibility.py`, not dispatch or routing.
+- [x] Surface-owned visibility classification tranche landed.
+  - `src/gotta/builtin.py` now carries:
+    - `VisibilityClassifier`
+    - `SurfaceSpec.classify_visibility`
+    - `SurfaceBinding.classify_visibility`
+  - `src/gotta/source/visibility.py` no longer hard-codes provider-specific
+    visibility branches for:
+    - Slack
+    - GitHub
+    - Jira
+  - Installed surfaces now own those semantics in:
+    - `src/gotta/plugins/slack.py`
+      - `classify_visibility(...)`
+    - `src/gotta/plugins/github/main.py`
+      - `classify_visibility(...)`
+    - `src/gotta/plugins/jira.py`
+      - `classify_visibility(...)`
+  - Focused validation is clean:
+    - `uv run pytest -q tests/test_source.py tests/test_dispatch.py tests/test_slack.py tests/test_github.py tests/test_atlassian.py -k 'visibility or slack_binding_declares_default_source_metadata'`
+    - `9 passed`
+  - Shared-core residue sweep now shows no remaining provider-specific branches
+    in `src/gotta/dispatch`, `src/gotta/resolve`, or `src/gotta/source`
+    beyond provider names inside example error strings.
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted the last real provider-aware shared-core
+  classification center instead of just moving code around. More shared-core
+  provider-decoupling of this exact species would now be churn. The shared-core
+  collapse phase is effectively across the line; the next honest move is
+  derived-backend contracts, `exec`, or provider-local / algorithmic pressure.
 
 ## Current Tranche
 
@@ -680,10 +709,11 @@ This file is the execution queue.
   out of shared core and into installed surface contracts.
 - [x] Move provider-specific source timestamp defaults out of shared dispatch
   and into installed surface contracts.
-- [ ] Next tranche: cut the provider-specific visibility-classification center
-  in `src/gotta/source/visibility.py`, or explicitly declare that it belongs to
-  the provider-local phase instead of pretending the shared core is cleaner
-  than it is.
+- [x] Move provider-specific visibility classification out of shared core and
+  onto installed surface contracts.
+- [ ] Next tranche: stop core-collapse churn and choose the next true 1.0 seam:
+  derived-backend contracts, explicit `exec`, or provider-local / algorithmic
+  reduction.
 
 ## Non-Negotiable Invariants
 
@@ -990,11 +1020,13 @@ This file is the execution queue.
   out of shared core and into installed surface contracts.
 - [x] Move provider-specific source timestamp defaults out of shared dispatch
   and into installed surface contracts.
+- [x] Move provider-specific visibility classification out of shared core and
+  onto installed surface contracts.
 - [x] Switch from shared-core contract collapse to hot-kernel reduction once
   the last authored-state seam is typed.
 - [x] Reassess whether any remaining provider-specific dispatch or routing
   fallback in the shared core is still load-bearing.
-- [ ] Reassess whether provider-specific visibility classification in shared
+- [x] Reassess whether provider-specific visibility classification in shared
   core is still architectural or should move onto installed surface contracts.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 

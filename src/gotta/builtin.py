@@ -24,6 +24,7 @@ ResolveSessionAccess = Callable[[list[str]], SessionAccessMode]
 SurfaceArtifactIntent = Literal["none", "discovery", "evidence"]
 ArtifactIntentHook = Callable[[list[str]], SurfaceArtifactIntent]
 DefaultSourceMetadata = Callable[[list[str], bytes, str], dict[str, Any]]
+VisibilityClassifier = Callable[[Any, str, str], dict[str, Any]]
 InvocationLocator = Callable[[list[str]], str]
 CanonicalLocator = Callable[[list[str]], str]
 PreferredName = Callable[[list[str], Any], str]
@@ -82,6 +83,7 @@ class SurfaceSpec:
     should_materialize: ShouldMaterialize | None = None
     artifact_intent: ArtifactIntentHook | None = None
     default_source_metadata: DefaultSourceMetadata | None = None
+    classify_visibility: VisibilityClassifier | None = None
     session_access: SessionAccessMode | ResolveSessionAccess | None = None
     invocation_locator: InvocationLocator | None = None
     canonical_locator: CanonicalLocator | None = None
@@ -137,6 +139,10 @@ class SurfaceBinding:
     @property
     def default_source_metadata(self) -> DefaultSourceMetadata | None:
         return self.surface.default_source_metadata
+
+    @property
+    def classify_visibility(self) -> VisibilityClassifier | None:
+        return self.surface.classify_visibility
 
     @property
     def session_access(self) -> SessionAccessMode | ResolveSessionAccess | None:
@@ -436,6 +442,7 @@ def _core_binding(
     should_materialize: ShouldMaterialize | None = None,
     artifact_intent: ArtifactIntentHook | None = None,
     default_source_metadata: DefaultSourceMetadata | None = None,
+    classify_visibility: VisibilityClassifier | None = None,
     session_access: SessionAccessMode | ResolveSessionAccess | None = None,
     invocation_locator: InvocationLocator | None = None,
     canonical_locator: CanonicalLocator | None = None,
@@ -461,6 +468,7 @@ def _core_binding(
             should_materialize=should_materialize,
             artifact_intent=artifact_intent,
             default_source_metadata=default_source_metadata,
+            classify_visibility=classify_visibility,
             session_access=session_access,
             invocation_locator=invocation_locator,
             canonical_locator=canonical_locator,
@@ -817,6 +825,9 @@ def github_plugin() -> SurfaceBinding:
         shared_actor_option=True,
         session_access=_artifact_session_access("github"),
         artifact_intent=_module_attr("gotta.plugins.github.main", "artifact_intent"),
+        classify_visibility=_module_attr(
+            "gotta.plugins.github.main", "classify_visibility"
+        ),
         canonical_locator=_module_attr(
             "gotta.plugins.github.parse", "canonical_locator"
         ),
@@ -858,6 +869,7 @@ def jira_plugin() -> SurfaceBinding:
         shared_actor_option=True,
         session_access=_artifact_session_access("jira"),
         artifact_intent=_module_attr("gotta.plugins.jira", "artifact_intent"),
+        classify_visibility=_module_attr("gotta.plugins.jira", "classify_visibility"),
         canonical_locator=_module_attr("gotta.plugins.jira", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.jira", "preferred_name"),
         capture=_module_attr("gotta.plugins.jira", "capture"),
@@ -912,6 +924,7 @@ def slack_plugin() -> SurfaceBinding:
         default_source_metadata=_module_attr(
             "gotta.plugins.slack", "default_source_metadata"
         ),
+        classify_visibility=_module_attr("gotta.plugins.slack", "classify_visibility"),
         canonical_locator=_module_attr("gotta.plugins.slack", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.slack", "preferred_name"),
         capture=_module_attr("gotta.plugins.slack", "capture"),

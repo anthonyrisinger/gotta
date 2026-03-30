@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from gotta.capture import Capture, capture_json_command, json_bytes
 from gotta.projection import Projection, projection_bytes
@@ -36,7 +36,11 @@ from gotta.source.stamp import (
     derive_source_metadata_from_payload,
     slack_timestamp_to_iso,
 )
-from gotta.source.visibility import with_visibility_metadata
+from gotta.source.visibility import (
+    unknown_visibility,
+    visibility_metadata,
+    with_visibility_metadata,
+)
 from gotta.providers.slack import (
     default_workspace,
     ensure_live_search_auth,
@@ -230,6 +234,87 @@ def default_source_metadata(
     if last_ts:
         metadata["source_updated_at"] = last_ts
     return metadata
+
+
+def _visibility_channel_value(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    channel = payload.get("channel")
+    if isinstance(channel, Mapping):
+        return channel
+    return payload
+
+
+def _visibility_bool(payload: Mapping[str, Any], *keys: str) -> bool:
+    for key in keys:
+        if key in payload:
+            return bool(payload.get(key))
+    return False
+
+
+def _visibility_str(payload: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _visibility_channel_type(payload: Mapping[str, Any]) -> str:
+    explicit = _visibility_str(payload, "type")
+    if explicit:
+        return explicit
+    channel_id = _visibility_str(payload, "id", "channelId")
+    if _visibility_bool(payload, "is_mpim"):
+        return "mpim"
+    if channel_id.startswith("D"):
+        return "im"
+    if _visibility_bool(payload, "is_private", "isPrivate"):
+        return "private_channel"
+    if channel_id:
+        return "public_channel"
+    return ""
+
+
+def classify_visibility(
+    payload: Any,
+    subcommand: str,
+    locator: str,
+) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        payload = {}
+    channel = _visibility_channel_value(payload)
+    channel_type = _visibility_channel_type(channel)
+    if not channel_type:
+        return unknown_visibility(provider="slack")
+    is_shared = _visibility_bool(channel, "is_shared", "isShared")
+    is_ext_shared = _visibility_bool(channel, "is_ext_shared", "isExtShared")
+    boundary = "cross_company" if (is_shared or is_ext_shared) else "same_company"
+    if channel_type in {"im", "mpim"}:
+        level = "direct"
+    elif channel_type == "private_channel":
+        level = "restricted"
+    elif channel_type == "public_channel":
+        level = "internal"
+    else:
+        return unknown_visibility(
+            provider="slack",
+            basis=[f"channel.type={channel_type}"],
+        )
+    if boundary == "cross_company" and channel_type in {
+        "private_channel",
+        "public_channel",
+    }:
+        level = "restricted"
+    basis = ["provider=slack", f"channel.type={channel_type}"]
+    if is_shared:
+        basis.append("channel.is_shared=true")
+    if is_ext_shared:
+        basis.append("channel.is_ext_shared=true")
+    return visibility_metadata(
+        level=level,
+        boundary=boundary,
+        confidence="high",
+        basis=basis,
+    )
 
 
 def positive_int(raw: str) -> int:
