@@ -531,6 +531,25 @@ def config_plugin() -> SurfaceBinding:
     )
 
 
+def exec_plugin() -> SurfaceBinding:
+    return _core_binding(
+        name="exec",
+        description="capture explicit local command evidence through the canonical ledger path",
+        runner=_runner("gotta.plugins.exec"),
+        shared_actor_option=True,
+        should_materialize=_module_attr("gotta.plugins.exec", "should_materialize"),
+        artifact_intent=_module_attr("gotta.plugins.exec", "artifact_intent"),
+        session_access="ambient",
+        invocation_locator=_module_attr("gotta.plugins.exec", "invocation_locator"),
+        canonical_locator=_module_attr("gotta.plugins.exec", "canonical_locator"),
+        preferred_name=_module_attr("gotta.plugins.exec", "preferred_name"),
+        content_type=_module_attr("gotta.plugins.exec", "content_type"),
+        capture=_module_attr("gotta.plugins.exec", "capture"),
+        project=_module_attr("gotta.plugins.exec", "project"),
+        capabilities=_capabilities("capture", "project"),
+    )
+
+
 def ask_plugin() -> SurfaceBinding:
     return _core_binding(
         name="ask",
@@ -973,6 +992,7 @@ def _builtin_core_bindings() -> dict[str, SurfaceBinding]:
         ask_plugin,
         config_plugin,
         confluence_plugin,
+        exec_plugin,
         grafana_plugin,
         gdocs_plugin,
         gdrive_plugin,

@@ -19,6 +19,20 @@ def test_classify_local_gotta_surfaces_as_personal() -> None:
     assert "provider=gotta" in payload["visibility_basis"]
 
 
+def test_classify_exec_surface_as_personal_same_user() -> None:
+    payload = classify_visibility_metadata(
+        {},
+        provider="exec",
+        plugin="exec",
+        locator="exec:/tmp::python -c 'print(1)'",
+    )
+
+    assert payload["visibility_level"] == "personal"
+    assert payload["visibility_boundary"] == "same_user"
+    assert payload["visibility_confidence"] == "high"
+    assert "plugin=exec" in payload["visibility_basis"]
+
+
 def test_classify_unknown_provider_stays_unknown() -> None:
     payload = classify_visibility_metadata({}, provider="confluence")
 

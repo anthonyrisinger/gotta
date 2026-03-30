@@ -18,6 +18,7 @@ class Capture:
     content_type: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     view_data: dict[str, Any] = field(default_factory=dict)
+    exit_status: int = 0
 
 
 def json_bytes(payload: Any) -> bytes:

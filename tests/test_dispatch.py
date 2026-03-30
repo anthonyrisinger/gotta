@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -92,6 +93,10 @@ def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
     assert dispatch.should_materialize("jira", ["get", "PROJ-1"])
     assert dispatch.should_materialize("slack", ["search", "abc"])
     assert dispatch.should_materialize("slack", ["get", "C12345678:1773085070.240949"])
+    assert dispatch.should_materialize(
+        "exec", ["--", sys.executable, "-c", "print('hello')"]
+    )
+    assert not dispatch.should_materialize("exec", ["--help"])
     monkeypatch.setenv(dispatch_materialize.SUPPRESS_MATERIALIZATION_ENV, "1")
     assert not dispatch.should_materialize(
         "github", ["https://github.com/acme/widgets"]
@@ -981,6 +986,20 @@ def test_canonical_locator_falls_back_to_generic_surface_free_shape(
     )
 
 
+def test_exec_canonical_locator_tracks_cwd_and_command(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    expected_command = shlex.join([sys.executable, "-c", "print('hello')"])
+
+    locator = dispatch.canonical_locator(
+        "exec",
+        ["--", sys.executable, "-c", "print('hello')"],
+    )
+
+    assert locator == f"exec:{tmp_path.resolve()}::{expected_command}"
+
+
 def test_materialize_invocation_attributes_delegated_read_to_provider(
     tmp_path: Path,
 ) -> None:
@@ -1866,6 +1885,79 @@ def test_run_surface_materializes_full_bytes_for_bounded_routed_read(
     )
     assert snapshot.artifact.metadata["content_type"] == "application/json"
     assert snapshot.layout.blob_path.read_bytes() == canonical
+
+
+def test_run_surface_exec_materializes_canonical_execution_evidence(
+    tmp_path: Path, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    assert session_plugin.main(["init", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
+    assert (
+        dispatch.run_surface(
+            "exec",
+            [
+                "--session",
+                str(local_root),
+                "--",
+                sys.executable,
+                "-c",
+                "print('hello from exec')",
+            ],
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert "command:" in captured.out
+    assert "hello from exec" in captured.out
+
+    snapshots = scan_content_store(local_root / "content")
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert snapshot.artifact.artifact_kind == "evidence"
+    assert snapshot.artifact.metadata["plugin"] == "exec"
+    assert snapshot.artifact.metadata["content_type"] == "application/json"
+    assert snapshot.artifact.metadata["source_kind"] == "exec"
+    assert snapshot.artifact.metadata["visibility_level"] == "personal"
+    payload = json.loads(snapshot.layout.blob_path.read_text(encoding="utf-8"))
+    assert payload["kind"] == "exec"
+    assert payload["argv"][0] == sys.executable
+    assert payload["exit_status"] == 0
+    assert payload["stdout"]["text"] == "hello from exec\n"
+    assert payload["stderr"]["text"] == ""
+
+
+def test_run_surface_exec_nonzero_materializes_and_returns_exit_status(
+    tmp_path: Path, capsys
+) -> None:
+    local_root = tmp_path / "local"
+    assert session_plugin.main(["init", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
+    assert (
+        dispatch.run_surface(
+            "exec",
+            [
+                "--session",
+                str(local_root),
+                "--",
+                sys.executable,
+                "-c",
+                "import sys; print('bad'); print('boom', file=sys.stderr); raise SystemExit(7)",
+            ],
+        )
+        == 7
+    )
+    captured = capsys.readouterr()
+    assert "bad" in captured.out
+    assert "boom" in captured.out
+
+    snapshots = scan_content_store(local_root / "content")
+    assert len(snapshots) == 1
+    payload = json.loads(snapshots[0].layout.blob_path.read_text(encoding="utf-8"))
+    assert payload["exit_status"] == 7
+    assert payload["stderr"]["text"] == "boom\n"
 
 
 def test_repeated_bounded_and_unbounded_read_share_one_canonical_snapshot(

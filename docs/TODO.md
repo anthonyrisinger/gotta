@@ -664,6 +664,29 @@ This file is the execution queue.
   provider-decoupling of this exact species would now be churn. The shared-core
   collapse phase is effectively across the line; the next honest move is
   derived-backend contracts, `exec`, or provider-local / algorithmic pressure.
+- [x] Explicit `exec` surface tranche landed.
+  - `src/gotta/plugins/exec.py` now owns the explicit command-evidence surface:
+    - `gotta exec -- <command> [args...]`
+    - canonical execution capture
+    - canonical execution projection
+  - `src/gotta/builtin.py` now registers `exec` as a first-class surface with:
+    - explicit capture/project hooks
+    - explicit locator and naming hooks
+    - explicit evidence intent
+  - `src/gotta/dispatch/main.py` now returns materialized capture exit status
+    instead of collapsing every captured execution to success.
+  - `src/gotta/source/visibility.py` now classifies `exec` as local `gotta`
+    evidence rather than unknown provider output.
+  - Focused validation is clean:
+    - `uv run pytest -q tests/test_dispatch.py tests/test_source.py -k 'exec or visibility or should_materialize'`
+    - `11 passed`
+    - `uvx pyright src/gotta/plugins/exec.py src/gotta/builtin.py src/gotta/dispatch/main.py src/gotta/source/visibility.py src/gotta/capture.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because `exec` was still a missing architectural center, not
+  just a hot file. More shared-core provider-decoupling of the old species
+  would be churn now. The next honest move is derived-backend contracts or a
+  shift into provider-local / algorithmic pressure.
 
 ## Current Tranche
 
@@ -711,9 +734,11 @@ This file is the execution queue.
   and into installed surface contracts.
 - [x] Move provider-specific visibility classification out of shared core and
   onto installed surface contracts.
-- [ ] Next tranche: stop core-collapse churn and choose the next true 1.0 seam:
-  derived-backend contracts, explicit `exec`, or provider-local / algorithmic
-  reduction.
+- [x] Land the explicit `exec` surface as canonical evidence instead of
+  implicit local-command fallback.
+- [ ] Next tranche: choose between derived-backend contracts and
+  provider-local / algorithmic pressure based on which still replaces a
+  missing architectural center instead of reshuffling settled seams.
 
 ## Non-Negotiable Invariants
 
@@ -934,8 +959,8 @@ This file is the execution queue.
 
 ## Phase 6: Land The Explicit `exec` Surface
 
-- [ ] Land `gotta exec -- <command> [args...]`.
-- [ ] Capture canonical execution evidence including:
+- [x] Land `gotta exec -- <command> [args...]`.
+- [x] Capture canonical execution evidence including:
   - argv
   - cwd
   - exit status
@@ -946,8 +971,8 @@ This file is the execution queue.
   - stderr
   - stdin provenance
   - environment policy
-- [ ] Materialize `exec` results as canonical `evidence`.
-- [ ] Route `exec` artifacts into:
+- [x] Materialize `exec` results as canonical `evidence`.
+- [x] Route `exec` artifacts into:
   - manifest
   - timeline
   - graph
@@ -1004,7 +1029,7 @@ This file is the execution queue.
   concrete filesystem ownership.
 - [x] Type the lead kernel.
 - [x] Type the first analyze/graph/timeline/session payload families.
-- [ ] Replace anonymous manifest and lead aggregate records with named types.
+- [x] Replace anonymous manifest and lead aggregate records with named types.
 - [ ] Fix `gsheets` capture semantics.
 - [x] Remove federated `search` runner-capture fallback.
 - [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
@@ -1053,7 +1078,7 @@ This file is the execution queue.
 - [ ] Provider packaging can be externalized cleanly.
 - [ ] Multi-binding installs like `gotta ask sre` are first-class.
 - [ ] Derived backend interfaces exist without becoming storage truth.
-- [ ] `gotta exec` exists as explicit evidence rather than implicit fallback.
+- [x] `gotta exec` exists as explicit evidence rather than implicit fallback.
 - [ ] The lead kernel and major derived payloads are typed.
 - [ ] Remaining work is primarily provider-local or algorithm-local, not
   architectural blur.

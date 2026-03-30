@@ -48,6 +48,7 @@ _LOCAL_GOTTA_SURFACES = {
     "artifact",
     "brief",
     "content",
+    "exec",
     "goal",
     "logs",
     "notes",

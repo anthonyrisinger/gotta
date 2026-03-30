@@ -284,12 +284,13 @@ def run_surface(surface: str, argv: list[str]) -> int:
                 )
             except ContentError as exc:
                 return die(str(exc), code=1)
-            return emit_success(
+            emit_success(
                 projection.data,
                 stderr_data=stderr_data,
                 result=result,
                 dirs=runtime_dirs,
             )
+            return int(capture.exit_status)
 
     with scoped_runtime_env(runtime_dirs):
         with (
