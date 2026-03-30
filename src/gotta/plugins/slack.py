@@ -152,6 +152,34 @@ def print_json(data: Any) -> None:
 DEFAULT_DIRECTORY_LIST_LIMIT = 100
 
 
+DISCOVERY_COMMANDS = {"search"}
+EVIDENCE_COMMANDS = {"get"}
+NON_ARTIFACT_COMMANDS = {
+    "auth",
+    "list-channels",
+    "list-users",
+    "mcp",
+    "schema",
+    "sql",
+    "status",
+    "sync",
+    "workspaces",
+}
+
+
+def artifact_intent(argv: list[str]) -> str:
+    if not argv:
+        return "none"
+    command = argv[0]
+    if command in NON_ARTIFACT_COMMANDS:
+        return "none"
+    if command in DISCOVERY_COMMANDS:
+        return "discovery"
+    if command in EVIDENCE_COMMANDS:
+        return "evidence"
+    return "none"
+
+
 def positive_int(raw: str) -> int:
     try:
         value = int(raw)

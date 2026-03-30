@@ -492,7 +492,40 @@ This file is the execution queue.
   this paid rent because it replaced one more overloaded hot kernel with a
   named executable center and deleted stale lead-kernel residue. More
   lead-kernel taxonomy cleanup of this exact species would not; the next honest
-  move is the `session analyze` render hotspot, not another lead rename pass.
+  move is the remaining provider-knowledge leak in the core, not another lead
+  rename pass.
+- [x] Surface-declared provider intent tranche landed.
+  - `src/gotta/builtin.py` now treats artifact intent as an explicit surface
+    contract:
+    - `SurfaceArtifactIntent`
+    - `ArtifactIntentHook`
+    - `SurfaceSpec.artifact_intent`
+    - `SurfaceBinding.artifact_intent`
+  - `src/gotta/resolve/intent.py` no longer hard-codes provider names,
+    subcommand families, or provider-specific discovery/evidence/control maps.
+    Installed surfaces now teach the core their artifact-bearing semantics.
+  - The built-in provider surfaces now declare their own artifact intent in:
+    - `src/gotta/plugins/confluence.py`
+    - `src/gotta/plugins/gdocs.py`
+    - `src/gotta/plugins/gdrive.py`
+    - `src/gotta/plugins/grafana.py`
+    - `src/gotta/plugins/github/main.py`
+    - `src/gotta/plugins/granola.py`
+    - `src/gotta/plugins/gsheets.py`
+    - `src/gotta/plugins/jira.py`
+    - `src/gotta/plugins/slack.py`
+  - The new contract is pinned directly in the test surface:
+    - `tests/test_dispatch.py`
+      - `test_artifact_intent_follows_surface_contract(...)`
+  - Targeted contract-center pyright is clean:
+    - `uvx pyright src/gotta/builtin.py src/gotta/resolve/intent.py src/gotta/plugins/github/main.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted a still-load-bearing provider-knowledge
+  seam from the core instead of just rearranging hot files. More shared-core
+  payload typing of the old species would be churn now; the next honest move is
+  the remaining provider-knowledge leak in canonicalization and dispatch, then
+  the provider-local and algorithmic phase.
 
 ## Current Tranche
 
@@ -528,9 +561,11 @@ This file is the execution queue.
   - `LeadEdge`
   - `LeadResolution`
   - `resolve_lead_resolution(...)`
-- [ ] Next tranche: continue hot-kernel reduction in:
-  - `src/gotta/plugins/session/analyze/render.py`
-  - `src/gotta/plugins/session/lead/render.py`
+- [x] Move provider artifact-intent classification out of the core and into
+  installed surface contracts.
+- [ ] Next tranche: continue provider-core decoupling in:
+  - `src/gotta/resolve/canon.py`
+  - `src/gotta/dispatch/main.py`
 
 ## Non-Negotiable Invariants
 
@@ -579,6 +614,8 @@ This file is the execution queue.
 - [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
   payload surfaces.
 - [x] Type the event-sourced `todo` core and payload seam.
+- [x] Move provider artifact-intent classification out of the core and into
+  installed surface contracts.
 
 ## Phase 0: Freeze The Vocabulary In Code
 
@@ -687,6 +724,8 @@ This file is the execution queue.
   - vendor family
   - provider bundle
   - surface binding
+- [x] Make installed provider surfaces declare artifact-bearing intent instead
+  of letting the core infer it from provider-name tables.
 - [ ] Model Google as one vendor family with multiple operator surfaces:
   - `gdrive`
   - `gdocs`
@@ -819,8 +858,12 @@ This file is the execution queue.
 - [x] Type the canonical authored-state `logs`, `notes`, and `oops` records and
   read payload surfaces.
 - [x] Type the event-sourced `todo` core and payload seam.
+- [x] Move provider artifact-intent classification out of the core and into
+  installed surface contracts.
 - [x] Switch from shared-core contract collapse to hot-kernel reduction once
   the last authored-state seam is typed.
+- [ ] Delete the remaining provider-specific canonicalization and dispatch
+  fallbacks from the core.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 
 ## What Not To Do

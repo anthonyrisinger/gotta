@@ -20,6 +20,8 @@ RouteTarget = Callable[[str], list[str] | None]
 ShouldMaterialize = Callable[[list[str]], bool]
 SessionAccessMode = Literal["none", "read", "write", "ambient"]
 ResolveSessionAccess = Callable[[list[str]], SessionAccessMode]
+SurfaceArtifactIntent = Literal["none", "discovery", "evidence"]
+ArtifactIntentHook = Callable[[list[str]], SurfaceArtifactIntent]
 InvocationLocator = Callable[[list[str]], str]
 CanonicalLocator = Callable[[list[str]], str]
 PreferredName = Callable[[list[str], Any], str]
@@ -74,6 +76,7 @@ class SurfaceSpec:
     route_target: RouteTarget | None = None
     route_priority: int = 100
     should_materialize: ShouldMaterialize | None = None
+    artifact_intent: ArtifactIntentHook | None = None
     session_access: SessionAccessMode | ResolveSessionAccess | None = None
     invocation_locator: InvocationLocator | None = None
     canonical_locator: CanonicalLocator | None = None
@@ -113,6 +116,10 @@ class SurfaceBinding:
     @property
     def should_materialize(self) -> ShouldMaterialize | None:
         return self.surface.should_materialize
+
+    @property
+    def artifact_intent(self) -> ArtifactIntentHook | None:
+        return self.surface.artifact_intent
 
     @property
     def session_access(self) -> SessionAccessMode | ResolveSessionAccess | None:
@@ -408,6 +415,7 @@ def _core_binding(
     route_target: RouteTarget | None = None,
     route_priority: int = 100,
     should_materialize: ShouldMaterialize | None = None,
+    artifact_intent: ArtifactIntentHook | None = None,
     session_access: SessionAccessMode | ResolveSessionAccess | None = None,
     invocation_locator: InvocationLocator | None = None,
     canonical_locator: CanonicalLocator | None = None,
@@ -429,6 +437,7 @@ def _core_binding(
             route_target=route_target,
             route_priority=route_priority,
             should_materialize=should_materialize,
+            artifact_intent=artifact_intent,
             session_access=session_access,
             invocation_locator=invocation_locator,
             canonical_locator=canonical_locator,
@@ -450,6 +459,7 @@ def confluence_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.confluence", "route_target"),
         route_priority=20,
         session_access=_artifact_session_access("confluence"),
+        artifact_intent=_module_attr("gotta.plugins.confluence", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.confluence", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.confluence", "preferred_name"),
         capture=_module_attr("gotta.plugins.confluence", "capture"),
@@ -595,6 +605,7 @@ def gdocs_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.gdocs", "route_target"),
         route_priority=50,
         session_access=_artifact_session_access("gdocs"),
+        artifact_intent=_module_attr("gotta.plugins.gdocs", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.gdocs", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.gdocs", "preferred_name"),
         capture=_module_attr("gotta.plugins.gdocs", "capture"),
@@ -629,6 +640,7 @@ def grafana_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.grafana", "route_target"),
         route_priority=70,
         session_access=_artifact_session_access("grafana"),
+        artifact_intent=_module_attr("gotta.plugins.grafana", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.grafana", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.grafana", "preferred_name"),
         capture=_module_attr("gotta.plugins.grafana", "capture"),
@@ -661,6 +673,7 @@ def granola_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.granola", "route_target"),
         route_priority=65,
         session_access=_artifact_session_access("granola"),
+        artifact_intent=_module_attr("gotta.plugins.granola", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.granola", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.granola", "preferred_name"),
         capture=_module_attr("gotta.plugins.granola", "capture"),
@@ -695,6 +708,7 @@ def gsheets_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.gsheets", "route_target"),
         route_priority=55,
         session_access=_artifact_session_access("gsheets"),
+        artifact_intent=_module_attr("gotta.plugins.gsheets", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.gsheets", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.gsheets", "preferred_name"),
         capture=_module_attr("gotta.plugins.gsheets", "capture"),
@@ -729,6 +743,7 @@ def gdrive_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.gdrive", "route_target"),
         route_priority=60,
         session_access=_artifact_session_access("gdrive"),
+        artifact_intent=_module_attr("gotta.plugins.gdrive", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.gdrive", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.gdrive", "preferred_name"),
         capture=_module_attr("gotta.plugins.gdrive", "capture"),
@@ -763,6 +778,7 @@ def github_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.github.route", "route_target"),
         route_priority=10,
         session_access=_artifact_session_access("github"),
+        artifact_intent=_module_attr("gotta.plugins.github.main", "artifact_intent"),
         canonical_locator=_module_attr(
             "gotta.plugins.github.parse", "canonical_locator"
         ),
@@ -801,6 +817,7 @@ def jira_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.jira", "route_target"),
         route_priority=30,
         session_access=_artifact_session_access("jira"),
+        artifact_intent=_module_attr("gotta.plugins.jira", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.jira", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.jira", "preferred_name"),
         capture=_module_attr("gotta.plugins.jira", "capture"),
@@ -849,6 +866,7 @@ def slack_plugin() -> SurfaceBinding:
         route_target=_module_attr("gotta.plugins.slack", "route_target"),
         route_priority=40,
         session_access=_artifact_session_access("slack"),
+        artifact_intent=_module_attr("gotta.plugins.slack", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.slack", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.slack", "preferred_name"),
         capture=_module_attr("gotta.plugins.slack", "capture"),

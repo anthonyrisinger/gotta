@@ -137,6 +137,24 @@ def _load_grafana_config_env() -> dict[str, str]:
     return extract_provider_env(load_config(), "grafana")
 
 
+DISCOVERY_COMMANDS = {"search"}
+EVIDENCE_COMMANDS = {"get"}
+NON_ARTIFACT_COMMANDS = {"auth", "datasources", "query", "status"}
+
+
+def artifact_intent(argv: list[str]) -> str:
+    if not argv:
+        return "none"
+    command = argv[0]
+    if command in NON_ARTIFACT_COMMANDS:
+        return "none"
+    if command in DISCOVERY_COMMANDS:
+        return "discovery"
+    if command in EVIDENCE_COMMANDS:
+        return "evidence"
+    return "none"
+
+
 def _env_or_config(config_env: dict[str, str], name: str) -> str:
     return os.environ.get(name, "").strip() or str(config_env.get(name) or "").strip()
 

@@ -117,6 +117,36 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
 
+DISCOVERY_COMMANDS = {"search", "cql"}
+EVIDENCE_COMMANDS = {"get"}
+NON_ARTIFACT_COMMANDS = {
+    "auth",
+    "batch",
+    "create-page",
+    "find",
+    "mcp",
+    "render-markdown",
+    "replace",
+    "replace-section",
+    "resolve-page",
+    "status",
+    "update-body",
+}
+
+
+def artifact_intent(argv: list[str]) -> str:
+    if not argv:
+        return "none"
+    command = argv[0]
+    if command in NON_ARTIFACT_COMMANDS:
+        return "none"
+    if command in DISCOVERY_COMMANDS:
+        return "discovery"
+    if command in EVIDENCE_COMMANDS:
+        return "evidence"
+    return "none"
+
+
 def canonical_locator(argv: list[str]) -> str:
     args = _parse_cli(argv)
     if args.command == "get":

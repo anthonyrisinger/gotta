@@ -97,6 +97,24 @@ def _is_document_id(raw: str) -> bool:
     return bool(DOCUMENT_ID_RE.fullmatch(raw.strip()))
 
 
+DISCOVERY_COMMANDS = {"list", "search", "search-transcript"}
+EVIDENCE_COMMANDS = {"get", "transcript"}
+NON_ARTIFACT_COMMANDS = {"export", "status"}
+
+
+def artifact_intent(argv: list[str]) -> str:
+    if not argv:
+        return "none"
+    command = argv[0]
+    if command in NON_ARTIFACT_COMMANDS:
+        return "none"
+    if command in DISCOVERY_COMMANDS:
+        return "discovery"
+    if command in EVIDENCE_COMMANDS:
+        return "evidence"
+    return "none"
+
+
 def canonical_locator(argv: list[str]) -> str:
     args = _parse_cli(argv)
     if args.command == "status":

@@ -152,6 +152,40 @@ load_cloud_id = atl.load_cloud_id
 atlassian_status_payload = atl.atlassian_status_payload
 
 
+DISCOVERY_COMMANDS = {"search", "jql"}
+EVIDENCE_COMMANDS = {"get"}
+NON_ARTIFACT_COMMANDS = {
+    "add-to-sprint",
+    "auth",
+    "comment",
+    "create",
+    "fields",
+    "issue-types",
+    "link",
+    "link-types",
+    "mcp",
+    "projects",
+    "sprints",
+    "status",
+    "transition",
+    "transitions",
+    "update",
+}
+
+
+def artifact_intent(argv: list[str]) -> str:
+    if not argv:
+        return "none"
+    command = argv[0]
+    if command in NON_ARTIFACT_COMMANDS:
+        return "none"
+    if command in DISCOVERY_COMMANDS:
+        return "discovery"
+    if command in EVIDENCE_COMMANDS:
+        return "evidence"
+    return "none"
+
+
 def discover_cloud_id(token: str, base_url: str) -> str:
     return atl.discover_cloud_id(
         token,

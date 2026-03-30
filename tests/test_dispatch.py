@@ -21,6 +21,7 @@ import gotta.cli.notice as cli_notice
 import gotta.dispatch.budget as dispatch_budget
 import gotta.dispatch.main as dispatch
 import gotta.dispatch.materialize as dispatch_materialize
+import gotta.resolve.intent as resolve_intent
 import gotta.resolve.invoke as invocation
 from gotta.actor import ACTOR_ID_ENV
 from gotta.capture import Capture
@@ -267,6 +268,23 @@ def test_session_access_mode_tracks_artifact_bearing_surfaces() -> None:
     )
     assert dispatch.session_access_mode("read", ["README.md"]) == "ambient"
     assert dispatch.session_access_mode("search", ["jira:platform"]) == "ambient"
+
+
+def test_artifact_intent_follows_surface_contract(monkeypatch) -> None:
+    monkeypatch.setattr(
+        resolve_intent,
+        "get_surface",
+        lambda plugin: (
+            SimpleNamespace(
+                artifact_intent=lambda _argv: "discovery",
+                should_materialize=lambda _argv: False,
+            )
+            if plugin == "demo"
+            else None
+        ),
+    )
+
+    assert resolve_intent.artifact_intent("demo", ["whatever"]) == "discovery"
 
 
 def test_search_resolve_invocation_routes_provider_search_with_implicit_search() -> (

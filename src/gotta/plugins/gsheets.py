@@ -73,6 +73,17 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
 
+def artifact_intent(argv: list[str]) -> str:
+    if not argv:
+        return "none"
+    command = argv[0]
+    if command == "search":
+        return "discovery"
+    if command == "get":
+        return "evidence"
+    return "none"
+
+
 def canonical_locator(argv: list[str]) -> str:
     args = _parse_cli(argv)
     if args.command == "get":

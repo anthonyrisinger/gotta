@@ -60,6 +60,7 @@ from .search import (
 __all__ = [
     "ParsedArgs",
     "_canonicalize_capture_value",
+    "artifact_intent",
     "canonical_locator",
     "capture",
     "main",
@@ -69,6 +70,16 @@ __all__ = [
     "project",
     "route_target",
 ]
+
+
+def artifact_intent(argv: list[str]) -> str:
+    if not argv:
+        return "none"
+    if argv[0] == "status":
+        return "none"
+    if argv[0] == "search":
+        return "discovery"
+    return "evidence"
 
 
 def _capture_deps() -> CaptureDeps:
