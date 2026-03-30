@@ -839,6 +839,39 @@ This file is the execution queue.
   exact species would likely be churn now. The next honest move is the analyze
   overview/semantic seam, and only after that should the pressure shift fully
   into provider-local kernels.
+- [x] Analyze semantic-graph tranche landed.
+  - `src/gotta/plugins/session/analyze/semantic.py` now centers explicit graph
+    build owners instead of mutating node and edge TypedDict state inline:
+    - `_SemanticNodeState`
+    - `_SemanticGraphState`
+  - The semantic seam now reads lineage payload families through explicit
+    helper readers instead of direct required-key spelunking across optional
+    TypedDicts.
+  - `semantic_payload(...)` no longer owns all of:
+    - provider/source graph node creation
+    - resource/query expansion
+    - content node materialization
+    - lead-source discovery merges
+    - edge assembly
+    inline in one dict-and-set builder.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/analyze/semantic.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'semantic or analyze or graph or all_mode'`
+    - `27 passed`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/analyze/semantic.py` dropped off the type board
+    - overall type pressure dropped from `52 diagnostics` to `24 diagnostics`
+    - remaining shared analyze pressure is now centered in:
+      - `src/gotta/plugins/session/analyze/overview.py:analysis_overview_payload`
+      - then shared render pressure in `src/gotta/plugins/session/lead/render.py`
+      - with the larger remaining heat otherwise now provider-local
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because `semantic_payload(...)` was still one overloaded
+  mutable graph builder and the main remaining analyze type-pressure seam.
+  More semantic cleanup of this exact species would likely be churn now. The
+  next honest move is `analysis_overview_payload(...)`, and after that shared
+  analyze pressure is probably across its natural boundary.
 
 ## Current Tranche
 
@@ -898,10 +931,11 @@ This file is the execution queue.
   records and explicit analyze-owned lead summaries.
 - [x] Collapse the `session analyze` lineage focus selector onto one mutable
   selection-state owner.
-- [ ] Next tranche: reduce the remaining analyze pressure first, choosing
-  between `analysis_overview_payload(...)` and `semantic.py`, then reassess
-  whether the next honest move is still shared algorithmic pressure or the
-  first provider-local kernels.
+- [x] Collapse the `session analyze` semantic graph builder onto explicit node
+  and graph state owners.
+- [ ] Next tranche: reduce the remaining shared analyze pressure in
+  `analysis_overview_payload(...)`, then reassess whether shared algorithmic
+  pressure is effectively done and the next honest move is provider-local.
 
 ## Non-Negotiable Invariants
 
