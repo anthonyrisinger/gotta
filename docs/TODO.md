@@ -908,6 +908,41 @@ This file is the execution queue.
   shared typed-boundary pressure in `session/lead/render.py` and
   `session/graph/payload.py`, or a deliberate shift into provider-local
   kernels.
+- [x] Graph build/view-state tranche landed.
+  - `src/gotta/plugins/session/graph/payload.py` now centers explicit graph
+    state owners:
+    - `_GraphBuildState`
+    - `_GraphViewState`
+  - `graph_payload(...)` no longer owns all of:
+    - manifest/snapshot ingestion
+    - graph build-state mutation
+    - filter matching and kept-set selection
+    - final graph payload assembly
+    inline inside one function.
+  - The graph seam now runs through one build-state owner and one filtered
+    view-state owner instead of a mutable dict-and-list pipeline.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/graph/payload.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'graph or analyze or manifest or leads or timeline'`
+    - `70 passed`
+    - `uv run ruff check src/gotta/plugins/session/graph/payload.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/graph/payload.py:graph_payload` dropped off the
+      hotspot board
+    - the remaining shared typed-boundary pressure is now centered in:
+      - `src/gotta/plugins/session/lead/render.py:render_leads_text`
+    - the larger remaining heat is otherwise provider-local:
+      - GitHub search and parse
+      - Jira field coercion
+      - Slack `get`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because `graph_payload(...)` was still one overloaded
+  shared typed-boundary pipeline. More graph payload cleanup of this exact
+  species would likely be churn now. The next honest move is
+  `src/gotta/plugins/session/lead/render.py`, then a reassessment of whether
+  further shared pressure remains at all.
 
 ## Current Tranche
 
@@ -972,8 +1007,7 @@ This file is the execution queue.
 - [x] Collapse the `session analyze` overview builder onto one summary-state
   owner.
 - [ ] Next tranche: cut the remaining shared typed-boundary pressure in
-  `src/gotta/plugins/session/lead/render.py` or
-  `src/gotta/plugins/session/graph/payload.py`, then decide whether further
+  `src/gotta/plugins/session/lead/render.py`, then decide whether further
   rent still exists outside provider-local kernels.
 
 ## Non-Negotiable Invariants
@@ -1223,7 +1257,8 @@ This file is the execution queue.
   - `src/gotta/plugins/session/analyze/overview.py`
 - [ ] Reduce remaining shared typed-boundary density in:
   - `src/gotta/plugins/session/lead/render.py`
-  - `src/gotta/plugins/session/graph/payload.py`
+- [x] Collapse `src/gotta/plugins/session/graph/payload.py` onto explicit
+  build/view state owners.
 - [ ] Reduce algorithmic density in the GitHub surface internals:
   - `src/gotta/plugins/github/search.py`
   - `src/gotta/plugins/github/parse.py`
