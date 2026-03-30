@@ -872,6 +872,42 @@ This file is the execution queue.
   More semantic cleanup of this exact species would likely be churn now. The
   next honest move is `analysis_overview_payload(...)`, and after that shared
   analyze pressure is probably across its natural boundary.
+- [x] Analyze overview-state tranche landed.
+  - `src/gotta/plugins/session/analyze/overview.py` now centers one truthful
+    summary owner:
+    - `_OverviewState`
+  - `analysis_overview_payload(...)` no longer owns all of:
+    - semantic graph signal extraction
+    - provider/kind/relation ranking
+    - anchor and query-seed selection
+    - structural/source thresholding
+    - final overview payload assembly
+    inline inside one function.
+  - The overview seam now drives those transitions through one summary-state
+    owner instead of local counter/list choreography.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/analyze/overview.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'overview or all_mode or analyze'`
+    - `22 passed`
+    - `uv run ruff check src/gotta/plugins/session/analyze/overview.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - shared analyze pressure is effectively across its natural boundary
+    - the remaining hotspot board is now led by:
+      - `src/gotta/plugins/github/search.py:markdown_search`
+      - `src/gotta/plugins/github/parse.py:parse_args`
+      - `src/gotta/plugins/jira.py:coerce_field_value`
+      - `src/gotta/plugins/session/lead/render.py:render_leads_text`
+      - `src/gotta/plugins/session/graph/payload.py:graph_payload`
+    - overall type pressure remains low at `24 diagnostics`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because `analysis_overview_payload(...)` was still the last
+  overloaded shared analyze center. More shared analyze cleanup of this exact
+  species would likely be churn now. The next honest move is the remaining
+  shared typed-boundary pressure in `session/lead/render.py` and
+  `session/graph/payload.py`, or a deliberate shift into provider-local
+  kernels.
 
 ## Current Tranche
 
@@ -933,9 +969,12 @@ This file is the execution queue.
   selection-state owner.
 - [x] Collapse the `session analyze` semantic graph builder onto explicit node
   and graph state owners.
-- [ ] Next tranche: reduce the remaining shared analyze pressure in
-  `analysis_overview_payload(...)`, then reassess whether shared algorithmic
-  pressure is effectively done and the next honest move is provider-local.
+- [x] Collapse the `session analyze` overview builder onto one summary-state
+  owner.
+- [ ] Next tranche: cut the remaining shared typed-boundary pressure in
+  `src/gotta/plugins/session/lead/render.py` or
+  `src/gotta/plugins/session/graph/payload.py`, then decide whether further
+  rent still exists outside provider-local kernels.
 
 ## Non-Negotiable Invariants
 
@@ -1177,10 +1216,14 @@ This file is the execution queue.
 
 ## Phase 7: Algorithmic Hardening Inside Settled, Typed Boundaries
 
-- [ ] Reduce algorithmic density in the `session analyze` kernels:
+- [x] Reduce algorithmic density in the `session analyze` kernels:
+  - `src/gotta/plugins/session/analyze/focus.py`
   - `src/gotta/plugins/session/analyze/lineage.py`
   - `src/gotta/plugins/session/analyze/semantic.py`
   - `src/gotta/plugins/session/analyze/overview.py`
+- [ ] Reduce remaining shared typed-boundary density in:
+  - `src/gotta/plugins/session/lead/render.py`
+  - `src/gotta/plugins/session/graph/payload.py`
 - [ ] Reduce algorithmic density in the GitHub surface internals:
   - `src/gotta/plugins/github/search.py`
   - `src/gotta/plugins/github/parse.py`
