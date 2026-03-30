@@ -6,11 +6,11 @@ import json
 import re
 from typing import Any
 
+from gotta.builtin import get_binding
 from gotta.resolve.invoke import canonical_locator as resolve_canonical_locator
 from gotta.source.stamp import (
     derive_source_metadata_from_payload,
     normalize_source_timestamp,
-    slack_timestamp_to_iso,
 )
 from gotta.source.visibility import (
     classify_visibility_metadata,
@@ -112,6 +112,18 @@ def _extract_source_metadata_from_markdown(data: bytes) -> dict[str, str]:
     return metadata
 
 
+def _surface_default_source_metadata(
+    plugin: str,
+    argv: list[str],
+    data: bytes,
+    canonical: str,
+) -> dict[str, Any]:
+    binding = get_binding(plugin)
+    if binding is None or binding.default_source_metadata is None:
+        return {}
+    return dict(binding.default_source_metadata(argv, data, canonical))
+
+
 def _derived_source_metadata(
     plugin: str,
     argv: list[str],
@@ -121,63 +133,10 @@ def _derived_source_metadata(
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     canonical = resolve_canonical_locator(plugin, argv)
-    defaults: dict[str, str] = {}
-    if canonical.startswith("slack:thread:"):
-        thread_ts = canonical.rsplit(":", 1)[-1]
-        source_time = slack_timestamp_to_iso(thread_ts)
-        if source_time:
-            defaults["source_created_at"] = source_time
-            defaults["source_updated_at"] = source_time
-    if plugin != "slack" or not argv or argv[0] != "get":
-        payload = _json_value(data)
-        if payload is not None:
-            metadata.update(_extract_source_metadata_from_json(payload))
-            metadata.update(
-                classify_visibility_metadata(
-                    payload,
-                    provider=provider,
-                    plugin=plugin,
-                    subcommand=argv[0] if argv else "",
-                    locator=canonical,
-                )
-            )
-        metadata.update(
-            {
-                key: value
-                for key, value in _extract_source_metadata_from_markdown(data).items()
-                if key not in metadata
-            }
-        )
-        metadata.update(
-            {
-                key: value
-                for key, value in extract_visibility_metadata_from_markdown(
-                    data
-                ).items()
-                if key not in metadata
-            }
-        )
-        if "visibility_level" not in metadata:
-            metadata.update(
-                classify_visibility_metadata(
-                    {},
-                    provider=provider,
-                    plugin=plugin,
-                    subcommand=argv[0] if argv else "",
-                    locator=canonical,
-                )
-            )
-        for key, value in defaults.items():
-            metadata.setdefault(key, value)
-        return metadata
     payload = _json_value(data)
+    defaults = _surface_default_source_metadata(plugin, argv, data, canonical)
     if isinstance(payload, dict):
-        first_ts = slack_timestamp_to_iso(str(payload.get("firstTs") or ""))
-        last_ts = slack_timestamp_to_iso(str(payload.get("lastTs") or ""))
-        if first_ts:
-            metadata["source_created_at"] = first_ts
-        if last_ts:
-            metadata["source_updated_at"] = last_ts
+        metadata.update(_extract_source_metadata_from_json(payload))
         metadata.update(
             classify_visibility_metadata(
                 payload,
@@ -187,6 +146,8 @@ def _derived_source_metadata(
                 locator=canonical,
             )
         )
+    elif payload is not None:
+        metadata.update(_extract_source_metadata_from_json(payload))
     metadata.update(
         {
             key: value

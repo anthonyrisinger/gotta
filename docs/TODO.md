@@ -610,6 +610,31 @@ This file is the execution queue.
   churn; the next honest move is to reassess whether any remaining provider
   knowledge in shared core is still architectural, or whether the phase has
   genuinely crossed into provider-local and algorithmic pressure.
+- [x] Surface-owned default source metadata tranche landed.
+  - `src/gotta/builtin.py` now carries:
+    - `DefaultSourceMetadata`
+    - `SurfaceSpec.default_source_metadata`
+    - `SurfaceBinding.default_source_metadata`
+  - `src/gotta/dispatch/metadata.py` no longer hard-codes Slack-specific
+    source timestamp derivation from:
+    - canonical thread locators
+    - `firstTs`
+    - `lastTs`
+  - Installed Slack now owns that seam in:
+    - `src/gotta/plugins/slack.py`
+      - `default_source_metadata(...)`
+  - The contract is pinned directly in:
+    - `tests/test_dispatch.py`
+      - `test_slack_binding_declares_default_source_metadata(...)`
+  - Focused validation is clean:
+    - `uv run pytest -q tests/test_dispatch.py -k 'slack_binding_declares_default_source_metadata or materialize_invocation_carries_slack_thread_source_timestamps or materialize_invocation_carries_slack_channel_source_window or materialize_invocation_extracts_slack_markdown_source_times or materialize_invocation_extracts_visibility_from_markdown or search_resolve_route_redirects_slack_workspace_locators_to_read'`
+    - `6 passed`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted the remaining provider-specific metadata
+  branch from shared dispatch without inventing a larger framework. More
+  dispatch-side cleanup of the same species would now be churn; the next honest
+  shared-core seam is provider-specific visibility classification in
+  `src/gotta/source/visibility.py`, not dispatch or routing.
 
 ## Current Tranche
 
@@ -653,9 +678,12 @@ This file is the execution queue.
   shared actor-option contract.
 - [x] Move top-level `search` provider routing and read/specialized redirects
   out of shared core and into installed surface contracts.
-- [ ] Next tranche: reassess the remaining shared-core provider-knowledge seams
-  honestly, then either declare the core-collapse phase across the line or cut
-  the one remaining real seam instead of inventing churn.
+- [x] Move provider-specific source timestamp defaults out of shared dispatch
+  and into installed surface contracts.
+- [ ] Next tranche: cut the provider-specific visibility-classification center
+  in `src/gotta/source/visibility.py`, or explicitly declare that it belongs to
+  the provider-local phase instead of pretending the shared core is cleaner
+  than it is.
 
 ## Non-Negotiable Invariants
 
@@ -960,10 +988,14 @@ This file is the execution queue.
   shared actor-option contract.
 - [x] Move top-level `search` provider routing and read/specialized redirects
   out of shared core and into installed surface contracts.
+- [x] Move provider-specific source timestamp defaults out of shared dispatch
+  and into installed surface contracts.
 - [x] Switch from shared-core contract collapse to hot-kernel reduction once
   the last authored-state seam is typed.
-- [ ] Reassess whether any remaining provider-specific dispatch or routing
+- [x] Reassess whether any remaining provider-specific dispatch or routing
   fallback in the shared core is still load-bearing.
+- [ ] Reassess whether provider-specific visibility classification in shared
+  core is still architectural or should move onto installed surface contracts.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 
 ## What Not To Do

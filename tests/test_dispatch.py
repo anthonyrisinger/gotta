@@ -412,6 +412,13 @@ def test_search_resolve_route_redirects_slack_workspace_locators_to_read() -> No
         resolve_search_route(["slack:workspace:demo"])
 
 
+def test_slack_binding_declares_default_source_metadata() -> None:
+    binding = plugin_api.get_binding("slack")
+
+    assert binding is not None
+    assert binding.default_source_metadata is not None
+
+
 def test_search_resolve_invocation_disables_materialization_on_invalid_target() -> None:
     resolved = invocation.resolve_invocation(
         "search", ["jira:jql project = OPS"], content_model.CommonOptions()

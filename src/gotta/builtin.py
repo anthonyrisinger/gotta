@@ -23,6 +23,7 @@ SessionAccessMode = Literal["none", "read", "write", "ambient"]
 ResolveSessionAccess = Callable[[list[str]], SessionAccessMode]
 SurfaceArtifactIntent = Literal["none", "discovery", "evidence"]
 ArtifactIntentHook = Callable[[list[str]], SurfaceArtifactIntent]
+DefaultSourceMetadata = Callable[[list[str], bytes, str], dict[str, Any]]
 InvocationLocator = Callable[[list[str]], str]
 CanonicalLocator = Callable[[list[str]], str]
 PreferredName = Callable[[list[str], Any], str]
@@ -80,6 +81,7 @@ class SurfaceSpec:
     shared_actor_option: bool = False
     should_materialize: ShouldMaterialize | None = None
     artifact_intent: ArtifactIntentHook | None = None
+    default_source_metadata: DefaultSourceMetadata | None = None
     session_access: SessionAccessMode | ResolveSessionAccess | None = None
     invocation_locator: InvocationLocator | None = None
     canonical_locator: CanonicalLocator | None = None
@@ -131,6 +133,10 @@ class SurfaceBinding:
     @property
     def artifact_intent(self) -> ArtifactIntentHook | None:
         return self.surface.artifact_intent
+
+    @property
+    def default_source_metadata(self) -> DefaultSourceMetadata | None:
+        return self.surface.default_source_metadata
 
     @property
     def session_access(self) -> SessionAccessMode | ResolveSessionAccess | None:
@@ -429,6 +435,7 @@ def _core_binding(
     shared_actor_option: bool = False,
     should_materialize: ShouldMaterialize | None = None,
     artifact_intent: ArtifactIntentHook | None = None,
+    default_source_metadata: DefaultSourceMetadata | None = None,
     session_access: SessionAccessMode | ResolveSessionAccess | None = None,
     invocation_locator: InvocationLocator | None = None,
     canonical_locator: CanonicalLocator | None = None,
@@ -453,6 +460,7 @@ def _core_binding(
             shared_actor_option=shared_actor_option,
             should_materialize=should_materialize,
             artifact_intent=artifact_intent,
+            default_source_metadata=default_source_metadata,
             session_access=session_access,
             invocation_locator=invocation_locator,
             canonical_locator=canonical_locator,
@@ -901,6 +909,9 @@ def slack_plugin() -> SurfaceBinding:
         shared_actor_option=True,
         session_access=_artifact_session_access("slack"),
         artifact_intent=_module_attr("gotta.plugins.slack", "artifact_intent"),
+        default_source_metadata=_module_attr(
+            "gotta.plugins.slack", "default_source_metadata"
+        ),
         canonical_locator=_module_attr("gotta.plugins.slack", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.slack", "preferred_name"),
         capture=_module_attr("gotta.plugins.slack", "capture"),

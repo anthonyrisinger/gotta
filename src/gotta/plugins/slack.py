@@ -32,7 +32,10 @@ from gotta.source.render import (
     render_source_metadata_lines,
     render_visibility_metadata_lines,
 )
-from gotta.source.stamp import derive_source_metadata_from_payload
+from gotta.source.stamp import (
+    derive_source_metadata_from_payload,
+    slack_timestamp_to_iso,
+)
 from gotta.source.visibility import with_visibility_metadata
 from gotta.providers.slack import (
     default_workspace,
@@ -200,6 +203,33 @@ def search_route(raw_tail: str) -> list[str]:
         raw_tail,
         read_redirects={"get": _search_read_target},
     )
+
+
+def default_source_metadata(
+    argv: list[str], data: bytes, canonical: str
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if canonical.startswith("slack:thread:"):
+        thread_ts = canonical.rsplit(":", 1)[-1]
+        source_time = slack_timestamp_to_iso(thread_ts)
+        if source_time:
+            metadata["source_created_at"] = source_time
+            metadata["source_updated_at"] = source_time
+    if not argv or argv[0] != "get":
+        return metadata
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return metadata
+    if not isinstance(payload, dict):
+        return metadata
+    first_ts = slack_timestamp_to_iso(str(payload.get("firstTs") or ""))
+    last_ts = slack_timestamp_to_iso(str(payload.get("lastTs") or ""))
+    if first_ts:
+        metadata["source_created_at"] = first_ts
+    if last_ts:
+        metadata["source_updated_at"] = last_ts
+    return metadata
 
 
 def positive_int(raw: str) -> int:
@@ -3397,8 +3427,9 @@ def _normalize_live_search_match(
     workspace: str,
     raw: dict[str, Any],
 ) -> dict[str, Any]:
+    raw_channel = raw.get("channel")
     channel = _normalize_live_channel(
-        raw.get("channel") if isinstance(raw.get("channel"), dict) else {}
+        raw_channel if isinstance(raw_channel, dict) else {}
     )
     channel_id = str(channel.get("id") or "").strip()
     ts = str(raw.get("ts") or "").strip()
