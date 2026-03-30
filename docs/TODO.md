@@ -943,6 +943,46 @@ This file is the execution queue.
   species would likely be churn now. The next honest move is
   `src/gotta/plugins/session/lead/render.py`, then a reassessment of whether
   further shared pressure remains at all.
+- [x] Lead render-state tranche landed.
+  - `src/gotta/plugins/session/lead/render.py` now centers one truthful render
+    owner:
+    - `_LeadRenderState`
+  - `render_leads_text(...)` no longer owns all of:
+    - header and count-section assembly
+    - aggregated lead rendering
+    - provider-highlight rendering
+    - source-context artifact rendering
+    - artifact lead rendering
+    inline inside one function.
+  - The lead render seam now runs through one render-state owner instead of
+    repeated section-local line choreography.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/lead/render.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'leads or analyze or graph or manifest or timeline'`
+    - `70 passed`
+    - `uv run ruff check src/gotta/plugins/session/lead/render.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/lead/render.py:render_leads_text` dropped off
+      the hotspot board
+    - the remaining heat is now mostly provider-local:
+      - GitHub search and parse
+      - Jira field coercion
+      - Slack `get` and query search
+      - Confluence draw.io rendering
+    - but the next move is not yet plugin-only:
+      - `src/gotta/plugins/actor.py:_render_status_text`
+      - `src/gotta/session/status/progress.py:_actor_progress_summary`
+      - `src/gotta/plugins/read.py:main`
+      - `src/gotta/dispatch/main.py:run_surface`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because `render_leads_text(...)` was the last shared
+  typed-boundary renderer still carrying obvious duplicated section
+  choreography. More `session lead` cleanup of this exact species would likely
+  be churn now. The first pause boundary has not been reached yet because a few
+  non-provider shared hot kernels still remain. The next honest move is one of
+  those shared kernels, not a forced jump into provider-only surgery.
 
 ## Current Tranche
 
@@ -1006,9 +1046,11 @@ This file is the execution queue.
   and graph state owners.
 - [x] Collapse the `session analyze` overview builder onto one summary-state
   owner.
-- [ ] Next tranche: cut the remaining shared typed-boundary pressure in
-  `src/gotta/plugins/session/lead/render.py`, then decide whether further
-  rent still exists outside provider-local kernels.
+- [ ] Next tranche: cut one of the remaining shared non-provider hot kernels
+  in `src/gotta/plugins/read.py`, `src/gotta/dispatch/main.py`,
+  `src/gotta/plugins/actor.py`, or
+  `src/gotta/session/status/progress.py`, then reassess whether the first
+  provider-local pause boundary has finally arrived.
 
 ## Non-Negotiable Invariants
 
@@ -1255,10 +1297,15 @@ This file is the execution queue.
   - `src/gotta/plugins/session/analyze/lineage.py`
   - `src/gotta/plugins/session/analyze/semantic.py`
   - `src/gotta/plugins/session/analyze/overview.py`
-- [ ] Reduce remaining shared typed-boundary density in:
+- [x] Reduce remaining shared typed-boundary density in:
   - `src/gotta/plugins/session/lead/render.py`
 - [x] Collapse `src/gotta/plugins/session/graph/payload.py` onto explicit
   build/view state owners.
+- [ ] Reduce remaining shared non-provider hot kernels in:
+  - `src/gotta/plugins/actor.py`
+  - `src/gotta/session/status/progress.py`
+  - `src/gotta/plugins/read.py`
+  - `src/gotta/dispatch/main.py`
 - [ ] Reduce algorithmic density in the GitHub surface internals:
   - `src/gotta/plugins/github/search.py`
   - `src/gotta/plugins/github/parse.py`
