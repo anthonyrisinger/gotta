@@ -27,6 +27,7 @@ from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.resolve.route import query_route, strip_http_url_fragment
+from gotta.resolve.search import plain_text_search_route, search_redirect_error
 from gotta.source.render import (
     render_source_metadata_lines,
     render_visibility_metadata_lines,
@@ -178,6 +179,27 @@ def artifact_intent(argv: list[str]) -> str:
     if command in EVIDENCE_COMMANDS:
         return "evidence"
     return "none"
+
+
+def _search_read_target(subject: str) -> str:
+    subject = subject.strip()
+    if not subject:
+        return ""
+    try:
+        return canonical_locator(["get", subject])
+    except Exception:
+        return f"slack:{subject}"
+
+
+def search_route(raw_tail: str) -> list[str]:
+    stripped = raw_tail.strip()
+    if stripped.startswith(("workspace:", "channel:", "thread:", "doc:")):
+        raise search_redirect_error("slack", raw_tail, read_target=f"slack:{stripped}")
+    return plain_text_search_route(
+        "slack",
+        raw_tail,
+        read_redirects={"get": _search_read_target},
+    )
 
 
 def positive_int(raw: str) -> int:

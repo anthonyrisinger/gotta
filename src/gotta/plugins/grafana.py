@@ -27,6 +27,7 @@ from gotta.config import (
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.resolve.route import query_route, split_locator_tail, strip_http_url_fragment
+from gotta.resolve.search import plain_text_search_route
 from gotta.source.render import render_source_metadata_lines
 from gotta.source.stamp import derive_source_metadata_from_payload
 
@@ -153,6 +154,25 @@ def artifact_intent(argv: list[str]) -> str:
     if command in EVIDENCE_COMMANDS:
         return "evidence"
     return "none"
+
+
+def _search_read_target(subject: str) -> str:
+    subject = subject.strip()
+    if not subject:
+        return ""
+    try:
+        return canonical_locator(["get", subject])
+    except Exception:
+        return f"grafana:get {subject}"
+
+
+def search_route(raw_tail: str) -> list[str]:
+    return plain_text_search_route(
+        "grafana",
+        raw_tail,
+        specialized_commands={"query": "grafana query"},
+        read_redirects={"get": _search_read_target},
+    )
 
 
 def _env_or_config(config_env: dict[str, str], name: str) -> str:

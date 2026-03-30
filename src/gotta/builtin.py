@@ -17,6 +17,7 @@ from gotta.projection import Projection
 
 Runner = Callable[[list[str]], int]
 RouteTarget = Callable[[str], list[str] | None]
+SearchRoute = Callable[[str], list[str]]
 ShouldMaterialize = Callable[[list[str]], bool]
 SessionAccessMode = Literal["none", "read", "write", "ambient"]
 ResolveSessionAccess = Callable[[list[str]], SessionAccessMode]
@@ -74,6 +75,7 @@ class SurfaceSpec:
     description: str
     runner: Runner
     route_target: RouteTarget | None = None
+    search_route: SearchRoute | None = None
     route_priority: int = 100
     shared_actor_option: bool = False
     should_materialize: ShouldMaterialize | None = None
@@ -109,6 +111,10 @@ class SurfaceBinding:
     @property
     def route_target(self) -> RouteTarget | None:
         return self.surface.route_target
+
+    @property
+    def search_route(self) -> SearchRoute | None:
+        return self.surface.search_route
 
     @property
     def route_priority(self) -> int:
@@ -418,6 +424,7 @@ def _core_binding(
     runner: Runner,
     *,
     route_target: RouteTarget | None = None,
+    search_route: SearchRoute | None = None,
     route_priority: int = 100,
     shared_actor_option: bool = False,
     should_materialize: ShouldMaterialize | None = None,
@@ -441,6 +448,7 @@ def _core_binding(
             description=description,
             runner=runner,
             route_target=route_target,
+            search_route=search_route,
             route_priority=route_priority,
             shared_actor_option=shared_actor_option,
             should_materialize=should_materialize,
@@ -464,6 +472,7 @@ def confluence_plugin() -> SurfaceBinding:
         description="read and edit Confluence pages with durable OAuth-backed access",
         runner=_runner("gotta.plugins.confluence"),
         route_target=_module_attr("gotta.plugins.confluence", "route_target"),
+        search_route=_module_attr("gotta.plugins.confluence", "search_route"),
         route_priority=20,
         shared_actor_option=True,
         session_access=_artifact_session_access("confluence"),
@@ -612,6 +621,7 @@ def gdocs_plugin() -> SurfaceBinding:
         description="read and search Google Docs through the Drive/Docs APIs",
         runner=_runner("gotta.plugins.gdocs"),
         route_target=_module_attr("gotta.plugins.gdocs", "route_target"),
+        search_route=_module_attr("gotta.plugins.gdocs", "search_route"),
         route_priority=50,
         shared_actor_option=True,
         session_access=_artifact_session_access("gdocs"),
@@ -648,6 +658,7 @@ def grafana_plugin() -> SurfaceBinding:
         description="read-only Grafana dashboard discovery through the HTTP API",
         runner=_runner("gotta.plugins.grafana"),
         route_target=_module_attr("gotta.plugins.grafana", "route_target"),
+        search_route=_module_attr("gotta.plugins.grafana", "search_route"),
         route_priority=70,
         shared_actor_option=True,
         session_access=_artifact_session_access("grafana"),
@@ -682,6 +693,7 @@ def granola_plugin() -> SurfaceBinding:
         description="read personal Granola notes through the local desktop session",
         runner=_runner("gotta.plugins.granola"),
         route_target=_module_attr("gotta.plugins.granola", "route_target"),
+        search_route=_module_attr("gotta.plugins.granola", "search_route"),
         route_priority=65,
         shared_actor_option=True,
         session_access=_artifact_session_access("granola"),
@@ -718,6 +730,7 @@ def gsheets_plugin() -> SurfaceBinding:
         description="read and search Google Sheets through the Sheets/Drive APIs",
         runner=_runner("gotta.plugins.gsheets"),
         route_target=_module_attr("gotta.plugins.gsheets", "route_target"),
+        search_route=_module_attr("gotta.plugins.gsheets", "search_route"),
         route_priority=55,
         shared_actor_option=True,
         session_access=_artifact_session_access("gsheets"),
@@ -754,6 +767,7 @@ def gdrive_plugin() -> SurfaceBinding:
         description="inspect and fetch Google Drive files through the Drive API",
         runner=_runner("gotta.plugins.gdrive"),
         route_target=_module_attr("gotta.plugins.gdrive", "route_target"),
+        search_route=_module_attr("gotta.plugins.gdrive", "search_route"),
         route_priority=60,
         shared_actor_option=True,
         session_access=_artifact_session_access("gdrive"),
@@ -790,6 +804,7 @@ def github_plugin() -> SurfaceBinding:
         description="render common GitHub URLs through the GitHub CLI",
         runner=_runner("gotta.plugins.github.main"),
         route_target=_module_attr("gotta.plugins.github.route", "route_target"),
+        search_route=_module_attr("gotta.plugins.github.main", "search_route"),
         route_priority=10,
         shared_actor_option=True,
         session_access=_artifact_session_access("github"),
@@ -830,6 +845,7 @@ def jira_plugin() -> SurfaceBinding:
         description="discover, read, and author Jira issues through Atlassian OAuth",
         runner=_runner("gotta.plugins.jira"),
         route_target=_module_attr("gotta.plugins.jira", "route_target"),
+        search_route=_module_attr("gotta.plugins.jira", "search_route"),
         route_priority=30,
         shared_actor_option=True,
         session_access=_artifact_session_access("jira"),
@@ -880,6 +896,7 @@ def slack_plugin() -> SurfaceBinding:
         description="query the bounded local Slack archive and explicit sync surface",
         runner=_runner("gotta.plugins.slack"),
         route_target=_module_attr("gotta.plugins.slack", "route_target"),
+        search_route=_module_attr("gotta.plugins.slack", "search_route"),
         route_priority=40,
         shared_actor_option=True,
         session_access=_artifact_session_access("slack"),

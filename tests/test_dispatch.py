@@ -396,6 +396,22 @@ def test_search_resolve_route_preserves_flag_shaped_text_inside_quoted_query() -
     assert route.provider_argv == ["search", "retry --bogus bar"]
 
 
+def test_search_resolve_route_redirects_github_get_targets_to_read() -> None:
+    with pytest.raises(
+        SearchRouteError,
+        match=r"read-like provider targets belong on `gotta read`; use `gotta read https://github\.com/acme/widgets`",
+    ):
+        resolve_search_route(["github:get acme/widgets"])
+
+
+def test_search_resolve_route_redirects_slack_workspace_locators_to_read() -> None:
+    with pytest.raises(
+        SearchRouteError,
+        match=r"read-like provider targets belong on `gotta read`; use `gotta read slack:workspace:demo`",
+    ):
+        resolve_search_route(["slack:workspace:demo"])
+
+
 def test_search_resolve_invocation_disables_materialization_on_invalid_target() -> None:
     resolved = invocation.resolve_invocation(
         "search", ["jira:jql project = OPS"], content_model.CommonOptions()

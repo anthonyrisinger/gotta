@@ -26,6 +26,7 @@ from gotta.projection import Projection, projection_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.resolve.route import split_locator_tail
+from gotta.resolve.search import plain_text_search_route
 from gotta.source.render import render_source_metadata_lines
 
 
@@ -113,6 +114,41 @@ def artifact_intent(argv: list[str]) -> str:
     if command in EVIDENCE_COMMANDS:
         return "evidence"
     return "none"
+
+
+def _search_get_target(subject: str) -> str:
+    subject = subject.strip()
+    if not subject:
+        return ""
+    try:
+        return canonical_locator(["get", subject])
+    except Exception:
+        return f"granola:{subject}"
+
+
+def _search_transcript_target(subject: str) -> str:
+    subject = subject.strip()
+    if not subject:
+        return ""
+    try:
+        return canonical_locator(["transcript", subject])
+    except Exception:
+        return f"granola:transcript {subject}"
+
+
+def search_route(raw_tail: str) -> list[str]:
+    return plain_text_search_route(
+        "granola",
+        raw_tail,
+        specialized_commands={
+            "list": "granola list",
+            "search-transcript": "granola search-transcript",
+        },
+        read_redirects={
+            "get": _search_get_target,
+            "transcript": _search_transcript_target,
+        },
+    )
 
 
 def canonical_locator(argv: list[str]) -> str:

@@ -49,7 +49,7 @@ from .read import (
 )
 from .render import render_bytes, render_content
 from .render import markdown_repo
-from .route import route_target
+from .route import route_target, search_route
 from .search import (
     search_code_payload,
     search_issueish_payload,
@@ -69,6 +69,7 @@ __all__ = [
     "preferred_name",
     "project",
     "route_target",
+    "search_route",
 ]
 
 

@@ -576,6 +576,40 @@ This file is the execution queue.
   decoupling of this exact species would likely be churn now; the next honest
   move is to reassess whether any real provider-knowledge seam remains in the
   core at all before continuing the collapse.
+- [x] Provider-owned top-level `search` routing tranche landed.
+  - `src/gotta/builtin.py` now carries:
+    - `SurfaceSpec.search_route`
+    - `SurfaceBinding.search_route`
+  - `src/gotta/resolve/search.py` no longer owns provider-specific command
+    families or provider-specific read/specialized redirect logic. It now does
+    only:
+    - generic `<provider>:<tail>` parsing
+    - installed-surface `search_route(...)` dispatch
+    - generic top-level plain-text validation
+  - Installed provider surfaces now own their top-level `search` semantics in:
+    - `src/gotta/plugins/confluence.py`
+    - `src/gotta/plugins/gdocs.py`
+    - `src/gotta/plugins/gdrive.py`
+    - `src/gotta/plugins/grafana.py`
+    - `src/gotta/plugins/github/route.py`
+    - `src/gotta/plugins/granola.py`
+    - `src/gotta/plugins/gsheets.py`
+    - `src/gotta/plugins/jira.py`
+    - `src/gotta/plugins/slack.py`
+  - The new contract is pinned directly in:
+    - `tests/test_dispatch.py`
+      - `test_search_resolve_route_redirects_github_get_targets_to_read(...)`
+      - `test_search_resolve_route_redirects_slack_workspace_locators_to_read(...)`
+  - Focused validation is clean:
+    - `uv run pytest -q tests/test_dispatch.py tests/test_cli.py tests/test_read.py -k 'search or canonical_locator or session_access_mode or should_materialize'`
+    - `36 passed`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted the last load-bearing provider-command
+  branch from shared `search` routing instead of renaming one more center.
+  More shared-core provider-routing cleanup of the same species would now be
+  churn; the next honest move is to reassess whether any remaining provider
+  knowledge in shared core is still architectural, or whether the phase has
+  genuinely crossed into provider-local and algorithmic pressure.
 
 ## Current Tranche
 
@@ -617,8 +651,11 @@ This file is the execution queue.
   only surface-owned canonical locators plus a generic fallback.
 - [x] Replace the provider-name dispatch actor branch with a surface-declared
   shared actor-option contract.
+- [x] Move top-level `search` provider routing and read/specialized redirects
+  out of shared core and into installed surface contracts.
 - [ ] Next tranche: reassess the remaining shared-core provider-knowledge seams
-  before crossing fully into provider-local and algorithmic pressure.
+  honestly, then either declare the core-collapse phase across the line or cut
+  the one remaining real seam instead of inventing churn.
 
 ## Non-Negotiable Invariants
 
@@ -921,6 +958,8 @@ This file is the execution queue.
   only surface-owned canonical locators plus a generic fallback.
 - [x] Replace the provider-name dispatch actor branch with a surface-declared
   shared actor-option contract.
+- [x] Move top-level `search` provider routing and read/specialized redirects
+  out of shared core and into installed surface contracts.
 - [x] Switch from shared-core contract collapse to hot-kernel reduction once
   the last authored-state seam is typed.
 - [ ] Reassess whether any remaining provider-specific dispatch or routing

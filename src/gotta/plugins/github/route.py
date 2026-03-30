@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from gotta.resolve.route import query_route, split_locator_tail, strip_http_url_fragment
+from gotta.resolve.search import plain_text_search_route
 
 
 BLOB_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$")
@@ -50,6 +51,26 @@ def _search_route(rest: str) -> list[str] | None:
             "--output",
         ),
         boolean_flags=("--global",),
+    )
+
+
+def _search_read_target(subject: str) -> str:
+    value = subject.strip()
+    if not value:
+        return ""
+    normalized = value.split("#", 1)[0].split("?", 1)[0]
+    if normalized.startswith("https://github.com/"):
+        return normalized
+    if normalized.startswith("github.com/"):
+        return f"https://{normalized}"
+    return f"https://github.com/{normalized.lstrip('/')}"
+
+
+def search_route(raw_tail: str) -> list[str]:
+    return plain_text_search_route(
+        "github",
+        raw_tail,
+        read_redirects={"get": _search_read_target},
     )
 
 

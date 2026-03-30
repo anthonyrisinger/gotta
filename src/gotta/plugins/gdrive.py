@@ -21,6 +21,7 @@ from gotta.drawio import DRAWIO_MIME, render_drawio_summary_markdown
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import html_markdown, html_text, pretty_json
 from gotta.resolve.route import query_route, strip_http_url_fragment
+from gotta.resolve.search import plain_text_search_route
 from gotta.source.render import render_source_metadata_lines
 from gotta.source.stamp import derive_source_metadata_from_payload
 from gotta.providers.google import (
@@ -94,6 +95,24 @@ def artifact_intent(argv: list[str]) -> str:
     if command == "get":
         return "evidence"
     return "none"
+
+
+def _search_read_target(subject: str) -> str:
+    subject = subject.strip()
+    if not subject:
+        return ""
+    try:
+        return canonical_locator(["get", subject])
+    except Exception:
+        return f"gdrive:{subject}"
+
+
+def search_route(raw_tail: str) -> list[str]:
+    return plain_text_search_route(
+        "gdrive",
+        raw_tail,
+        read_redirects={"get": _search_read_target},
+    )
 
 
 def canonical_locator(argv: list[str]) -> str:

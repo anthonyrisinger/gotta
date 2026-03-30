@@ -22,6 +22,7 @@ from gotta.config import set_provider_env_values
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
 from gotta.resolve.route import query_route, strip_http_url_fragment
+from gotta.resolve.search import plain_text_search_route
 from gotta.source.render import (
     render_source_metadata_lines,
     render_visibility_metadata_lines,
@@ -184,6 +185,25 @@ def artifact_intent(argv: list[str]) -> str:
     if command in EVIDENCE_COMMANDS:
         return "evidence"
     return "none"
+
+
+def _search_read_target(subject: str) -> str:
+    subject = subject.strip()
+    if not subject:
+        return ""
+    try:
+        return canonical_locator(["get", subject])
+    except Exception:
+        return f"jira:{subject}"
+
+
+def search_route(raw_tail: str) -> list[str]:
+    return plain_text_search_route(
+        "jira",
+        raw_tail,
+        specialized_commands={"jql": "jira jql"},
+        read_redirects={"get": _search_read_target},
+    )
 
 
 def discover_cloud_id(token: str, base_url: str) -> str:
