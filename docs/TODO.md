@@ -1025,6 +1025,61 @@ This file is the execution queue.
   species would likely be churn now. The first pause boundary still has not
   arrived, but it is close: one shared orchestration swath remains in
   `read`/`dispatch`, plus one smaller shared status-next-step tail.
+- [x] Read/dispatch/closing orchestration-state tranche landed.
+  - `src/gotta/plugins/read.py` now centers explicit read-orchestration owners:
+    - `_ReadViewState`
+    - `_ReadMainState`
+  - `main(...)` no longer owns all of:
+    - stdin/view routing
+    - local/routed/remote read branching
+    - remote projection language selection
+    - local missing-target error selection
+    inline inside one function.
+  - `src/gotta/dispatch/main.py` now centers one truthful dispatch owner:
+    - `_SurfaceRunState`
+  - `run_surface(...)` no longer owns all of:
+    - global flag stripping
+    - common-option splitting
+    - invocation resolution
+    - optional runtime scoping
+    - non-materialized replay
+    - capture-hook materialization
+    - receipt-emitting success paths
+    inline inside one function.
+  - `src/gotta/session/status/payload/closing.py` now centers one normalized
+    closing-state owner:
+    - `_ClosingState`
+  - `closing_next_step(...)` no longer unpacks and re-derives closing payload
+    state inline.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/read.py src/gotta/dispatch/main.py src/gotta/session/status/payload/closing.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_dispatch.py tests/test_session.py tests/test_cli.py -k 'read or dispatch or actor_signoff or awaiting_disposition or next_step or settle or runtime_stop_signal or pending_disposition'`
+    - `117 passed`
+    - `uv run pytest -q tests/test_cli.py -k 'test_main_rejects_foreign_actor_attributed_materialization'`
+    - `1 passed`
+    - `uv run ruff check src/gotta/plugins/read.py src/gotta/dispatch/main.py src/gotta/session/status/payload/closing.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/read.py:main` dropped off the hotspot board
+    - `src/gotta/dispatch/main.py:run_surface` dropped off the hotspot board
+    - `src/gotta/session/status/payload/closing.py:closing_next_step` dropped
+      off the board
+    - the remaining heat is now almost entirely provider- or surface-local:
+      - GitHub search/parse/render
+      - Jira field coercion/rendering
+      - Slack retrieval/search
+      - GDrive/Granola projectors
+      - Confluence draw.io rendering
+      - one local analyze helper:
+        `src/gotta/plugins/session/analyze/focus.py:_LineageFocusState.build_selection`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed the last load-bearing shared orchestration
+  cluster rather than polishing one more long function. The first pause
+  boundary is effectively here now: the next honest move is no longer shared
+  core collapse of the old kind. Remaining work is primarily provider-local or
+  surface-local algorithmic pressure, with only a small analyze helper tail
+  still visible outside the provider surfaces.
 
 ## Current Tranche
 
@@ -1342,7 +1397,7 @@ This file is the execution queue.
   - `src/gotta/plugins/session/lead/render.py`
 - [x] Collapse `src/gotta/plugins/session/graph/payload.py` onto explicit
   build/view state owners.
-- [ ] Reduce remaining shared non-provider hot kernels in:
+- [x] Reduce remaining shared non-provider hot kernels in:
   - `src/gotta/plugins/read.py`
   - `src/gotta/dispatch/main.py`
   - `src/gotta/session/status/payload/closing.py`
@@ -1362,12 +1417,17 @@ This file is the execution queue.
   - `src/gotta/plugins/oops.py`
   - `src/gotta/plugins/slack.py`
   - `src/gotta/plugins/gdrive.py`
-- [ ] Reduce remaining type pressure in the shared cores:
-  - `src/gotta/plugins/session/core.py`
-  - `src/gotta/plugins/actor.py`
+- [ ] Reduce remaining type pressure in the local/provider cores:
   - `src/gotta/plugins/grafana.py`
-  - `src/gotta/builtin.py`
-  - `src/gotta/dispatch/main.py`
+  - `src/gotta/actor.py`
+  - `src/gotta/dispatch/stream.py`
+  - `src/gotta/plugins/gdocs.py`
+  - `src/gotta/plugins/gdrive.py`
+  - `src/gotta/plugins/gsheets.py`
+  - `src/gotta/providers/atlassian.py`
+  - `src/gotta/cli/notice.py`
+  - `src/gotta/compat.py`
+  - `src/gotta/config.py`
 
 ## Concrete Near-Term Queue
 
@@ -1443,5 +1503,5 @@ This file is the execution queue.
 - [x] Derived backend interfaces exist without becoming storage truth.
 - [x] `gotta exec` exists as explicit evidence rather than implicit fallback.
 - [ ] The lead kernel and major derived payloads are typed.
-- [ ] Remaining work is primarily provider-local or algorithm-local, not
+- [x] Remaining work is primarily provider-local or algorithm-local, not
   architectural blur.

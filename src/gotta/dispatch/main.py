@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
+from dataclasses import dataclass
 import sys
 
 from gotta.builtin import (
@@ -31,7 +33,6 @@ from gotta.dispatch.receipt import (
     _receipt_extra,
     _receipt_payload,
     _rerun_full_output_command,
-    _result_follow_command,
     _should_emit_receipt,
 )
 from gotta.dispatch.runtime import (
@@ -47,6 +48,7 @@ from gotta.dispatch.runtime import (
 from gotta.dispatch.stream import capture_stderr, capture_stdout, _emit_captured_stderr
 from gotta.resolve.intent import session_access_mode
 from gotta.resolve.invoke import (
+    ResolvedInvocation,
     canonical_locator,
     infer_content_type,
     invocation_locator,
@@ -128,188 +130,233 @@ def load_surface_runner(surface: str) -> Callable[[list[str]], int]:
     return binding.runner
 
 
-def run_surface(surface: str, argv: list[str]) -> int:
-    quiet, argv = strip_quiet_flag(argv)
-    full_output, argv = strip_full_output_flag(argv)
-    binding = surface_binding(surface)
-    if surface == "session":
-        options = CommonOptions()
-        cleaned = argv
-    else:
-        try:
+@dataclass(slots=True)
+class _SurfaceRunState:
+    surface: str
+    quiet: bool
+    binding: SurfaceBinding | None
+    options: CommonOptions
+    cleaned: list[str]
+    runner: Callable[[list[str]], int]
+    resolved: ResolvedInvocation
+    access: str
+    rerun_command: str
+    budget_output: bool
+    runtime_dirs: ResolvedDirs | None = None
+
+    @classmethod
+    def prepare(cls, surface: str, argv: list[str]) -> _SurfaceRunState:
+        quiet, argv = strip_quiet_flag(argv)
+        full_output, argv = strip_full_output_flag(argv)
+        binding = surface_binding(surface)
+        if surface == "session":
+            options = CommonOptions()
+            cleaned = argv
+        else:
             options, cleaned = split_common_options(
                 argv,
                 strip_actor=bool(binding and binding.shared_actor_option),
             )
-        except ContentError as exc:
-            return die(str(exc))
+        return cls(
+            surface=surface,
+            quiet=quiet,
+            binding=binding,
+            options=options,
+            cleaned=cleaned,
+            runner=load_surface_runner(surface),
+            resolved=resolve_invocation(surface, cleaned, options),
+            access=session_access_mode(surface, cleaned),
+            rerun_command=_rerun_full_output_command(surface, cleaned),
+            budget_output=not full_output,
+        )
 
+    def execute(self) -> int:
+        if not self.resolved.should_materialize and _streams_live(
+            self.surface, self.cleaned
+        ):
+            return self._execute_live()
+        if not self.resolved.should_materialize:
+            return self._execute_nonmaterialized()
+        self._require_runtime_dirs()
+        capture_hook_result = self._execute_materialized_capture()
+        if capture_hook_result is not None:
+            return capture_hook_result
+        return self._execute_materialized_stdout()
+
+    def _emit_success(
+        self,
+        stdout_data: bytes,
+        *,
+        stderr_data: bytes = b"",
+        result: Materialization | None = None,
+    ) -> int:
+        emitted = emit_budgeted_output(
+            stdout_data,
+            output_format=requested_output_format(
+                self.surface, self.cleaned, stdout_data
+            ),
+            budget_output=self.budget_output,
+            follow_command=self.rerun_command,
+        )
+        if stderr_data and not self.quiet:
+            _emit_captured_stderr(stderr_data)
+        if _should_emit_receipt(self.surface, self.cleaned):
+            _emit_receipt(
+                _receipt_payload(
+                    emitted=emitted,
+                    result=result,
+                    extra=_receipt_extra(
+                        self.surface,
+                        self.cleaned,
+                        dirs=self.runtime_dirs,
+                    ),
+                ),
+                quiet=self.quiet,
+            )
+        return 0
+
+    def _replay_stdout(self, stdout_data: bytes) -> None:
+        if not stdout_data:
+            return
+        emit_budgeted_output(
+            stdout_data,
+            output_format=requested_output_format(
+                self.surface, self.cleaned, stdout_data
+            ),
+            budget_output=self.budget_output,
+            follow_command=self.rerun_command,
+        )
+
+    def _execute_live(self) -> int:
+        with self._optional_runtime_scope():
+            return _run_callable(self.runner, self.cleaned)
+
+    def _execute_nonmaterialized(self) -> int:
+        with self._optional_runtime_scope():
+            with (
+                capture_stdout(preserve_tty=True) as stdout_capture,
+                capture_stderr(preserve_tty=True) as stderr_capture,
+            ):
+                code = _run_callable(self.runner, self.cleaned)
+        stderr_data = stderr_capture.getvalue()
+        stdout_data = stdout_capture.getvalue()
+        if code == 0:
+            if not self.quiet:
+                stderr_data += _sessionless_notice_bytes(self.resolved)
+            return self._emit_success(
+                stdout_data,
+                stderr_data=stderr_data,
+            )
+        self._replay_stdout(stdout_data)
+        _emit_captured_stderr(stderr_data)
+        return code
+
+    def _execute_materialized_capture(self) -> int | None:
+        if not self._uses_capture_projection():
+            return None
+        stderr_data = b""
+        dirs = self._require_runtime_dirs()
+        try:
+            with scoped_runtime_env(dirs):
+                with capture_stderr(preserve_tty=True) as stderr_capture:
+                    capture, projection = _captured_execution(
+                        self.surface,
+                        self.cleaned,
+                        self.options,
+                    )
+                    stderr_data = stderr_capture.getvalue()
+        except NotImplementedError:
+            return None
+        if capture is None or projection is None:
+            return None
+        try:
+            result = _materialize_invocation(
+                self.resolved,
+                capture.data,
+                options=self.options,
+                capture=capture,
+                dirs=dirs,
+            )
+        except ContentError as exc:
+            raise RuntimeError(str(exc)) from exc
+        self._emit_success(
+            projection.data,
+            stderr_data=stderr_data,
+            result=result,
+        )
+        return int(capture.exit_status)
+
+    def _execute_materialized_stdout(self) -> int:
+        dirs = self._require_runtime_dirs()
+        with scoped_runtime_env(dirs):
+            with (
+                capture_stdout(preserve_tty=True) as stdout_capture,
+                capture_stderr(preserve_tty=True) as stderr_capture,
+            ):
+                code = _run_callable(self.runner, self.cleaned)
+        stdout_data = stdout_capture.getvalue()
+        stderr_data = stderr_capture.getvalue()
+        if code == 0:
+            try:
+                result = _materialize_invocation(
+                    self.resolved,
+                    stdout_data,
+                    options=self.options,
+                    dirs=dirs,
+                )
+            except ContentError as exc:
+                raise RuntimeError(str(exc)) from exc
+            return self._emit_success(
+                stdout_data,
+                stderr_data=stderr_data,
+                result=result,
+            )
+        self._replay_stdout(stdout_data)
+        _emit_captured_stderr(stderr_data)
+        return code
+
+    def _uses_capture_projection(self) -> bool:
+        return bool(
+            self.binding
+            and self.binding.capture is not None
+            and self.binding.project is not None
+            and self.resolved.artifact_intent in {"evidence", "discovery"}
+        )
+
+    def _needs_optional_runtime_scope(self) -> bool:
+        return self.access != "none" and bool(
+            self.options.session_dir or self.options.content_dir or self.options.actor
+        )
+
+    def _optional_runtime_scope(self):
+        if not self._needs_optional_runtime_scope():
+            return nullcontext()
+        return scoped_runtime_env(self._require_runtime_dirs())
+
+    def _require_runtime_dirs(self) -> ResolvedDirs:
+        if self.runtime_dirs is None:
+            self.runtime_dirs = _runtime_dirs(self.options, access=self.access)
+            require_operational_session(self.runtime_dirs)
+        return self.runtime_dirs
+
+
+def run_surface(surface: str, argv: list[str]) -> int:
     try:
-        runner = load_surface_runner(surface)
+        state = _SurfaceRunState.prepare(surface, argv)
     except KeyError:
         surfaces = ", ".join(available_surfaces())
         return die(f"unknown gotta surface: {surface}. available surfaces: {surfaces}")
-    except RuntimeError as exc:
-        return die(str(exc), code=1)
-
-    try:
-        resolved = resolve_invocation(surface, cleaned, options)
     except SystemExit as exc:
         return system_exit_status(exc)
     except ContentError as exc:
         return die(str(exc))
     except RuntimeError as exc:
         return die(str(exc), code=1)
-    access = session_access_mode(surface, cleaned)
-    follow_command = ""
-    rerun_command = _rerun_full_output_command(surface, cleaned)
-    runtime_dirs: ResolvedDirs | None = None
-    budget_output = not full_output
-
-    def emit_success(
-        stdout_data: bytes,
-        *,
-        stderr_data: bytes = b"",
-        result: Materialization | None = None,
-        dirs: ResolvedDirs | None = None,
-    ) -> int:
-        nonlocal follow_command
-        follow_command = _result_follow_command(result)
-        emitted = emit_budgeted_output(
-            stdout_data,
-            output_format=requested_output_format(surface, cleaned, stdout_data),
-            budget_output=budget_output,
-            follow_command=rerun_command,
-        )
-        if stderr_data and not quiet:
-            _emit_captured_stderr(stderr_data)
-        if _should_emit_receipt(surface, cleaned):
-            _emit_receipt(
-                _receipt_payload(
-                    emitted=emitted,
-                    result=result,
-                    extra=_receipt_extra(surface, cleaned, dirs=dirs),
-                ),
-                quiet=quiet,
-            )
-        return 0
-
-    def replay_stdout(stdout_data: bytes) -> None:
-        if not stdout_data:
-            return
-        emit_budgeted_output(
-            stdout_data,
-            output_format=requested_output_format(surface, cleaned, stdout_data),
-            budget_output=budget_output,
-            follow_command=rerun_command,
-        )
-
-    if not resolved.should_materialize and _streams_live(surface, cleaned):
-        if access != "none" and (
-            options.session_dir or options.content_dir or options.actor
-        ):
-            try:
-                runtime_dirs = _runtime_dirs(options, access=access)
-                require_operational_session(runtime_dirs)
-            except ContentError as exc:
-                return die(str(exc))
-            with scoped_runtime_env(runtime_dirs):
-                return _run_callable(runner, cleaned)
-        return _run_callable(runner, cleaned)
-
-    if not resolved.should_materialize:
-        if access != "none" and (
-            options.session_dir or options.content_dir or options.actor
-        ):
-            try:
-                runtime_dirs = _runtime_dirs(options, access=access)
-                require_operational_session(runtime_dirs)
-            except ContentError as exc:
-                return die(str(exc))
-            with scoped_runtime_env(runtime_dirs):
-                with (
-                    capture_stdout(preserve_tty=True) as stdout_capture,
-                    capture_stderr(preserve_tty=True) as stderr_capture,
-                ):
-                    code = _run_callable(runner, cleaned)
-        else:
-            with (
-                capture_stdout(preserve_tty=True) as stdout_capture,
-                capture_stderr(preserve_tty=True) as stderr_capture,
-            ):
-                code = _run_callable(runner, cleaned)
-        stderr_data = stderr_capture.getvalue()
-        stdout_data = stdout_capture.getvalue()
-        if code == 0:
-            if not quiet:
-                stderr_data += _sessionless_notice_bytes(resolved)
-            return emit_success(stdout_data, stderr_data=stderr_data, dirs=runtime_dirs)
-        replay_stdout(stdout_data)
-        _emit_captured_stderr(stderr_data)
-        return code
-
     try:
-        runtime_dirs = _runtime_dirs(options, access=access)
-        require_operational_session(runtime_dirs)
+        return state.execute()
+    except SystemExit as exc:
+        return system_exit_status(exc)
     except ContentError as exc:
         return die(str(exc))
-
-    if (
-        binding
-        and binding.capture is not None
-        and binding.project is not None
-        and resolved.artifact_intent in {"evidence", "discovery"}
-    ):
-        stderr_data = b""
-        try:
-            with scoped_runtime_env(runtime_dirs):
-                with capture_stderr(preserve_tty=True) as stderr_capture:
-                    capture, projection = _captured_execution(surface, cleaned, options)
-                    stderr_data = stderr_capture.getvalue()
-        except NotImplementedError:
-            capture = None
-            projection = None
-        except SystemExit as exc:
-            return system_exit_status(exc)
-        except (ContentError, RuntimeError) as exc:
-            return die(str(exc), code=1)
-        if capture is not None and projection is not None:
-            try:
-                result = _materialize_invocation(
-                    resolved,
-                    capture.data,
-                    options=options,
-                    capture=capture,
-                    dirs=runtime_dirs,
-                )
-            except ContentError as exc:
-                return die(str(exc), code=1)
-            emit_success(
-                projection.data,
-                stderr_data=stderr_data,
-                result=result,
-                dirs=runtime_dirs,
-            )
-            return int(capture.exit_status)
-
-    with scoped_runtime_env(runtime_dirs):
-        with (
-            capture_stdout(preserve_tty=True) as stdout_capture,
-            capture_stderr(preserve_tty=True) as stderr_capture,
-        ):
-            code = _run_callable(runner, cleaned)
-    data = stdout_capture.getvalue()
-    stderr_data = stderr_capture.getvalue()
-    if code == 0:
-        try:
-            result = _materialize_invocation(
-                resolved, data, options=options, dirs=runtime_dirs
-            )
-        except ContentError as exc:
-            return die(str(exc), code=1)
-        return emit_success(
-            data, stderr_data=stderr_data, result=result, dirs=runtime_dirs
-        )
-    replay_stdout(data)
-    _emit_captured_stderr(stderr_data)
-    return code
+    except RuntimeError as exc:
+        return die(str(exc), code=1)

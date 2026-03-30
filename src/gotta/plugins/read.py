@@ -15,6 +15,7 @@ import sys
 import tempfile
 from html import unescape
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from gotta.builtin import get_surface
@@ -26,7 +27,13 @@ from gotta.dispatch.stream import capture_stdout
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.projection import Projection, projection_bytes, projection_for_capture
 from gotta.resolve.intent import SUPPRESS_MATERIALIZATION_ENV
-from gotta.resolve.read import build_parser, parse_args, resolve_read_target
+from gotta.resolve.read import (
+    ReadRequest,
+    ReadTarget,
+    build_parser,
+    parse_args,
+    resolve_read_target,
+)
 from gotta.project import html_markdown, looks_text, pretty_json
 from gotta.stored import (
     guess_lang_from_content_type,
@@ -77,6 +84,59 @@ class ReadExecution:
     code: int
     canonical_bytes: bytes
     display_bytes: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _ReadViewState:
+    head: int
+    tail: int
+    section: str
+
+    @classmethod
+    def from_request(cls, request: ReadRequest) -> _ReadViewState:
+        return cls(
+            head=max(0, request.head),
+            tail=max(0, request.tail),
+            section=request.section,
+        )
+
+    def active(self) -> bool:
+        return self.head > 0 or self.tail > 0 or bool(self.section)
+
+    def viewed_bytes(self, data: bytes) -> bytes:
+        if not self.active():
+            return data
+        return _view_bytes(
+            data,
+            head=self.head,
+            tail=self.tail,
+            section=self.section,
+        )
+
+    def viewed_text(self, text: str) -> str:
+        if not self.active():
+            return text
+        return _apply_text_view(
+            text,
+            head=self.head,
+            tail=self.tail,
+            section=self.section,
+        )
+
+    def render_bytes(self, data: bytes, *, language: str) -> None:
+        if self.active():
+            _render_viewed_bytes(
+                data,
+                language=language,
+                head=self.head,
+                tail=self.tail,
+                section=self.section,
+            )
+            return
+        render_bytes(data, language)
+
+    def render_text(self, text: str) -> None:
+        sys.stdout.write(self.viewed_text(text))
 
 
 _REMOTE_EXTENSION_BY_TYPE = {
@@ -446,6 +506,128 @@ def stored_display(path: Path) -> tuple[bytes, str]:
     return rendered.data, rendered.language
 
 
+@dataclass(frozen=True, slots=True)
+class _ReadMainState:
+    argv: list[str]
+    request: ReadRequest
+    target: str
+    view: _ReadViewState
+
+    @classmethod
+    def from_request(
+        cls,
+        argv: list[str],
+        request: ReadRequest,
+        *,
+        target: str,
+    ) -> _ReadMainState:
+        return cls(
+            argv=list(argv),
+            request=request,
+            target=target,
+            view=_ReadViewState.from_request(request),
+        )
+
+    def execute(self) -> int:
+        if self.target == "-":
+            self._execute_stdin()
+            return 0
+        resolved = self._resolve_target()
+        return self._execute_resolved(resolved)
+
+    def _resolve_target(self) -> ReadTarget:
+        try:
+            return resolve_read_target(self.argv, self._common_options())
+        except TypeError:
+            return resolve_read_target(self.argv)
+
+    def _common_options(self) -> CommonOptions:
+        return CommonOptions(
+            session_dir=self.request.session or None,
+            actor=self.request.actor or None,
+        )
+
+    def _execute_stdin(self) -> None:
+        self.view.render_bytes(sys.stdin.buffer.read(), language="txt")
+
+    def _execute_resolved(self, resolved: ReadTarget) -> int:
+        if resolved.kind == "routed":
+            assert resolved.routed_plugin is not None
+            return _delegate_with_view(
+                resolved.routed_plugin,
+                resolved.routed_argv,
+                view=self.view,
+            )
+        if resolved.kind == "remote_url":
+            return self._execute_remote()
+        if resolved.path is not None and resolved.path.is_file():
+            display, language = stored_display(resolved.path)
+            self.view.render_bytes(display, language=language)
+            return 0
+        if resolved.path is not None and resolved.path.is_dir():
+            self.view.render_text(
+                _directory_listing_text(
+                    resolved.path,
+                    recursive=self.request.recursive,
+                    max_depth=max(0, self.request.max_depth),
+                )
+            )
+            return 0
+        if resolved.kind == "missing_local" and resolved.path is not None:
+            return die(
+                "error: local target "
+                f"'{self.target}' does not exist at `{resolved.path}` under the current "
+                "session context",
+                code=2,
+            )
+        if resolved.kind == "missing_session_relative":
+            return die(
+                f"error: relative local target '{self.target}' requires an active or explicit "
+                "session root; bind one with `gotta ...`, pass `--session <absolute-root>`, or "
+                "use an absolute path directly"
+            )
+        return die(
+            f"error: unsupported target '{self.target}'. no native local or routed provider path "
+            "was found; record the limitation instead of working around it if this should have "
+            "been followable through gotta"
+        )
+
+    def _execute_remote(self) -> int:
+        try:
+            data, content_type, truncated = fetch_url(self.target)
+        except RuntimeError as exc:
+            return die(str(exc), code=1)
+        if truncated:
+            _emit_truncation_note()
+        projection = _display_projection(
+            Capture(
+                data=data,
+                content_type=content_type or "application/octet-stream",
+            )
+        )
+        self.view.render_bytes(
+            projection.data,
+            language=self._remote_language(content_type, projection, data),
+        )
+        return 0
+
+    def _remote_language(
+        self,
+        content_type: str,
+        projection: Projection,
+        data: bytes,
+    ) -> str:
+        language = guess_lang_from_content_type(content_type) or guess_lang_from_path(
+            self.target.split("?", 1)[0]
+        )
+        if (
+            _remote_content_type(content_type) == "text/html"
+            and projection.data != data
+        ):
+            return "markdown"
+        return language or "txt"
+
+
 def capture(argv: list[str], options: object) -> Capture:
     request = parse_args(argv)
     target = request.target
@@ -481,6 +663,7 @@ def capture(argv: list[str], options: object) -> Capture:
 
 def project(argv: list[str], capture: Capture) -> Projection:
     request = parse_args(argv)
+    view = _ReadViewState.from_request(request)
     try:
         resolved = resolve_read_target(
             argv,
@@ -500,14 +683,9 @@ def project(argv: list[str], capture: Capture) -> Projection:
             projected = projection_for_capture(capture, capture.data)
     else:
         projected = _project_canonical(capture)
-    if request.head > 0 or request.tail > 0 or request.section:
+    if view.active():
         return projection_bytes(
-            _view_bytes(
-                projected.data,
-                head=max(0, request.head),
-                tail=max(0, request.tail),
-                section=request.section,
-            ),
+            view.viewed_bytes(projected.data),
             content_type=projected.content_type,
         )
     return projected
@@ -533,9 +711,7 @@ def _delegate_with_view(
     plugin: str,
     argv: list[str],
     *,
-    head: int,
-    tail: int,
-    section: str,
+    view: _ReadViewState,
 ) -> int:
     with capture_stdout() as capture:
         code = delegate(plugin, argv)
@@ -543,12 +719,7 @@ def _delegate_with_view(
     if code != 0:
         sys.stdout.buffer.write(data)
         return code
-    if head > 0 or tail > 0 or section:
-        _render_viewed_bytes(
-            data, language="markdown", head=head, tail=tail, section=section
-        )
-        return code
-    sys.stdout.buffer.write(data)
+    view.render_bytes(data, language="markdown")
     return code
 
 
@@ -574,12 +745,6 @@ def _directory_entries(
     return entries
 
 
-def render_directory(path: Path, *, recursive: bool, max_depth: int) -> None:
-    sys.stdout.write(
-        _directory_listing_text(path, recursive=recursive, max_depth=max_depth)
-    )
-
-
 def main(argv: list[str]) -> int:
     if is_long_help_request(argv):
         return print_long_help(build_parser())
@@ -593,123 +758,7 @@ def main(argv: list[str]) -> int:
         if sys.stdin.isatty():
             return print_usage()
         target = "-"
-
-    if target == "-":
-        data = sys.stdin.buffer.read()
-        if request.head > 0 or request.tail > 0 or request.section:
-            _render_viewed_bytes(
-                data,
-                language="txt",
-                head=request.head,
-                tail=request.tail,
-                section=request.section,
-            )
-            return 0
-        render_bytes(data, "txt")
-        return 0
-
-    try:
-        resolved = resolve_read_target(
-            argv,
-            CommonOptions(
-                session_dir=request.session or None,
-                actor=request.actor or None,
-            ),
-        )
-    except TypeError:
-        resolved = resolve_read_target(argv)
-    if resolved.kind == "routed":
-        assert resolved.routed_plugin is not None
-        return _delegate_with_view(
-            resolved.routed_plugin,
-            resolved.routed_argv,
-            head=max(0, request.head),
-            tail=max(0, request.tail),
-            section=request.section,
-        )
-    if resolved.kind == "remote_url":
-        try:
-            data, content_type, truncated = fetch_url(target)
-        except RuntimeError as exc:
-            return die(str(exc), code=1)
-        if truncated:
-            _emit_truncation_note()
-        projection = _display_projection(
-            Capture(
-                data=data,
-                content_type=content_type or "application/octet-stream",
-            )
-        )
-        language = guess_lang_from_content_type(content_type) or guess_lang_from_path(
-            target.split("?", 1)[0]
-        )
-        if (
-            _remote_content_type(content_type) == "text/html"
-            and projection.data != data
-        ):
-            language = "markdown"
-        if request.head > 0 or request.tail > 0 or request.section:
-            _render_viewed_bytes(
-                projection.data,
-                language=language or "txt",
-                head=max(0, request.head),
-                tail=max(0, request.tail),
-                section=request.section,
-            )
-            return 0
-        render_bytes(projection.data, language or "txt")
-        return 0
-
-    path = resolved.path
-    if path is not None and path.is_file():
-        display, language = stored_display(path)
-        if request.head > 0 or request.tail > 0 or request.section:
-            _render_viewed_bytes(
-                display,
-                language=language,
-                head=max(0, request.head),
-                tail=max(0, request.tail),
-                section=request.section,
-            )
-            return 0
-        render_bytes(display, language)
-        return 0
-    if path is not None and path.is_dir():
-        if request.head > 0 or request.tail > 0 or request.section:
-            sys.stdout.write(
-                _apply_text_view(
-                    _directory_listing_text(
-                        path,
-                        recursive=request.recursive,
-                        max_depth=max(0, request.max_depth),
-                    ),
-                    head=max(0, request.head),
-                    tail=max(0, request.tail),
-                    section=request.section,
-                )
-            )
-            return 0
-        render_directory(
-            path, recursive=request.recursive, max_depth=max(0, request.max_depth)
-        )
-        return 0
-    if resolved.kind == "missing_local" and path is not None:
-        detail = (
-            f"error: local target '{target}' does not exist at `{path}` under the current "
-            "session context"
-        )
-        return die(detail, code=2)
-    if resolved.kind == "missing_session_relative":
-        return die(
-            f"error: relative local target '{target}' requires an active or explicit session root; "
-            "bind one with `gotta ...`, pass `--session <absolute-root>`, or use an "
-            "absolute path directly"
-        )
-    return die(
-        f"error: unsupported target '{target}'. no native local or routed provider path was found; "
-        "record the limitation instead of working around it if this should have been followable "
-        "through gotta"
-    )
+    return _ReadMainState.from_request(argv, request, target=target).execute()
 
 
 if __name__ == "__main__":
