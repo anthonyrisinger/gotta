@@ -774,6 +774,40 @@ This file is the execution queue.
   - `src/gotta/plugins/session/analyze/focus.py:select_lineage_focus`
   - `src/gotta/plugins/session/analyze/lineage.py:lineage_payload`
   - then provider-local kernels like GitHub search and Jira field coercion
+- [x] Analyze lineage-builder tranche landed.
+  - `src/gotta/plugins/session/analyze/lineage.py` now centers typed local
+    build records instead of mutating anonymous dict soup across the whole
+    builder path:
+    - `_RevisionTrackEvent`
+    - `_SourceState`
+    - `_ContentDetailState`
+    - `_LineageBuildState`
+  - Revision edges now track typed revision events instead of abusing
+    `LineageRevisionEdge` as temporary working state.
+  - The lineage seam now converts cross-package lead records explicitly into:
+    - `LeadSourceSummary`
+    - `LeadEdgeSummary`
+    instead of leaking the shared lead payload types through the analyze
+    boundary.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/analyze/lineage.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'analyze or lineage'`
+    - `22 passed`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/analyze/lineage.py` dropped off the type board
+    - `lineage_payload(...)` dropped off the hotspot board
+    - remaining analyze pressure is now centered in:
+      - `src/gotta/plugins/session/analyze/focus.py:select_lineage_focus`
+      - `src/gotta/plugins/session/analyze/overview.py:analysis_overview_payload`
+      - `src/gotta/plugins/session/analyze/semantic.py`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it replaced one overloaded analyze builder with a
+  truthful typed owner and deleted the last obvious local dict-soup state in
+  that seam. More lineage-builder cleanup of this exact species would likely be
+  churn. The next honest move is the still-hot analyze focus/overview pressure,
+  starting with `select_lineage_focus(...)`, before shifting fully into
+  provider-local kernels.
 
 ## Current Tranche
 
@@ -829,10 +863,12 @@ This file is the execution queue.
   owner.
 - [x] Collapse the `session analyze` render seam onto one render-access layer
   and remove its direct optional-payload spelunking.
+- [x] Collapse the `session analyze` lineage seam onto typed local build
+  records and explicit analyze-owned lead summaries.
 - [ ] Next tranche: reduce the still-hot analyze kernels first, starting with
-  `select_lineage_focus(...)` and `lineage_payload(...)`, then reassess whether
-  the remaining honest work is still shared algorithmic pressure or fully
-  provider-local pressure.
+  `select_lineage_focus(...)`, then reassess between
+  `analysis_overview_payload(...)`, `semantic.py`, and the first honest
+  provider-local kernels.
 
 ## Non-Negotiable Invariants
 

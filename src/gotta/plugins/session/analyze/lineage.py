@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from gotta.content.backend import scan_content_snapshots
 from gotta.content.model import ContentSnapshot
 from gotta.content.path import content_locator
 from gotta.lead.aggregate import aggregate_lead_sources
 from gotta.lead.edge import build_lead_edges
+from gotta.lead.model import LeadEdge as MaterializedLeadEdge
+from gotta.lead.model import LeadSourceSummary as MaterializedLeadSourceSummary
 from gotta.lead.snapshot import (
     snapshot_artifact_locator,
     snapshot_display_name,
@@ -33,17 +38,300 @@ from ..manifest.record import manifest_entries
 from .focus import select_lineage_focus
 from .model import (
     AnalyzeScanPayload,
+    AnalyzeVisibility,
+    LeadEdgeSummary,
     LineageContent,
     LineageFocusPayload,
     LineagePayload,
     LineageRevisionEdge,
+    LeadSourceSummary,
     LineageSource,
     LineageSourceEdge,
 )
 
+_VISIBILITY_LEVEL_KEY = "visibility_level"
+_VISIBILITY_BOUNDARY_KEY = "visibility_boundary"
+_VISIBILITY_CONFIDENCE_KEY = "visibility_confidence"
+_VISIBILITY_BASIS_KEY = "visibility_basis"
+
+
+@dataclass(frozen=True, slots=True)
+class _RevisionTrackEvent:
+    timestamp: str
+    digest: str
+    preferred_name: str
+    plugin: str
+    actor: str
+    rendering: str
+
+
+@dataclass(slots=True)
+class _SourceState:
+    content: set[str] = field(default_factory=set)
+    locators: set[str] = field(default_factory=set)
+    plugins: set[str] = field(default_factory=set)
+    actors: set[str] = field(default_factory=set)
+    artifact_kinds: set[str] = field(default_factory=set)
+    entries: int = 0
+    variants: set[tuple[str, str]] = field(default_factory=set)
+    visibility: dict[str, object] = field(default_factory=dict)
+
+    def record(
+        self,
+        *,
+        checksum: str,
+        locator: str,
+        plugin: str,
+        actor: str,
+        source_artifact_kind: str,
+        variant: tuple[str, str] | None,
+        visibility: Mapping[str, object],
+    ) -> None:
+        self.content.add(checksum)
+        self.locators.add(locator)
+        self.plugins.add(plugin)
+        self.actors.add(actor)
+        if source_artifact_kind:
+            self.artifact_kinds.add(source_artifact_kind)
+        self.entries += 1
+        self.visibility = dict(best_visibility_metadata(self.visibility, visibility))
+        if variant is not None:
+            self.variants.add(variant)
+
+    def render(self, locator: str) -> LineageSource:
+        rendered: LineageSource = {
+            "locator": locator,
+            "contentCount": len(self.content),
+            "entryCount": self.entries,
+            "artifactKind": (
+                sorted(self.artifact_kinds)[0] if len(self.artifact_kinds) == 1 else ""
+            ),
+            "artifactKinds": sorted(self.artifact_kinds),
+            "plugins": sorted(self.plugins),
+            "actors": sorted(self.actors),
+            "locators": sorted(self.locators),
+            "collision": False,
+            "duplicateMaterialization": len(self.content) > 1
+            and len(self.variants) <= 1,
+            "variant": len(self.variants) > 1,
+            "variantCount": len(self.variants),
+            "variants": [
+                render_variant_label(variant) for variant in sorted(self.variants)
+            ],
+        }
+        _apply_visibility(rendered, _visibility_metadata(self.visibility))
+        return rendered
+
+
+@dataclass(slots=True)
+class _ContentDetailState:
+    providers: set[str] = field(default_factory=set)
+    actors: set[str] = field(default_factory=set)
+    resource_hints: set[str] = field(default_factory=set)
+
+    def record(self, *, source: str, plugin: str, actor: str) -> None:
+        self.providers.add(provider_name(source, plugins=[plugin], fallback=plugin))
+        self.actors.add(actor)
+        source_kind, source_label = resource_label(source)
+        if source_kind and source_label:
+            self.resource_hints.add(f"{source_kind}:{source_label}")
+            return
+        self.resource_hints.add(source)
+
+
+@dataclass(slots=True)
+class _LineageBuildState:
+    session_dir: Path
+    source_states: dict[str, _SourceState] = field(default_factory=dict)
+    edge_plugins: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    edge_actors: dict[tuple[str, str], set[str]] = field(default_factory=dict)
+    content_details: dict[str, _ContentDetailState] = field(default_factory=dict)
+
+    def record_manifest_entry(
+        self,
+        entry: Mapping[str, object],
+        *,
+        snapshot_by_digest: Mapping[str, ContentSnapshot],
+    ) -> None:
+        source = str(
+            entry.get("canonical_locator") or entry.get("locator") or "unknown"
+        )
+        checksum = str(entry.get("checksum") or "")
+        if not checksum:
+            return
+        locator = str(entry.get("locator") or source)
+        plugin = str(entry.get("plugin") or "unknown")
+        actor = rendered_actor(entry.get("actor"), session_root=self.session_dir)
+        source_artifact_kind = artifact_kind(entry.get("artifact_kind"))
+        visibility = resolved_visibility_metadata(
+            entry,
+            provider=plugin,
+            plugin=plugin,
+            subcommand=str(entry.get("subcommand") or ""),
+            locator=source,
+        )
+        snapshot = snapshot_by_digest.get(checksum)
+        variant = render_variant(snapshot) if snapshot is not None else None
+        self.source_states.setdefault(source, _SourceState()).record(
+            checksum=checksum,
+            locator=locator,
+            plugin=plugin,
+            actor=actor,
+            source_artifact_kind=source_artifact_kind,
+            variant=variant,
+            visibility=visibility,
+        )
+        self.edge_plugins.setdefault((source, checksum), []).append(plugin)
+        self.edge_actors.setdefault((source, checksum), set()).add(actor)
+        self.content_details.setdefault(checksum, _ContentDetailState()).record(
+            source=source,
+            plugin=plugin,
+            actor=actor,
+        )
+
+    def detail_for(self, checksum: str) -> _ContentDetailState | None:
+        return self.content_details.get(checksum)
+
+    def render_sources(self) -> list[LineageSource]:
+        return [
+            state.render(locator)
+            for locator, state in sorted(self.source_states.items())
+        ]
+
+    def render_source_edges(self) -> list[LineageSourceEdge]:
+        return [
+            {
+                "source": source,
+                "checksum": checksum,
+                "plugins": sorted(plugins),
+                "actors": sorted(self.edge_actors.get((source, checksum), set())),
+                "count": len(plugins),
+            }
+            for (source, checksum), plugins in sorted(self.edge_plugins.items())
+        ]
+
+
+def _visibility_metadata(*candidates: Mapping[str, object]) -> AnalyzeVisibility:
+    metadata = best_visibility_metadata(*candidates)
+    rendered: AnalyzeVisibility = {}
+    level = metadata.get(_VISIBILITY_LEVEL_KEY)
+    if isinstance(level, str) and level:
+        rendered[_VISIBILITY_LEVEL_KEY] = level
+    boundary = metadata.get(_VISIBILITY_BOUNDARY_KEY)
+    if isinstance(boundary, str) and boundary:
+        rendered[_VISIBILITY_BOUNDARY_KEY] = boundary
+    confidence = metadata.get(_VISIBILITY_CONFIDENCE_KEY)
+    if isinstance(confidence, str) and confidence:
+        rendered[_VISIBILITY_CONFIDENCE_KEY] = confidence
+    basis = metadata.get(_VISIBILITY_BASIS_KEY)
+    if isinstance(basis, list):
+        rendered[_VISIBILITY_BASIS_KEY] = [str(value) for value in basis if str(value)]
+    return rendered
+
+
+def _apply_visibility(
+    target: LineageSource | LineageContent | LeadSourceSummary | LeadEdgeSummary,
+    visibility: AnalyzeVisibility,
+) -> None:
+    level = visibility.get(_VISIBILITY_LEVEL_KEY)
+    if level:
+        target[_VISIBILITY_LEVEL_KEY] = level
+    boundary = visibility.get(_VISIBILITY_BOUNDARY_KEY)
+    if boundary:
+        target[_VISIBILITY_BOUNDARY_KEY] = boundary
+    confidence = visibility.get(_VISIBILITY_CONFIDENCE_KEY)
+    if confidence:
+        target[_VISIBILITY_CONFIDENCE_KEY] = confidence
+    basis = visibility.get(_VISIBILITY_BASIS_KEY)
+    if basis:
+        target[_VISIBILITY_BASIS_KEY] = basis
+
+
+def _lineage_content_item(
+    snapshot: ContentSnapshot,
+    *,
+    detail: _ContentDetailState | None,
+    name_counts: Counter[str],
+    session_ref: str,
+) -> LineageContent:
+    metadata = snapshot.artifact.metadata
+    rendered: LineageContent = {
+        "checksum": snapshot.digest,
+        "preferredName": snapshot_display_name(snapshot),
+        "artifactKind": artifact_kind(metadata.get("artifact_kind")),
+        "contentLocator": content_locator(snapshot.digest),
+        "artifactLocator": snapshot_artifact_locator(snapshot),
+        "followCommand": session_read_command(
+            snapshot_artifact_locator(snapshot),
+            session_ref=session_ref,
+        ),
+        "nameCollision": name_counts[snapshot_display_name(snapshot)] > 1,
+        "nameCount": len(snapshot.aliases),
+        "fetchCount": len(snapshot.events),
+        "names": [alias.name for alias in snapshot.aliases],
+        "firstFetchedAt": snapshot.events[0].timestamp if snapshot.events else "",
+        "lastFetchedAt": snapshot.events[-1].timestamp if snapshot.events else "",
+        "providers": sorted(detail.providers) if detail is not None else [],
+        "actors": sorted(detail.actors) if detail is not None else [],
+        "resourceHints": sorted(detail.resource_hints) if detail is not None else [],
+    }
+    _apply_visibility(
+        rendered,
+        _visibility_metadata(
+            resolved_visibility_metadata(
+                dict(metadata),
+                provider=str(metadata.get("plugin") or ""),
+                plugin=str(metadata.get("plugin") or ""),
+                subcommand=str(metadata.get("subcommand") or ""),
+                locator=str(snapshot_locator(snapshot)),
+            )
+        ),
+    )
+    return rendered
+
+
+def _lead_source_summary(
+    lead: MaterializedLeadSourceSummary,
+    *,
+    session_ref: str,
+) -> LeadSourceSummary:
+    locator = str(lead.get("locator") or "").strip()
+    rendered: LeadSourceSummary = {
+        "locator": locator,
+        "provider": str(lead.get("provider") or ""),
+        "materialized": bool(lead.get("materialized")),
+        "occurrenceCount": int(lead.get("occurrenceCount") or 0),
+        "artifactCount": int(lead.get("artifactCount") or 0),
+        "artifactKind": str(lead.get("kind") or ""),
+        "relationKinds": [str(value) for value in lead.get("relationKinds") or []],
+        "followCommand": (
+            follow_command(locator, session_ref=session_ref)
+            if locator
+            else str(lead.get("followCommand") or "")
+        ),
+    }
+    _apply_visibility(rendered, _visibility_metadata(lead))
+    return rendered
+
+
+def _lead_edge_summary(edge: MaterializedLeadEdge) -> LeadEdgeSummary:
+    rendered: LeadEdgeSummary = {
+        "sourceChecksum": str(edge.get("sourceChecksum") or ""),
+        "targetLocator": str(edge.get("targetLocator") or ""),
+        "relation": str(edge.get("relation") or ""),
+        "occurrenceCount": int(edge.get("occurrenceCount") or 0),
+        "materialized": bool(edge.get("materialized")),
+    }
+    _apply_visibility(rendered, _visibility_metadata(edge))
+    return rendered
+
+
+def _payload_text(payload: LineagePayload, key: str) -> str:
+    return str(payload.get(key) or "")
+
 
 def _revision_edges(snapshots: list[ContentSnapshot]) -> list[LineageRevisionEdge]:
-    tracks: dict[tuple[str, tuple[str, str]], list[LineageRevisionEdge]] = {}
+    tracks: dict[tuple[str, tuple[str, str]], list[_RevisionTrackEvent]] = {}
     for snapshot in snapshots:
         metadata = snapshot.artifact.metadata
         canonical = str(
@@ -54,44 +342,43 @@ def _revision_edges(snapshots: list[ContentSnapshot]) -> list[LineageRevisionEdg
         variant = render_variant(snapshot)
         for event in snapshot.events:
             tracks.setdefault((canonical, variant), []).append(
-                {
-                    "timestamp": event.timestamp,
-                    "digest": snapshot.digest,
-                    "preferred_name": str(
+                _RevisionTrackEvent(
+                    timestamp=event.timestamp,
+                    digest=snapshot.digest,
+                    preferred_name=str(
                         metadata.get("preferred_name", "") or event.alias_name
                     ),
-                    "plugin": str(metadata.get("plugin", "") or "unknown"),
-                    "actor": rendered_actor(
+                    plugin=str(metadata.get("plugin", "") or "unknown"),
+                    actor=rendered_actor(
                         metadata.get("actor"),
                         session_root=snapshot.layout.artifact_dir.parent.parent,
                     ),
-                    "rendering": render_variant_label(variant),
-                }
+                    rendering=render_variant_label(variant),
+                )
             )
     edges: list[LineageRevisionEdge] = []
     for (locator, _variant), items in sorted(tracks.items()):
-        prior_item: LineageRevisionEdge | None = None
+        prior_item: _RevisionTrackEvent | None = None
         for item in sorted(
-            items, key=lambda current: (current["timestamp"], current["digest"])
+            items, key=lambda current: (current.timestamp, current.digest)
         ):
             if prior_item is None:
                 prior_item = item
                 continue
-            if item["digest"] == prior_item["digest"]:
+            if item.digest == prior_item.digest:
                 prior_item = item
                 continue
             edges.append(
                 {
                     "locator": locator,
-                    "preferredName": item["preferred_name"]
-                    or prior_item["preferred_name"],
-                    "from": prior_item["digest"],
-                    "to": item["digest"],
-                    "fromTimestamp": prior_item["timestamp"],
-                    "toTimestamp": item["timestamp"],
-                    "plugin": item["plugin"] or prior_item["plugin"],
-                    "actor": item["actor"] or prior_item["actor"],
-                    "rendering": item["rendering"] or prior_item["rendering"],
+                    "preferredName": item.preferred_name or prior_item.preferred_name,
+                    "from": prior_item.digest,
+                    "to": item.digest,
+                    "fromTimestamp": prior_item.timestamp,
+                    "toTimestamp": item.timestamp,
+                    "plugin": item.plugin or prior_item.plugin,
+                    "actor": item.actor or prior_item.actor,
+                    "rendering": item.rendering or prior_item.rendering,
                 }
             )
             prior_item = item
@@ -105,187 +392,60 @@ def lineage_payload(dirs, *, session_ref: str = "") -> LineagePayload:
     )
     snapshot_by_digest = {snapshot.digest: snapshot for snapshot in snapshots}
     entries = [dict(entry) for entry in manifest_entries(dirs)]
-    source_map: dict[str, dict[str, object]] = {}
-    edge_plugins: dict[tuple[str, str], list[str]] = {}
-    edge_actors: dict[tuple[str, str], set[str]] = {}
-    content_details: dict[str, dict[str, set[str]]] = {}
-
+    build_state = _LineageBuildState(session_dir=dirs.session_dir)
     for entry in entries:
-        source = str(
-            entry.get("canonical_locator") or entry.get("locator") or "unknown"
-        )
-        checksum = str(entry.get("checksum") or "")
-        if not checksum:
-            continue
-        source_state = source_map.setdefault(
-            source,
-            {
-                "content": set(),
-                "locators": set(),
-                "plugins": set(),
-                "actors": set(),
-                "artifact_kinds": set(),
-                "entries": 0,
-                "variants": set(),
-                "visibility": {},
-            },
-        )
-        source_state["content"].add(checksum)
-        locator = str(entry.get("locator") or source)
-        source_state["locators"].add(locator)
-        plugin = str(entry.get("plugin") or "unknown")
-        actor = rendered_actor(entry.get("actor"), session_root=dirs.session_dir)
-        source_state["plugins"].add(plugin)
-        source_state["actors"].add(actor)
-        kind = artifact_kind(entry.get("artifact_kind"))
-        if kind:
-            source_state["artifact_kinds"].add(kind)
-        source_state["entries"] = int(source_state["entries"]) + 1
-        source_state["visibility"] = best_visibility_metadata(
-            source_state.get("visibility", {}),
-            resolved_visibility_metadata(
-                entry,
-                provider=str(plugin),
-                plugin=str(plugin),
-                subcommand=str(entry.get("subcommand") or ""),
-                locator=str(source),
-            ),
-        )
-        snapshot = snapshot_by_digest.get(str(checksum))
-        if snapshot is not None:
-            source_state["variants"].add(render_variant(snapshot))
-        edge_plugins.setdefault((source, checksum), []).append(plugin)
-        edge_actors.setdefault((source, checksum), set()).add(actor)
-        detail = content_details.setdefault(
-            checksum,
-            {
-                "providers": set(),
-                "actors": set(),
-                "resource_hints": set(),
-            },
-        )
-        detail["providers"].add(
-            provider_name(source, plugins=[plugin], fallback=plugin)
-        )
-        detail["actors"].add(actor)
-        source_kind, source_label = resource_label(source)
-        if source_kind and source_label:
-            detail["resource_hints"].add(f"{source_kind}:{source_label}")
-        else:
-            detail["resource_hints"].add(source)
+        build_state.record_manifest_entry(entry, snapshot_by_digest=snapshot_by_digest)
 
     name_counts = Counter(snapshot_display_name(snapshot) for snapshot in snapshots)
-
-    content: list[LineageContent] = []
-    for snapshot in snapshots:
-        metadata = snapshot.artifact.metadata
-        content.append(
-            {
-                "checksum": snapshot.digest,
-                "preferredName": snapshot_display_name(snapshot),
-                "artifactKind": artifact_kind(metadata.get("artifact_kind")),
-                "contentLocator": content_locator(snapshot.digest),
-                "artifactLocator": snapshot_artifact_locator(snapshot),
-                "followCommand": session_read_command(
-                    snapshot_artifact_locator(snapshot),
-                    session_ref=session_ref,
-                ),
-                "nameCollision": name_counts[snapshot_display_name(snapshot)] > 1,
-                "nameCount": len(snapshot.aliases),
-                "fetchCount": len(snapshot.events),
-                "names": [alias.name for alias in snapshot.aliases],
-                "firstFetchedAt": snapshot.events[0].timestamp
-                if snapshot.events
-                else "",
-                "lastFetchedAt": snapshot.events[-1].timestamp
-                if snapshot.events
-                else "",
-                "providers": sorted(
-                    content_details.get(snapshot.digest, {}).get("providers", set())
-                ),
-                "actors": sorted(
-                    content_details.get(snapshot.digest, {}).get("actors", set())
-                ),
-                "resourceHints": sorted(
-                    content_details.get(snapshot.digest, {}).get(
-                        "resource_hints", set()
-                    )
-                ),
-                **resolved_visibility_metadata(
-                    dict(metadata),
-                    provider=str(metadata.get("plugin") or ""),
-                    plugin=str(metadata.get("plugin") or ""),
-                    subcommand=str(metadata.get("subcommand") or ""),
-                    locator=str(snapshot_locator(snapshot)),
-                ),
-            }
+    content = [
+        _lineage_content_item(
+            snapshot,
+            detail=build_state.detail_for(snapshot.digest),
+            name_counts=name_counts,
+            session_ref=session_ref,
         )
-    sources: list[LineageSource] = [
-        {
-            "locator": locator,
-            "contentCount": len(state["content"]),
-            "entryCount": int(state["entries"]),
-            "artifactKind": (
-                next(iter(state["artifact_kinds"]))
-                if len(state["artifact_kinds"]) == 1
-                else ""
-            ),
-            "artifactKinds": sorted(str(value) for value in state["artifact_kinds"]),
-            "plugins": sorted(str(value) for value in state["plugins"]),
-            "actors": sorted(str(value) for value in state["actors"]),
-            "locators": sorted(str(value) for value in state["locators"]),
-            "collision": False,
-            "duplicateMaterialization": len(state["content"]) > 1
-            and len(state["variants"]) <= 1,
-            "variant": len(state["variants"]) > 1,
-            "variantCount": len(state["variants"]),
-            "variants": [
-                render_variant_label(variant) for variant in sorted(state["variants"])
-            ],
-            **best_visibility_metadata(state.get("visibility", {})),
-        }
-        for locator, state in sorted(source_map.items())
+        for snapshot in snapshots
     ]
-    source_edges: list[LineageSourceEdge] = [
-        {
-            "source": source,
-            "checksum": checksum,
-            "plugins": sorted(plugins),
-            "actors": sorted(edge_actors.get((source, checksum), set())),
-            "count": len(plugins),
-        }
-        for (source, checksum), plugins in sorted(edge_plugins.items())
-    ]
+    sources = build_state.render_sources()
+    source_edges = build_state.render_source_edges()
     revision_edges = _revision_edges(snapshots)
     lead_edges = build_lead_edges(
         snapshots,
         entries,
         classify_kind=lead_kind,
     )
-    lead_sources = aggregate_lead_sources(lead_edges)
-    for lead in lead_sources:
-        locator = str(lead.get("locator") or "").strip()
-        if locator:
-            lead["followCommand"] = follow_command(locator, session_ref=session_ref)
-    collisions = [source["locator"] for source in sources if source["collision"]]
-    duplicate_materializations = [
-        source["locator"]
-        for source in sources
-        if source.get("duplicateMaterialization")
+    lead_sources = [
+        _lead_source_summary(lead, session_ref=session_ref)
+        for lead in aggregate_lead_sources(lead_edges)
     ]
-    variants = [source["locator"] for source in sources if source.get("variant")]
+    rendered_lead_edges = [_lead_edge_summary(edge) for edge in lead_edges]
+    collisions = [
+        str(source.get("locator") or "")
+        for source in sources
+        if bool(source.get("collision"))
+    ]
+    duplicate_materializations = [
+        str(source.get("locator") or "")
+        for source in sources
+        if bool(source.get("duplicateMaterialization"))
+    ]
+    variants = [
+        str(source.get("locator") or "")
+        for source in sources
+        if bool(source.get("variant"))
+    ]
     name_collisions = sorted(
         name for name, count in name_counts.items() if count > 1 and name
     )
     materialized_lead_count = sum(
-        1 for source in lead_sources if bool(source["materialized"])
+        1 for source in lead_sources if bool(source.get("materialized"))
     )
     empty = (
         not sources
         and not content
         and not source_edges
         and not revision_edges
-        and not lead_edges
+        and not rendered_lead_edges
     )
     discovery_count = sum(
         1 for item in content if item.get("artifactKind") == "discovery"
@@ -326,7 +486,7 @@ def lineage_payload(dirs, *, session_ref: str = "") -> LineagePayload:
         "sourceEdges": source_edges,
         "revisionEdges": revision_edges,
         "leadSources": lead_sources,
-        "leadEdges": lead_edges,
+        "leadEdges": rendered_lead_edges,
     }
 
 
@@ -337,8 +497,8 @@ def _empty_lineage_focus_payload(
     next_step: str,
 ) -> LineageFocusPayload:
     return {
-        "sessionDir": payload["sessionDir"],
-        "contentDir": payload["contentDir"],
+        "sessionDir": _payload_text(payload, "sessionDir"),
+        "contentDir": _payload_text(payload, "contentDir"),
         "focus": query,
         "matched": False,
         "empty": True,
@@ -389,9 +549,9 @@ def lineage_focus_payload(
             next_step=no_match_step,
         )
     return {
-        "sessionDir": payload["sessionDir"],
-        "contentDir": payload["contentDir"],
-        "manifestPath": payload["manifestPath"],
+        "sessionDir": _payload_text(payload, "sessionDir"),
+        "contentDir": _payload_text(payload, "contentDir"),
+        "manifestPath": _payload_text(payload, "manifestPath"),
         "focus": query,
         "matched": True,
         "empty": False,
