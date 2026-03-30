@@ -183,6 +183,15 @@ def test_has_boundary_underscore_shape_rejects_interior_underscores() -> None:
     assert driver.has_boundary_underscore_shape("bad__name") is False
 
 
+def test_path_shape_errors_ignore_python_residue(tmp_path: Path) -> None:
+    driver = _load_driver()
+    cache_dir = tmp_path / "src" / "gotta" / "__pycache__"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "actor.cpython-310.pyc").write_bytes(b"x")
+
+    assert driver.path_shape_errors(tmp_path) == ()
+
+
 def test_residue_paths_find_python_cache_residue(tmp_path: Path) -> None:
     driver = _load_driver()
     (tmp_path / "src" / "pkg" / "__pycache__").mkdir(parents=True)

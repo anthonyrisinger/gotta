@@ -201,6 +201,14 @@ def has_boundary_underscore_shape(name: str) -> bool:
     return bool(BOUNDARY_UNDERSCORE_RE.fullmatch(name))
 
 
+def is_residue_path(path: Path) -> bool:
+    return (
+        "__pycache__" in path.parts
+        or path.suffix == ".pyc"
+        or any(part.endswith((".egg-info", ".dist-info")) for part in path.parts)
+    )
+
+
 def parse_porcelain_z(raw: bytes) -> tuple[str, ...]:
     fields = raw.decode("utf-8", errors="surrogateescape").split("\0")
     paths: list[str] = []
@@ -371,6 +379,8 @@ def path_shape_errors(repo_root: Path) -> tuple[str, ...]:
     src_root = repo_root / "src" / "gotta"
     if src_root.exists():
         for path in sorted(src_root.rglob("*")):
+            if is_residue_path(path):
+                continue
             if path.is_dir():
                 if not has_boundary_underscore_shape(path.name):
                     offenders.append(path.relative_to(repo_root).as_posix())
