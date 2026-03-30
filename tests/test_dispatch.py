@@ -123,9 +123,17 @@ def test_search_plugin_spec_exposes_unary_should_materialize_contract() -> None:
     spec = plugin_api.get_surface("search")
 
     assert spec is not None
+    assert spec.shared_actor_option is True
     assert spec.should_materialize is not None
     assert spec.should_materialize(["jira:Architecture"]) is True
     assert spec.should_materialize(["readme.md"]) is False
+
+
+def test_provider_binding_declares_shared_actor_option() -> None:
+    spec = plugin_api.get_surface("jira")
+
+    assert spec is not None
+    assert spec.shared_actor_option is True
 
 
 def test_emit_budgeted_output_truncates_interactive_text_with_footer(

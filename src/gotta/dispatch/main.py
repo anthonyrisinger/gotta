@@ -10,7 +10,12 @@ from gotta.builtin import (
     available_bindings as discovered_binding_names,
     get_binding,
 )
-from gotta.content.model import CommonOptions, ContentError, ResolvedDirs
+from gotta.content.model import (
+    CommonOptions,
+    ContentError,
+    Materialization,
+    ResolvedDirs,
+)
 from gotta.dispatch.budget import (
     emit_budgeted_output,
     requested_output_format,
@@ -126,6 +131,7 @@ def load_surface_runner(surface: str) -> Callable[[list[str]], int]:
 def run_surface(surface: str, argv: list[str]) -> int:
     quiet, argv = strip_quiet_flag(argv)
     full_output, argv = strip_full_output_flag(argv)
+    binding = surface_binding(surface)
     if surface == "session":
         options = CommonOptions()
         cleaned = argv
@@ -133,19 +139,7 @@ def run_surface(surface: str, argv: list[str]) -> int:
         try:
             options, cleaned = split_common_options(
                 argv,
-                strip_actor=surface
-                in {
-                    "read",
-                    "confluence",
-                    "gdocs",
-                    "gdrive",
-                    "github",
-                    "grafana",
-                    "granola",
-                    "gsheets",
-                    "jira",
-                    "slack",
-                },
+                strip_actor=bool(binding and binding.shared_actor_option),
             )
         except ContentError as exc:
             return die(str(exc))
@@ -167,7 +161,6 @@ def run_surface(surface: str, argv: list[str]) -> int:
     except RuntimeError as exc:
         return die(str(exc), code=1)
     access = session_access_mode(surface, cleaned)
-    binding = surface_binding(surface)
     follow_command = ""
     rerun_command = _rerun_full_output_command(surface, cleaned)
     runtime_dirs: ResolvedDirs | None = None
@@ -177,7 +170,7 @@ def run_surface(surface: str, argv: list[str]) -> int:
         stdout_data: bytes,
         *,
         stderr_data: bytes = b"",
-        result: object | None = None,
+        result: Materialization | None = None,
         dirs: ResolvedDirs | None = None,
     ) -> int:
         nonlocal follow_command
@@ -267,10 +260,12 @@ def run_surface(surface: str, argv: list[str]) -> int:
         and binding.project is not None
         and resolved.artifact_intent in {"evidence", "discovery"}
     ):
+        stderr_data = b""
         try:
             with scoped_runtime_env(runtime_dirs):
                 with capture_stderr(preserve_tty=True) as stderr_capture:
                     capture, projection = _captured_execution(surface, cleaned, options)
+                    stderr_data = stderr_capture.getvalue()
         except NotImplementedError:
             capture = None
             projection = None
@@ -291,7 +286,7 @@ def run_surface(surface: str, argv: list[str]) -> int:
                 return die(str(exc), code=1)
             return emit_success(
                 projection.data,
-                stderr_data=stderr_capture.getvalue(),
+                stderr_data=stderr_data,
                 result=result,
                 dirs=runtime_dirs,
             )

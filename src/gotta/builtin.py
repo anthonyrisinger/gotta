@@ -75,6 +75,7 @@ class SurfaceSpec:
     runner: Runner
     route_target: RouteTarget | None = None
     route_priority: int = 100
+    shared_actor_option: bool = False
     should_materialize: ShouldMaterialize | None = None
     artifact_intent: ArtifactIntentHook | None = None
     session_access: SessionAccessMode | ResolveSessionAccess | None = None
@@ -112,6 +113,10 @@ class SurfaceBinding:
     @property
     def route_priority(self) -> int:
         return self.surface.route_priority
+
+    @property
+    def shared_actor_option(self) -> bool:
+        return self.surface.shared_actor_option
 
     @property
     def should_materialize(self) -> ShouldMaterialize | None:
@@ -414,6 +419,7 @@ def _core_binding(
     *,
     route_target: RouteTarget | None = None,
     route_priority: int = 100,
+    shared_actor_option: bool = False,
     should_materialize: ShouldMaterialize | None = None,
     artifact_intent: ArtifactIntentHook | None = None,
     session_access: SessionAccessMode | ResolveSessionAccess | None = None,
@@ -436,6 +442,7 @@ def _core_binding(
             runner=runner,
             route_target=route_target,
             route_priority=route_priority,
+            shared_actor_option=shared_actor_option,
             should_materialize=should_materialize,
             artifact_intent=artifact_intent,
             session_access=session_access,
@@ -458,6 +465,7 @@ def confluence_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.confluence"),
         route_target=_module_attr("gotta.plugins.confluence", "route_target"),
         route_priority=20,
+        shared_actor_option=True,
         session_access=_artifact_session_access("confluence"),
         artifact_intent=_module_attr("gotta.plugins.confluence", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.confluence", "canonical_locator"),
@@ -517,6 +525,7 @@ def read_plugin() -> SurfaceBinding:
         name="read",
         description="acquire one target through the right retrieval surface with session-aware storage",
         runner=_runner("gotta.plugins.read"),
+        shared_actor_option=True,
         should_materialize=_module_attr("gotta.resolve.read", "should_materialize"),
         session_access="ambient",
         canonical_locator=_module_attr("gotta.resolve.read", "canonical_locator"),
@@ -604,6 +613,7 @@ def gdocs_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.gdocs"),
         route_target=_module_attr("gotta.plugins.gdocs", "route_target"),
         route_priority=50,
+        shared_actor_option=True,
         session_access=_artifact_session_access("gdocs"),
         artifact_intent=_module_attr("gotta.plugins.gdocs", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.gdocs", "canonical_locator"),
@@ -639,6 +649,7 @@ def grafana_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.grafana"),
         route_target=_module_attr("gotta.plugins.grafana", "route_target"),
         route_priority=70,
+        shared_actor_option=True,
         session_access=_artifact_session_access("grafana"),
         artifact_intent=_module_attr("gotta.plugins.grafana", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.grafana", "canonical_locator"),
@@ -672,6 +683,7 @@ def granola_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.granola"),
         route_target=_module_attr("gotta.plugins.granola", "route_target"),
         route_priority=65,
+        shared_actor_option=True,
         session_access=_artifact_session_access("granola"),
         artifact_intent=_module_attr("gotta.plugins.granola", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.granola", "canonical_locator"),
@@ -707,6 +719,7 @@ def gsheets_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.gsheets"),
         route_target=_module_attr("gotta.plugins.gsheets", "route_target"),
         route_priority=55,
+        shared_actor_option=True,
         session_access=_artifact_session_access("gsheets"),
         artifact_intent=_module_attr("gotta.plugins.gsheets", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.gsheets", "canonical_locator"),
@@ -742,6 +755,7 @@ def gdrive_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.gdrive"),
         route_target=_module_attr("gotta.plugins.gdrive", "route_target"),
         route_priority=60,
+        shared_actor_option=True,
         session_access=_artifact_session_access("gdrive"),
         artifact_intent=_module_attr("gotta.plugins.gdrive", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.gdrive", "canonical_locator"),
@@ -777,6 +791,7 @@ def github_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.github.main"),
         route_target=_module_attr("gotta.plugins.github.route", "route_target"),
         route_priority=10,
+        shared_actor_option=True,
         session_access=_artifact_session_access("github"),
         artifact_intent=_module_attr("gotta.plugins.github.main", "artifact_intent"),
         canonical_locator=_module_attr(
@@ -816,6 +831,7 @@ def jira_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.jira"),
         route_target=_module_attr("gotta.plugins.jira", "route_target"),
         route_priority=30,
+        shared_actor_option=True,
         session_access=_artifact_session_access("jira"),
         artifact_intent=_module_attr("gotta.plugins.jira", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.jira", "canonical_locator"),
@@ -865,6 +881,7 @@ def slack_plugin() -> SurfaceBinding:
         runner=_runner("gotta.plugins.slack"),
         route_target=_module_attr("gotta.plugins.slack", "route_target"),
         route_priority=40,
+        shared_actor_option=True,
         session_access=_artifact_session_access("slack"),
         artifact_intent=_module_attr("gotta.plugins.slack", "artifact_intent"),
         canonical_locator=_module_attr("gotta.plugins.slack", "canonical_locator"),
@@ -898,6 +915,7 @@ def search_plugin() -> SurfaceBinding:
         name="search",
         description="route plain-text remote discovery through provider-native search surfaces",
         runner=_runner("gotta.plugins.search"),
+        shared_actor_option=True,
         should_materialize=_artifact_should_materialize("search"),
         session_access=_artifact_session_access("search"),
         canonical_locator=_module_attr("gotta.plugins.search", "canonical_locator"),

@@ -550,6 +550,32 @@ This file is the execution queue.
   be churn now; the next honest move is the remaining provider-name branch in
   `src/gotta/dispatch/main.py`, then reassess whether the core-collapse phase is
   honestly over.
+- [x] Shared actor-option dispatch tranche landed.
+  - `src/gotta/builtin.py` now models whether a surface wants shared dispatch
+    actor handling with:
+    - `SurfaceSpec.shared_actor_option`
+    - `SurfaceBinding.shared_actor_option`
+  - `src/gotta/dispatch/main.py` no longer hard-codes provider names to decide
+    whether `--actor` is stripped into shared runtime options before dispatch.
+    Dispatch now asks the installed surface binding directly.
+  - The built-in shared-runtime acquisition surfaces now declare the contract
+    explicitly:
+    - `read`
+    - `search`
+    - provider surfaces that materialize through the shared runtime path
+  - The contract is pinned directly in:
+    - `tests/test_dispatch.py`
+      - `test_search_plugin_spec_exposes_unary_should_materialize_contract(...)`
+      - `test_provider_binding_declares_shared_actor_option(...)`
+  - Targeted pyright on the touched seam is now clean:
+    - `uvx pyright src/gotta/builtin.py src/gotta/dispatch/main.py`
+    - `0 errors, 0 warnings, 0 informations`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it deleted the last obvious provider-name branch from
+  shared dispatch and replaced it with an installable contract. More shared-core
+  decoupling of this exact species would likely be churn now; the next honest
+  move is to reassess whether any real provider-knowledge seam remains in the
+  core at all before continuing the collapse.
 
 ## Current Tranche
 
@@ -589,8 +615,10 @@ This file is the execution queue.
   installed surface contracts.
 - [x] Delete provider-specific canonicalization fallback from the core and keep
   only surface-owned canonical locators plus a generic fallback.
-- [ ] Next tranche: continue provider-core decoupling in:
-  - `src/gotta/dispatch/main.py`
+- [x] Replace the provider-name dispatch actor branch with a surface-declared
+  shared actor-option contract.
+- [ ] Next tranche: reassess the remaining shared-core provider-knowledge seams
+  before crossing fully into provider-local and algorithmic pressure.
 
 ## Non-Negotiable Invariants
 
@@ -643,6 +671,8 @@ This file is the execution queue.
   installed surface contracts.
 - [x] Delete provider-specific canonicalization fallback from the core and keep
   only surface-owned canonical locators plus a generic fallback.
+- [x] Replace the provider-name dispatch actor branch with a surface-declared
+  shared actor-option contract.
 
 ## Phase 0: Freeze The Vocabulary In Code
 
@@ -889,10 +919,12 @@ This file is the execution queue.
   installed surface contracts.
 - [x] Delete provider-specific canonicalization fallback from the core and keep
   only surface-owned canonical locators plus a generic fallback.
+- [x] Replace the provider-name dispatch actor branch with a surface-declared
+  shared actor-option contract.
 - [x] Switch from shared-core contract collapse to hot-kernel reduction once
   the last authored-state seam is typed.
-- [ ] Delete the remaining provider-specific canonicalization and dispatch
-  fallbacks from the core.
+- [ ] Reassess whether any remaining provider-specific dispatch or routing
+  fallback in the shared core is still load-bearing.
 - [ ] Add explicit backend interfaces before any Memgraph/Kuzu integration.
 
 ## What Not To Do
