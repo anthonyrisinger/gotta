@@ -983,6 +983,48 @@ This file is the execution queue.
   be churn now. The first pause boundary has not been reached yet because a few
   non-provider shared hot kernels still remain. The next honest move is one of
   those shared kernels, not a forced jump into provider-only surgery.
+- [x] Actor/status progress-state tranche landed.
+  - `src/gotta/session/status/progress.py` now centers explicit progress-state
+    owners:
+    - `_ProgressEvent`
+    - `_ActorProgressState`
+  - `_actor_progress_summary(...)` no longer owns all of:
+    - note collection
+    - friction collection
+    - manifest evidence collection
+    - event ordering
+    - stale-progress classification
+    inline inside one function.
+  - `src/gotta/plugins/actor.py` now centers one truthful status-text owner:
+    - `_ActorStatusTextRenderer`
+  - `_render_status_text(...)` no longer owns all of:
+    - headline classification
+    - runtime/status detail rendering
+    - note/progress/lifecycle line rendering
+    - artifact summary rendering
+    - shutdown/pending-disposition rendering
+    inline inside one function.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/actor.py src/gotta/session/status/progress.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py tests/test_cli.py -k 'actor or status or progress or note_reads_since_update or runtime_issue or still_running or low_signal'`
+    - `89 passed`
+    - `uv run ruff check src/gotta/plugins/actor.py src/gotta/session/status/progress.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/actor.py:_render_status_text` dropped off the hotspot board
+    - `src/gotta/session/status/progress.py:_actor_progress_summary` dropped off the hotspot board
+    - the remaining shared non-provider heat is now centered in:
+      - `src/gotta/plugins/read.py:main`
+      - `src/gotta/dispatch/main.py:run_surface`
+      - `src/gotta/session/status/payload/closing.py:closing_next_step`
+    - everything above those is now mostly provider-local or extension-local
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because the actor/status cluster was still a real shared-core
+  hot-kernel seam, not just a few long functions. More cleanup of this exact
+  species would likely be churn now. The first pause boundary still has not
+  arrived, but it is close: one shared orchestration swath remains in
+  `read`/`dispatch`, plus one smaller shared status-next-step tail.
 
 ## Current Tranche
 
@@ -1046,11 +1088,10 @@ This file is the execution queue.
   and graph state owners.
 - [x] Collapse the `session analyze` overview builder onto one summary-state
   owner.
-- [ ] Next tranche: cut one of the remaining shared non-provider hot kernels
-  in `src/gotta/plugins/read.py`, `src/gotta/dispatch/main.py`,
-  `src/gotta/plugins/actor.py`, or
-  `src/gotta/session/status/progress.py`, then reassess whether the first
-  provider-local pause boundary has finally arrived.
+- [ ] Next tranche: cut the remaining shared orchestration swath in
+  `src/gotta/plugins/read.py` and `src/gotta/dispatch/main.py`, then
+  reassess whether only the small `session/status/payload/closing.py` tail
+  remains before the first provider-local pause boundary.
 
 ## Non-Negotiable Invariants
 
@@ -1302,10 +1343,11 @@ This file is the execution queue.
 - [x] Collapse `src/gotta/plugins/session/graph/payload.py` onto explicit
   build/view state owners.
 - [ ] Reduce remaining shared non-provider hot kernels in:
-  - `src/gotta/plugins/actor.py`
-  - `src/gotta/session/status/progress.py`
   - `src/gotta/plugins/read.py`
   - `src/gotta/dispatch/main.py`
+  - `src/gotta/session/status/payload/closing.py`
+- [x] Collapse the actor/status progress cluster onto explicit render/progress
+  state owners.
 - [ ] Reduce algorithmic density in the GitHub surface internals:
   - `src/gotta/plugins/github/search.py`
   - `src/gotta/plugins/github/parse.py`

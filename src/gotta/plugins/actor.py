@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -796,11 +797,67 @@ def _status_actors(
 
 
 def _render_status_text(payload: dict[str, ActorStatusPayload]) -> None:
-    for actor_name, state in payload.items():
+    rendered = _ActorStatusTextRenderer(payload).render()
+    if rendered:
+        print(rendered)
+
+
+@dataclass(slots=True)
+class _ActorStatusTextRenderer:
+    payload: Mapping[str, ActorStatusPayload]
+    lines: list[str] = field(default_factory=list)
+
+    def render(self) -> str:
+        for actor_name, state in self.payload.items():
+            self._append_actor(actor_name, state)
+        return "\n".join(self.lines)
+
+    def _append_actor(self, actor_name: str, state: ActorStatusPayload) -> None:
+        self.lines.append(self._headline(actor_name, state))
+        self._append_optional_line(
+            "runtime_issue",
+            str(state.get("runtime_issue_summary") or "").strip(),
+        )
+        if state.get("evidence_live"):
+            self.lines.append("  evidence: live")
+        if state.get("progress_stale") and state.get("progress_kind") != "none":
+            self.lines.append("  progress_stale: true")
+        self._append_timestamped_summary(
+            label="recent_note",
+            timestamp=str(state.get("last_note_at") or "").strip(),
+            summary=str(state.get("last_note_summary") or "").strip(),
+        )
+        self._append_note_reads(state)
+        self._append_timestamped_summary(
+            label="recent_progress",
+            timestamp=str(state.get("last_activity_at") or "").strip(),
+            summary=str(state.get("last_activity_summary") or "").strip(),
+        )
+        self._append_timestamped_summary(
+            label="recent_lifecycle",
+            timestamp=str(state.get("last_lifecycle_at") or "").strip(),
+            summary=str(state.get("last_lifecycle_summary") or "").strip(),
+        )
+        self._append_recent_artifacts(state)
+        if state.get("still_running"):
+            self.lines.append("  still_running: true")
+        self._append_shutdown_signal(state)
+        if state.get("requested_pending"):
+            self.lines.append(
+                "  pending_disposition: "
+                + str(state.get("requested_label") or state.get("requested_status", ""))
+            )
+        self._append_optional_line(
+            "next_step", str(state.get("next_step") or "").strip()
+        )
+
+    def _headline(self, actor_name: str, state: ActorStatusPayload) -> str:
         line = (
             f"{actor_name}: {state.get('status', 'pending')} "
-            f"(voice: {state.get('voice', 'missing')}, progress: {state.get('progress_kind', 'none')}, "
-            f"notes: {state.get('notes_status', 'empty')}, artifacts: {state.get('artifact_count', 0)})"
+            f"(voice: {state.get('voice', 'missing')}, "
+            f"progress: {state.get('progress_kind', 'none')}, "
+            f"notes: {state.get('notes_status', 'empty')}, "
+            f"artifacts: {state.get('artifact_count', 0)})"
         )
         if state.get("still_running"):
             line += " [still running]"
@@ -812,55 +869,51 @@ def _render_status_text(payload: dict[str, ActorStatusPayload]) -> None:
             and int(state.get("artifact_count") or 0) == 0
         ):
             line += " [low signal]"
-        print(line)
-        runtime_issue_summary = str(state.get("runtime_issue_summary") or "").strip()
-        if runtime_issue_summary:
-            print(f"  runtime_issue: {runtime_issue_summary}")
-        if state.get("evidence_live"):
-            print("  evidence: live")
-        if state.get("progress_stale") and state.get("progress_kind") != "none":
-            print("  progress_stale: true")
-        last_note_at = str(state.get("last_note_at") or "").strip()
-        last_note_summary = str(state.get("last_note_summary") or "").strip()
-        if last_note_at and last_note_summary:
-            print(f"  recent_note: {last_note_at} {last_note_summary}")
+        return line
+
+    def _append_optional_line(self, label: str, value: str) -> None:
+        if value:
+            self.lines.append(f"  {label}: {value}")
+
+    def _append_timestamped_summary(
+        self,
+        *,
+        label: str,
+        timestamp: str,
+        summary: str,
+    ) -> None:
+        if timestamp and summary:
+            self.lines.append(f"  {label}: {timestamp} {summary}")
+
+    def _append_note_reads(self, state: ActorStatusPayload) -> None:
         note_checks = int(state.get("note_checks_since_update") or 0)
+        if note_checks <= 0:
+            return
         last_note_check_by = str(state.get("last_note_check_by") or "").strip()
-        if note_checks > 0:
-            suffix = f" by {last_note_check_by}" if last_note_check_by else ""
-            print(f"  note_reads_since_update: {note_checks}{suffix}")
-        last_activity_at = str(state.get("last_activity_at") or "").strip()
-        last_activity_summary = str(state.get("last_activity_summary") or "").strip()
-        if last_activity_at and last_activity_summary:
-            print(f"  recent_progress: {last_activity_at} {last_activity_summary}")
-        last_lifecycle_at = str(state.get("last_lifecycle_at") or "").strip()
-        last_lifecycle_summary = str(state.get("last_lifecycle_summary") or "").strip()
-        if last_lifecycle_at and last_lifecycle_summary:
-            print(f"  recent_lifecycle: {last_lifecycle_at} {last_lifecycle_summary}")
+        suffix = f" by {last_note_check_by}" if last_note_check_by else ""
+        self.lines.append(f"  note_reads_since_update: {note_checks}{suffix}")
+
+    def _append_recent_artifacts(self, state: ActorStatusPayload) -> None:
         recent_artifacts = [
             str(item.get("locator") or "").strip()
             for item in state.get("recent_artifacts", [])
             if str(item.get("locator") or "").strip()
         ]
-        if recent_artifacts:
-            rendered = ", ".join(f"`{locator}`" for locator in recent_artifacts[:3])
-            if len(recent_artifacts) > 3:
-                rendered += f" (+{len(recent_artifacts) - 3} more)"
-            print(f"  recent_artifacts: {rendered}")
-        if state.get("still_running"):
-            print("  still_running: true")
+        if not recent_artifacts:
+            return
+        rendered = ", ".join(f"`{locator}`" for locator in recent_artifacts[:3])
+        if len(recent_artifacts) > 3:
+            rendered += f" (+{len(recent_artifacts) - 3} more)"
+        self.lines.append(f"  recent_artifacts: {rendered}")
+
+    def _append_shutdown_signal(self, state: ActorStatusPayload) -> None:
         runtime_stop_signal_at = str(state.get("runtime_stop_signal_at") or "").strip()
-        if runtime_stop_signal_at:
-            runtime_stop_signal = str(state.get("runtime_stop_signal") or "SIGTERM")
-            print(
-                f"  shutdown_signal: {runtime_stop_signal} at {runtime_stop_signal_at}"
-            )
-        if state.get("requested_pending"):
-            print(
-                f"  pending_disposition: {state.get('requested_label') or state.get('requested_status', '')}"
-            )
-        if state.get("next_step"):
-            print(f"  next_step: {state.get('next_step')}")
+        if not runtime_stop_signal_at:
+            return
+        runtime_stop_signal = str(state.get("runtime_stop_signal") or "SIGTERM")
+        self.lines.append(
+            f"  shutdown_signal: {runtime_stop_signal} at {runtime_stop_signal_at}"
+        )
 
 
 def _sync_actor_outputs(
