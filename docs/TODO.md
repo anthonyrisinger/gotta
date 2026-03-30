@@ -15,6 +15,23 @@ This file is the execution queue.
 - If this file drifts from `ARCHITECTURE.md`, update one or both deliberately.
   Do not let them diverge silently.
 
+## Current Boundary
+
+- Shared-core architectural collapse is complete enough for release.
+- The remaining active hotspot pressure is provider-local:
+  - `src/gotta/plugins/github/search.py`
+  - `src/gotta/plugins/github/parse.py`
+  - `src/gotta/plugins/github/render.py`
+  - `src/gotta/plugins/jira.py`
+  - `src/gotta/plugins/slack.py`
+  - `src/gotta/plugins/gdrive.py`
+  - `src/gotta/plugins/granola.py`
+  - `src/gotta/plugins/confluence.py`
+- The remaining non-hotspot pressure is mostly local typing and internal
+  provider cleanup, not shared-core boundary confusion.
+- The next honest pause after provider-local hardening is immediately before any
+  physical package split.
+
 ## Running Record
 
 - [x] Surface registry tranche landed.
@@ -1179,6 +1196,36 @@ This file is the execution queue.
   hardening of this exact species would likely be churn before release. The
   honest next work is provider-local or local-surface pressure, not shared-core
   ambiguity.
+- [x] Final local analyze command-tail hardening landed.
+  - `src/gotta/plugins/session/analyze/main.py` now centers:
+    - `_AnalyzeState`
+  - `cmd_analyze(...)` no longer owns all of:
+    - derived-query loading
+    - focus-query expansion
+    - mode/output routing
+    - combined payload assembly
+    inline inside one entrypoint function.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/analyze/main.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'analyze and (all_mode or overview or lineage or semantic)'`
+    - `6 passed`
+    - `uv run ruff check src/gotta/plugins/session/analyze/main.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/analyze/main.py:cmd_analyze` dropped off the
+      complexity board
+    - the remaining active hotspot pressure is now provider-local:
+      - GitHub search/parse/render
+      - Jira coercion/rendering
+      - Slack retrieval/search
+      - GDrive/Granola projectors
+      - Confluence draw.io rendering
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed the last small local-surface orchestration
+  tail from the active pressure map without reopening analyze contracts. More
+  shared or local hardening of this exact species would be churn now. The
+  remaining release-safe future work is provider-local and extension-local.
 
 ## Current Tranche
 
@@ -1249,8 +1296,12 @@ This file is the execution queue.
   - `src/gotta/session/status/payload/closing.py`
   is now collapsed onto explicit state owners, and remaining work is no longer
   shared-core architectural blur.
+- [x] Final non-provider local tail reached the same boundary:
+  `src/gotta/plugins/session/analyze/main.py` is now collapsed onto one
+  explicit state owner, so the remaining active hotspot pressure is
+  provider-local.
 - [ ] Next tranche after the pause, if the run continues:
-  provider-local and surface-local algorithmic pressure, led by:
+  provider-local algorithmic pressure, led by:
   - `src/gotta/plugins/github/search.py`
   - `src/gotta/plugins/github/parse.py`
   - `src/gotta/plugins/jira.py`
@@ -1258,8 +1309,6 @@ This file is the execution queue.
   - `src/gotta/plugins/gdrive.py`
   - `src/gotta/plugins/granola.py`
   - `src/gotta/plugins/confluence.py`
-  - one small local tail in:
-    - `src/gotta/plugins/session/analyze/main.py:cmd_analyze`
 
 ## Non-Negotiable Invariants
 
@@ -1506,6 +1555,8 @@ This file is the execution queue.
   - `src/gotta/plugins/session/analyze/lineage.py`
   - `src/gotta/plugins/session/analyze/semantic.py`
   - `src/gotta/plugins/session/analyze/overview.py`
+- [x] Reduce the final local analyze entrypoint tail in:
+  - `src/gotta/plugins/session/analyze/main.py`
 - [x] Reduce remaining shared typed-boundary density in:
   - `src/gotta/plugins/session/lead/render.py`
 - [x] Collapse `src/gotta/plugins/session/graph/payload.py` onto explicit
@@ -1524,7 +1575,7 @@ This file is the execution queue.
   - `src/gotta/plugins/session/lead/payload.py`
   - `src/gotta/lead/rank.py`
   - `src/gotta/lead/edge.py`
-- [ ] Reduce provider-local or local-surface contract density in:
+- [ ] Reduce provider-local contract density in:
   - `src/gotta/plugins/jira.py`
   - `src/gotta/plugins/slack.py`
   - `src/gotta/plugins/gdrive.py`
