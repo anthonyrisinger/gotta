@@ -96,6 +96,39 @@ class _LineageFocusIndexes:
     lead_index: dict[str, LeadSourceSummary]
 
 
+@dataclass(frozen=True, slots=True)
+class _LineageSelectionState:
+    sources: list[LineageSource]
+    content: list[LineageContent]
+    lead_sources: list[LeadSourceSummary]
+    source_edges: list[LineageSourceEdge]
+    revision_edges: list[LineageRevisionEdge]
+    lead_edges: list[LeadEdgeSummary]
+    discovery_artifact_count: int
+    evidence_artifact_count: int
+
+    @classmethod
+    def from_focus_state(cls, state: _LineageFocusState) -> _LineageSelectionState:
+        selected_source_items = _selected_lineage_sources(state)
+        selected_content_items = _selected_lineage_content(state)
+        return cls(
+            sources=selected_source_items,
+            content=selected_content_items,
+            lead_sources=_selected_lineage_leads(state),
+            source_edges=_selected_lineage_source_edges(state),
+            revision_edges=_selected_lineage_revision_edges(state),
+            lead_edges=_selected_lineage_lead_edges(state),
+            discovery_artifact_count=_selected_artifact_kind_count(
+                selected_content_items,
+                kind="discovery",
+            ),
+            evidence_artifact_count=_selected_artifact_kind_count(
+                selected_content_items,
+                kind="evidence",
+            ),
+        )
+
+
 @dataclass(slots=True)
 class _LineageFocusState:
     payload: LineagePayload
@@ -244,64 +277,89 @@ class _LineageFocusState:
         anchors: list[LineageCandidate],
         neighbors: list[LineageNeighbor],
     ) -> LineageFocusSelection:
-        selected_source_items = [
-            item
-            for item in self.indexes.sources
-            if str(item.get("locator") or "") in self.selected_sources
-        ]
-        selected_content_items = [
-            item
-            for item in self.indexes.content
-            if str(item.get("checksum") or "") in self.selected_content
-        ]
-        selected_lead_items = [
-            item
-            for item in self.indexes.lead_sources
-            if str(item.get("locator") or "") in self.selected_leads
-            and str(item.get("locator") or "") not in self.selected_sources
-        ]
-        selected_source_edges = [
-            edge
-            for edge in self.payload.get("sourceEdges") or []
-            if str(edge.get("source") or "") in self.selected_sources
-            and str(edge.get("checksum") or "") in self.selected_content
-        ]
-        selected_revision_edges = [
-            edge
-            for edge in self.payload.get("revisionEdges") or []
-            if str(edge.get("from") or "") in self.selected_content
-            and str(edge.get("to") or "") in self.selected_content
-        ]
-        selected_lead_targets = self.selected_leads.union(self.selected_sources)
-        selected_lead_edges = [
-            edge
-            for edge in self.payload.get("leadEdges") or []
-            if str(edge.get("sourceChecksum") or "") in self.selected_content
-            and str(edge.get("targetLocator") or "") in selected_lead_targets
-        ]
-        discovery_count = sum(
-            1
-            for item in selected_content_items
-            if str(item.get("artifactKind") or "") == "discovery"
-        )
-        evidence_count = sum(
-            1
-            for item in selected_content_items
-            if str(item.get("artifactKind") or "") == "evidence"
-        )
+        selection_state = _LineageSelectionState.from_focus_state(self)
         return LineageFocusSelection(
             root=root,
             anchors=anchors,
             neighbors=neighbors,
-            sources=selected_source_items,
-            content=selected_content_items,
-            source_edges=selected_source_edges,
-            revision_edges=selected_revision_edges,
-            lead_sources=selected_lead_items,
-            lead_edges=selected_lead_edges,
-            discovery_artifact_count=discovery_count,
-            evidence_artifact_count=evidence_count,
+            sources=selection_state.sources,
+            content=selection_state.content,
+            source_edges=selection_state.source_edges,
+            revision_edges=selection_state.revision_edges,
+            lead_sources=selection_state.lead_sources,
+            lead_edges=selection_state.lead_edges,
+            discovery_artifact_count=selection_state.discovery_artifact_count,
+            evidence_artifact_count=selection_state.evidence_artifact_count,
         )
+
+
+def _selected_lineage_sources(state: _LineageFocusState) -> list[LineageSource]:
+    return [
+        item
+        for item in state.indexes.sources
+        if str(item.get("locator") or "") in state.selected_sources
+    ]
+
+
+def _selected_lineage_content(state: _LineageFocusState) -> list[LineageContent]:
+    return [
+        item
+        for item in state.indexes.content
+        if str(item.get("checksum") or "") in state.selected_content
+    ]
+
+
+def _selected_lineage_leads(state: _LineageFocusState) -> list[LeadSourceSummary]:
+    return [
+        item
+        for item in state.indexes.lead_sources
+        if str(item.get("locator") or "") in state.selected_leads
+        and str(item.get("locator") or "") not in state.selected_sources
+    ]
+
+
+def _selected_lineage_source_edges(
+    state: _LineageFocusState,
+) -> list[LineageSourceEdge]:
+    return [
+        edge
+        for edge in state.payload.get("sourceEdges") or []
+        if str(edge.get("source") or "") in state.selected_sources
+        and str(edge.get("checksum") or "") in state.selected_content
+    ]
+
+
+def _selected_lineage_revision_edges(
+    state: _LineageFocusState,
+) -> list[LineageRevisionEdge]:
+    return [
+        edge
+        for edge in state.payload.get("revisionEdges") or []
+        if str(edge.get("from") or "") in state.selected_content
+        and str(edge.get("to") or "") in state.selected_content
+    ]
+
+
+def _selected_lineage_lead_edges(
+    state: _LineageFocusState,
+) -> list[LeadEdgeSummary]:
+    selected_lead_targets = state.selected_leads.union(state.selected_sources)
+    return [
+        edge
+        for edge in state.payload.get("leadEdges") or []
+        if str(edge.get("sourceChecksum") or "") in state.selected_content
+        and str(edge.get("targetLocator") or "") in selected_lead_targets
+    ]
+
+
+def _selected_artifact_kind_count(
+    content_items: list[LineageContent],
+    *,
+    kind: str,
+) -> int:
+    return sum(
+        1 for item in content_items if str(item.get("artifactKind") or "") == kind
+    )
 
 
 def _lineage_indexes(payload: LineagePayload) -> _LineageFocusIndexes:

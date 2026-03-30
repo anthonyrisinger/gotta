@@ -1080,6 +1080,40 @@ This file is the execution queue.
   core collapse of the old kind. Remaining work is primarily provider-local or
   surface-local algorithmic pressure, with only a small analyze helper tail
   still visible outside the provider surfaces.
+- [x] Final analyze focus-tail hardening landed.
+  - `src/gotta/plugins/session/analyze/focus.py` now centers one truthful final
+    selection owner:
+    - `_LineageSelectionState`
+  - The trailing `build_selection(...)` assembly seam no longer owns all of:
+    - selected source/content/lead extraction
+    - selected edge extraction
+    - artifact-kind counting
+    inline inside one local helper.
+  - Focused validation is clean:
+    - `uvx pyright src/gotta/plugins/session/analyze/focus.py`
+    - `0 errors, 0 warnings, 0 informations`
+    - `uv run pytest -q tests/test_session.py -k 'lineage_focus or semantic_focus or all_mode_focus'`
+    - `2 passed`
+    - `uv run ruff check src/gotta/plugins/session/analyze/focus.py`
+    - `All checks passed!`
+  - Fresh discover after the cut shows the pressure map moved materially:
+    - `src/gotta/plugins/session/analyze/focus.py` dropped off the hotspot and
+      complexity boards
+    - the remaining heat is now concentrated in provider-local kernels plus one
+      shared lead-aggregation kernel:
+      - GitHub search/parse/render
+      - Jira coercion/rendering
+      - Slack retrieval/search
+      - GDrive/Granola projectors
+      - Confluence draw.io rendering
+      - `src/gotta/lead/aggregate.py:aggregate_lead_sources`
+- [x] Diminishing-returns judgment for this cycle:
+  this paid rent because it removed the last obvious local analyze tail without
+  reopening settled payload contracts. More `session analyze` cleanup of this
+  species would be churn now. The remaining work is release-safe future work:
+  primarily provider-local pressure, with one shared lead aggregation kernel
+  still available if a later cycle wants to squeeze non-provider density even
+  further.
 
 ## Current Tranche
 
@@ -1143,10 +1177,24 @@ This file is the execution queue.
   and graph state owners.
 - [x] Collapse the `session analyze` overview builder onto one summary-state
   owner.
-- [ ] Next tranche: cut the remaining shared orchestration swath in
-  `src/gotta/plugins/read.py` and `src/gotta/dispatch/main.py`, then
-  reassess whether only the small `session/status/payload/closing.py` tail
-  remains before the first provider-local pause boundary.
+- [x] First pause boundary reached:
+  the last shared orchestration swath in:
+  - `src/gotta/plugins/read.py`
+  - `src/gotta/dispatch/main.py`
+  - `src/gotta/session/status/payload/closing.py`
+  is now collapsed onto explicit state owners, and remaining work is no longer
+  shared-core architectural blur.
+- [ ] Next tranche after the pause, if the run continues:
+  provider-local and surface-local algorithmic pressure, led by:
+  - `src/gotta/plugins/github/search.py`
+  - `src/gotta/plugins/github/parse.py`
+  - `src/gotta/plugins/jira.py`
+  - `src/gotta/plugins/slack.py`
+  - `src/gotta/plugins/gdrive.py`
+  - `src/gotta/plugins/granola.py`
+  - `src/gotta/plugins/confluence.py`
+  - one small local tail in:
+    - `src/gotta/plugins/session/analyze/focus.py:_LineageFocusState.build_selection`
 
 ## Non-Negotiable Invariants
 
