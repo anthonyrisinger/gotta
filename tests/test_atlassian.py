@@ -140,6 +140,20 @@ def test_atlassian_missing_credentials_message_points_to_gotta_config(
         atlassian.load_client_credentials()
 
 
+def test_jira_coerce_field_value_serializes_sprint_as_bare_number() -> None:
+    meta = {
+        "name": "Sprint",
+        "schema": {
+            "custom": "com.pyxis.greenhopper.jira:gh-sprint",
+            "customId": 10020,
+            "items": "json",
+            "type": "array",
+        },
+    }
+
+    assert jira.coerce_field_value("customfield_10020", meta, ["11425"]) == 11425
+
+
 def test_jira_bare_issue_requires_base_url(monkeypatch) -> None:
     monkeypatch.delenv("GOTTA_JIRA_BASE_URL", raising=False)
     monkeypatch.setattr(jira, "load_atlassian_config_env", lambda: {})
@@ -1974,7 +1988,7 @@ def test_jira_create_apply_assigns_created_issue_to_sprint(monkeypatch, capsys) 
         cloud_id="cloud-123",
         base_url="https://example.atlassian.net",
     )
-    seen_assignments: list[tuple[int, list[str]]] = []
+    seen_assignments: list[tuple[str, int]] = []
     monkeypatch.setattr(
         jira,
         "resolve_project",
@@ -2029,9 +2043,25 @@ def test_jira_create_apply_assigns_created_issue_to_sprint(monkeypatch, capsys) 
     )
     monkeypatch.setattr(
         jira,
-        "add_issues_to_sprint",
-        lambda session, sprint_id, *, issue_keys: seen_assignments.append(
-            (sprint_id, issue_keys)
+        "assign_issue_to_sprint",
+        lambda issue_ref, *, sprint_id: (
+            seen_assignments.append((issue_ref.issue_key, sprint_id))
+            or {
+                "siteUrl": session.base_url,
+                "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+                "id": "10101",
+                "key": issue_ref.issue_key,
+                "summary": "Service handoff",
+                "status": {"name": "To Do"},
+                "issueType": {"name": "Task"},
+                "project": {"key": "OPS", "name": "Operations"},
+                "priority": None,
+                "assignee": None,
+                "reporter": None,
+                "labels": [],
+                "created": "2026-03-18T00:00:00Z",
+                "updated": "2026-03-18T00:00:00Z",
+            }
         ),
     )
 
@@ -2056,7 +2086,7 @@ def test_jira_create_apply_assigns_created_issue_to_sprint(monkeypatch, capsys) 
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert seen_assignments == [(31, ["OPS-101"])]
+    assert seen_assignments == [("OPS-101", 31)]
     assert payload["issue"]["key"] == "OPS-101"
     assert payload["board"]["id"] == "21"
     assert payload["sprint"]["id"] == "31"
@@ -2210,8 +2240,8 @@ def test_jira_update_apply_sprint_only_assigns_without_field_update(
         cloud_id="cloud-123",
         base_url="https://example.atlassian.net",
     )
-    seen_assignments: list[tuple[int, list[str]]] = []
     fetch_calls: list[str] = []
+    seen_assignments: list[tuple[str, int]] = []
     monkeypatch.setattr(
         jira,
         "load_session",
@@ -2258,9 +2288,10 @@ def test_jira_update_apply_sprint_only_assigns_without_field_update(
     monkeypatch.setattr(jira, "update_issue_fields", fail_update_issue_fields)
     monkeypatch.setattr(
         jira,
-        "add_issues_to_sprint",
-        lambda session, sprint_id, *, issue_keys: seen_assignments.append(
-            (sprint_id, issue_keys)
+        "assign_issue_to_sprint",
+        lambda issue_ref, *, sprint_id: (
+            seen_assignments.append((issue_ref.issue_key, sprint_id))
+            or fake_fetch_issue(issue_ref, fields=jira.DEFAULT_GET_FIELDS)
         ),
     )
 
@@ -2280,8 +2311,104 @@ def test_jira_update_apply_sprint_only_assigns_without_field_update(
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert seen_assignments == [(31, ["OPS-9"])]
+    assert seen_assignments == [("OPS-9", 31)]
     assert fetch_calls == ["OPS-9", "OPS-9"]
+    assert payload["issue"]["key"] == "OPS-9"
+    assert payload["board"]["id"] == "21"
+    assert payload["sprint"]["id"] == "31"
+
+
+def test_jira_update_apply_sprint_only_assigns_via_issue_field_update(
+    monkeypatch, capsys
+) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    fetch_calls: list[str] = []
+    seen_fallback: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: session,
+    )
+    monkeypatch.setattr(jira, "fetch_edit_fields", lambda issue_ref: (session, {}))
+
+    def fake_fetch_issue(issue_ref, *, fields):
+        fetch_calls.append(issue_ref.issue_key)
+        return {
+            "siteUrl": session.base_url,
+            "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+            "id": "9090",
+            "key": issue_ref.issue_key,
+            "summary": "Existing issue",
+            "status": {"name": "To Do"},
+            "issueType": {"name": "Task"},
+            "project": {"key": "OPS", "name": "Operations"},
+            "priority": None,
+            "assignee": None,
+            "reporter": None,
+            "labels": [],
+            "created": "2026-03-18T00:00:00Z",
+            "updated": "2026-03-18T00:00:00Z",
+            "descriptionAdf": None,
+        }
+
+    monkeypatch.setattr(jira, "fetch_issue", fake_fetch_issue)
+    monkeypatch.setattr(
+        jira,
+        "resolve_requested_sprint",
+        lambda base_url, *, current_sprint, sprint_id, project_key_or_id="", board_id=None: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+
+    monkeypatch.setattr(
+        jira,
+        "assign_issue_to_sprint",
+        lambda issue_ref, *, sprint_id: (
+            seen_fallback.append((issue_ref.issue_key, sprint_id))
+            or {
+                "siteUrl": session.base_url,
+                "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+                "id": "9090",
+                "key": issue_ref.issue_key,
+                "summary": "Existing issue",
+                "status": {"name": "To Do"},
+                "issueType": {"name": "Task"},
+                "project": {"key": "OPS", "name": "Operations"},
+                "priority": None,
+                "assignee": None,
+                "reporter": None,
+                "labels": [],
+                "created": "2026-03-18T00:00:00Z",
+                "updated": "2026-03-18T00:00:00Z",
+                "descriptionAdf": None,
+            }
+        ),
+    )
+
+    assert (
+        jira.main(
+            [
+                "update",
+                "OPS-9",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--current-sprint",
+                "--apply",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert fetch_calls == ["OPS-9"]
+    assert seen_fallback == [("OPS-9", 31)]
     assert payload["issue"]["key"] == "OPS-9"
     assert payload["board"]["id"] == "21"
     assert payload["sprint"]["id"] == "31"
@@ -2695,7 +2822,7 @@ def test_jira_add_to_sprint_apply_posts_issue_to_resolved_sprint(
         cloud_id="cloud-123",
         base_url="https://example.atlassian.net",
     )
-    seen: list[tuple[int, list[str]]] = []
+    seen: list[tuple[str, int]] = []
     monkeypatch.setattr(
         jira,
         "resolve_assignment_sprint",
@@ -2707,8 +2834,14 @@ def test_jira_add_to_sprint_apply_posts_issue_to_resolved_sprint(
     )
     monkeypatch.setattr(
         jira,
-        "add_issues_to_sprint",
-        lambda session, sprint_id, *, issue_keys: seen.append((sprint_id, issue_keys)),
+        "assign_issue_to_sprint",
+        lambda issue_ref, *, sprint_id: (
+            seen.append((issue_ref.issue_key, sprint_id))
+            or {
+                "key": issue_ref.issue_key,
+                "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+            }
+        ),
     )
 
     assert (
@@ -2729,7 +2862,61 @@ def test_jira_add_to_sprint_apply_posts_issue_to_resolved_sprint(
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert seen == [(31, ["OPS-6994"])]
+    assert seen == [("OPS-6994", 31)]
+    assert payload["issue"] == "OPS-6994"
+    assert payload["sprint"]["id"] == "31"
+
+
+def test_jira_add_to_sprint_apply_assigns_via_issue_field_update(
+    monkeypatch, capsys
+) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    seen_fallback: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        jira,
+        "resolve_assignment_sprint",
+        lambda base_url, project_key_or_id="", board_id=None, sprint_id=None, current=False: (
+            session,
+            {"id": "21", "name": "Delivery Board", "type": "scrum"},
+            {"id": "31", "name": "Sprint 31", "state": "active", "originBoardId": "21"},
+        ),
+    )
+
+    monkeypatch.setattr(
+        jira,
+        "assign_issue_to_sprint",
+        lambda issue_ref, *, sprint_id: (
+            seen_fallback.append((issue_ref.issue_key, sprint_id))
+            or {
+                "key": issue_ref.issue_key,
+                "issueUrl": f"{session.base_url}/browse/{issue_ref.issue_key}",
+            }
+        ),
+    )
+
+    assert (
+        jira.main(
+            [
+                "add-to-sprint",
+                "OPS-6994",
+                "--current",
+                "--project",
+                "OPS",
+                "--base-url",
+                "https://example.atlassian.net",
+                "--apply",
+                "--output",
+                "json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert seen_fallback == [("OPS-6994", 31)]
     assert payload["issue"] == "OPS-6994"
     assert payload["sprint"]["id"] == "31"
 
@@ -2768,6 +2955,45 @@ def test_jira_resolve_current_sprint_requires_disambiguation(monkeypatch) -> Non
         jira.resolve_current_sprint(
             "https://example.atlassian.net", project_key_or_id="OPS"
         )
+
+
+def test_jira_resolve_assignment_sprint_uses_origin_board_without_board_fetch(
+    monkeypatch,
+) -> None:
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud-123",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(
+        jira, "load_session", lambda base_url, allow_reauth=True: session
+    )
+    monkeypatch.setattr(
+        jira,
+        "fetch_sprint",
+        lambda session, sprint_id: {
+            "id": str(sprint_id),
+            "name": "Sprint 31",
+            "state": "active",
+            "originBoardId": "96",
+        },
+    )
+
+    def fail_fetch_board(*args, **kwargs):
+        raise AssertionError(
+            "fetch_board should not run for explicit sprint resolution"
+        )
+
+    monkeypatch.setattr(jira, "fetch_board", fail_fetch_board)
+
+    resolved_session, board, sprint = jira.resolve_assignment_sprint(
+        "https://example.atlassian.net",
+        sprint_id=31,
+    )
+
+    assert resolved_session == session
+    assert board == {"id": "96", "name": "", "type": "scrum"}
+    assert sprint["id"] == "31"
 
 
 def test_confluence_search_markdown_is_readable() -> None:

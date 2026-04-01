@@ -772,13 +772,6 @@ def jira_sprint_api_url(session: Session, sprint_id: int) -> str:
     )
 
 
-def jira_add_issues_to_sprint_api_url(session: Session, sprint_id: int) -> str:
-    return (
-        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/agile/1.0/sprint/"
-        f"{sprint_id}/issue"
-    )
-
-
 def normalize_allowed_value(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -1215,19 +1208,15 @@ def resolve_assignment_sprint(
     origin_board_id = int(str(sprint.get("originBoardId") or "0") or "0")
     if not origin_board_id:
         raise ToolError(f"sprint {sprint_id} did not report an origin board")
-    board = fetch_board(session, origin_board_id)
+    board = {
+        "id": str(origin_board_id),
+        "name": str(sprint.get("originBoardName") or ""),
+        "type": "scrum",
+    }
     if board_id is not None and str(board_id) != board["id"]:
         raise ToolError(
             f"sprint {sprint_id} belongs to board {board['id']}, not board {board_id}"
         )
-    if project_key_or_id:
-        _, project_boards = fetch_scrum_boards(
-            base_url, project_key_or_id=project_key_or_id
-        )
-        if board["id"] not in {item["id"] for item in project_boards}:
-            raise ToolError(
-                f"sprint {sprint_id} does not belong to a scrum board for project {project_key_or_id}"
-            )
     return session, board, sprint
 
 
@@ -1299,6 +1288,7 @@ def coerce_field_value(
     field_type = str(schema.get("type") or "")
     item_type = str(schema.get("items") or "")
     system = str(schema.get("system") or "")
+    custom = str(schema.get("custom") or "")
 
     if field_id == "assignee" or system == "assignee":
         return {"accountId": raw_values[-1]}
@@ -1324,6 +1314,13 @@ def coerce_field_value(
                 else:
                     items.append({"name": candidate})
         return items
+    if custom == "com.pyxis.greenhopper.jira:gh-sprint":
+        try:
+            return int(raw_values[-1])
+        except ValueError as exc:
+            raise ToolError(
+                f"invalid numeric value for Jira field {field_name}: {raw_values[-1]}"
+            ) from exc
     if field_type == "array":
         split_values: list[str] = []
         for raw in raw_values:
@@ -2645,18 +2642,24 @@ def preview_markdown_block(markdown: str, *, limit: int = 800) -> str:
     return normalized[:limit] + "\n..."
 
 
-def add_issues_to_sprint(
-    session: Session, sprint_id: int, *, issue_keys: list[str]
-) -> None:
-    try:
-        api_json(
-            "POST",
-            jira_add_issues_to_sprint_api_url(session, sprint_id),
-            session.token,
-            payload={"issues": issue_keys},
-        )
-    except ToolError as exc:
-        raise ToolError(normalize_api_error_message(exc)) from exc
+def resolve_sprint_field_id(fields: dict[str, dict[str, Any]]) -> str:
+    for field_id, meta in fields.items():
+        schema = meta.get("schema")
+        if not isinstance(schema, dict):
+            continue
+        if str(schema.get("custom") or "") == "com.pyxis.greenhopper.jira:gh-sprint":
+            return field_id
+    return resolve_field_id(fields, "Sprint")
+
+
+def assign_issue_to_sprint(issue_ref: IssueRef, *, sprint_id: int) -> dict[str, Any]:
+    session, fields = fetch_edit_fields(issue_ref)
+    sprint_field_id = resolve_sprint_field_id(fields)
+    return update_issue_fields(
+        session,
+        issue_ref.issue_key,
+        payload_fields={sprint_field_id: sprint_id},
+    )
 
 
 def create_issue(
@@ -3523,13 +3526,13 @@ def cmd_add_to_sprint(args: argparse.Namespace) -> int:
             "sprint": sprint.get("id") or "",
             "sprintName": sprint.get("name") or "",
             "sprintState": sprint.get("state") or "",
-            "apiUrl": jira_add_issues_to_sprint_api_url(session, int(sprint["id"])),
+            "apiUrl": jira_issue_mutation_api_url(session, issue_ref.issue_key),
         },
-        "payload": {"issues": [issue_ref.issue_key]},
+        "payload": {"fields": {"Sprint": int(sprint["id"])}},
     }
     if not args.apply:
         return write_preview_or_json(preview, output=args.output)
-    add_issues_to_sprint(session, int(sprint["id"]), issue_keys=[issue_ref.issue_key])
+    assign_issue_to_sprint(issue_ref, sprint_id=int(sprint["id"]))
     result = {
         "action": "add-to-sprint",
         "mode": "applied",
@@ -3659,12 +3662,9 @@ def cmd_create(args: argparse.Namespace) -> int:
     except ToolError as exc:
         raise ToolError(normalize_api_error_message(exc)) from exc
     if sprint_target is not None:
-        sprint_session, _, sprint = sprint_target
-        add_issues_to_sprint(
-            sprint_session,
-            int(sprint["id"]),
-            issue_keys=[created["key"]],
-        )
+        _, _, sprint = sprint_target
+        issue_ref = IssueRef(issue_key=created["key"], base_url=session.base_url)
+        created = assign_issue_to_sprint(issue_ref, sprint_id=int(sprint["id"]))
     if args.relates:
         link_type = resolved_link_type or {"name": resolved_link_type_name}
         for target in args.relates:
@@ -3762,14 +3762,8 @@ def cmd_update(args: argparse.Namespace) -> int:
             session, issue_ref.issue_key, payload_fields=payload_fields
         )
     if sprint_target is not None:
-        sprint_session, _, sprint = sprint_target
-        add_issues_to_sprint(
-            sprint_session,
-            int(sprint["id"]),
-            issue_keys=[issue_ref.issue_key],
-        )
-        if not payload_fields:
-            updated = fetch_issue(issue_ref, fields=DEFAULT_GET_FIELDS)
+        _, _, sprint = sprint_target
+        updated = assign_issue_to_sprint(issue_ref, sprint_id=int(sprint["id"]))
     result = {"action": "update", "mode": "applied", "issue": meta_issue(updated)}
     if sprint_target is not None:
         _, sprint_board, sprint = sprint_target
