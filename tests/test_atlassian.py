@@ -1065,6 +1065,15 @@ def test_jira_get_and_meta_include_visibility(monkeypatch, capsys) -> None:
                 "priority": {"name": "High"},
                 "assignee": {"displayName": "Alex"},
                 "reporter": {"displayName": "Morgan"},
+                "parent": {
+                    "id": "10000",
+                    "key": "OPS-0",
+                    "fields": {
+                        "summary": "Parent issue",
+                        "issuetype": {"name": "Epic"},
+                        "status": {"name": "In Progress"},
+                    },
+                },
                 "labels": ["visibility"],
                 "created": "2026-03-01T10:00:00Z",
                 "updated": "2026-03-02T12:00:00Z",
@@ -1089,6 +1098,13 @@ def test_jira_get_and_meta_include_visibility(monkeypatch, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["visibility_level"] == "restricted"
     assert payload["visibility_confidence"] == "high"
+    assert payload["parent"] == {
+        "id": "10000",
+        "key": "OPS-0",
+        "summary": "Parent issue",
+        "issueType": {"name": "Epic"},
+        "status": {"name": "In Progress"},
+    }
 
     assert (
         jira.main(
@@ -1106,12 +1122,20 @@ def test_jira_get_and_meta_include_visibility(monkeypatch, capsys) -> None:
     meta = json.loads(capsys.readouterr().out)
     assert meta["visibility_level"] == "restricted"
     assert meta["visibility_confidence"] == "high"
+    assert meta["parent"] == {
+        "id": "10000",
+        "key": "OPS-0",
+        "summary": "Parent issue",
+        "issueType": {"name": "Epic"},
+        "status": {"name": "In Progress"},
+    }
 
     assert (
         jira.main(["get", "OPS-1", "--base-url", "https://example.atlassian.net"]) == 0
     )
     rendered = capsys.readouterr().out
     assert "- Visibility: restricted (same_company, high)" in rendered
+    assert "- Parent: OPS-0 Parent issue" in rendered
 
 
 def test_search_jira_attaches_visibility_to_payload_and_results(monkeypatch) -> None:

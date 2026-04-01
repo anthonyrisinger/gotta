@@ -53,6 +53,7 @@ DEFAULT_GET_FIELDS = [
     "created",
     "updated",
     "project",
+    "parent",
 ]
 DEFAULT_SEARCH_FIELDS = [
     "summary",
@@ -1440,6 +1441,30 @@ def normalize_person(value: Any) -> dict[str, Any] | None:
     return result or None
 
 
+def normalize_parent(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, Any] = {}
+    parent_id = value.get("id")
+    parent_key = value.get("key")
+    if isinstance(parent_id, str) and parent_id:
+        result["id"] = parent_id
+    if isinstance(parent_key, str) and parent_key:
+        result["key"] = parent_key
+    fields = value.get("fields")
+    if isinstance(fields, dict):
+        summary = fields.get("summary")
+        if isinstance(summary, str) and summary:
+            result["summary"] = summary
+        issue_type = named_object(fields.get("issuetype"))
+        if issue_type:
+            result["issueType"] = issue_type
+        status = named_object(fields.get("status"))
+        if status:
+            result["status"] = status
+    return result or None
+
+
 def adf_text(node: Any) -> str:
     if not isinstance(node, dict):
         return ""
@@ -2107,6 +2132,7 @@ def normalize_issue(
         "priority": named_object(fields.get("priority")),
         "assignee": normalize_person(fields.get("assignee")),
         "reporter": normalize_person(fields.get("reporter")),
+        "parent": normalize_parent(fields.get("parent")),
         "labels": [item for item in fields.get("labels", []) if isinstance(item, str)],
         "created": str(fields.get("created") or ""),
         "updated": str(fields.get("updated") or ""),
@@ -2131,6 +2157,7 @@ def meta_issue(envelope: dict[str, Any]) -> dict[str, Any]:
             "priority": envelope.get("priority"),
             "assignee": envelope.get("assignee"),
             "reporter": envelope.get("reporter"),
+            "parent": envelope.get("parent"),
             "labels": envelope.get("labels"),
             "created": envelope.get("created"),
             "updated": envelope.get("updated"),
@@ -2796,6 +2823,12 @@ def markdown_issue(envelope: dict[str, Any]) -> str:
         f"- Priority: {(envelope.get('priority') or {}).get('name') or 'Unspecified'}",
         f"- Assignee: {(envelope.get('assignee') or {}).get('displayName') or 'Unassigned'}",
         f"- Reporter: {(envelope.get('reporter') or {}).get('displayName') or 'Unknown'}",
+        f"- Parent: {((envelope.get('parent') or {}).get('key') or 'None')}"
+        + (
+            f" {((envelope.get('parent') or {}).get('summary') or '')}".rstrip()
+            if (envelope.get("parent") or {}).get("summary")
+            else ""
+        ),
         f"- Labels: {', '.join(envelope.get('labels') or []) or 'None'}",
         f"- Created: {envelope.get('created') or ''}",
         f"- Updated: {envelope.get('updated') or ''}",
@@ -2804,7 +2837,7 @@ def markdown_issue(envelope: dict[str, Any]) -> str:
         "## Description",
         "",
     ]
-    lines[12:12] = render_visibility_metadata_lines(envelope)
+    lines[13:13] = render_visibility_metadata_lines(envelope)
     description_adf = envelope.get("descriptionAdf")
     description_md = ""
     if isinstance(description_adf, dict):
