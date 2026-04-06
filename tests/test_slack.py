@@ -1011,6 +1011,78 @@ def test_archive_search_applies_before_date_modifier() -> None:
     assert result["results"][0]["text"] == "ABC old result"
 
 
+def test_archive_search_applies_after_date_modifier_inclusively() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute(
+            """
+            CREATE TABLE message(
+                channel_id TEXT,
+                ts TEXT,
+                thread_ts TEXT,
+                txt TEXT,
+                data TEXT,
+                chunk_id INTEGER,
+                idx INTEGER
+            );
+            """
+        )
+        rows = [
+            (
+                "C12345678",
+                f"{int(dt.datetime(2024, 12, 31, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                f"{int(dt.datetime(2024, 12, 31, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                "ABC previous day result",
+                json.dumps({"user": "U12345678", "text": "ABC previous day result"}),
+                1,
+                1,
+            ),
+            (
+                "C12345678",
+                f"{int(dt.datetime(2025, 1, 1, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                f"{int(dt.datetime(2025, 1, 1, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                "ABC same day result",
+                json.dumps({"user": "U12345678", "text": "ABC same day result"}),
+                1,
+                1,
+            ),
+            (
+                "C12345678",
+                f"{int(dt.datetime(2025, 1, 2, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                f"{int(dt.datetime(2025, 1, 2, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                "ABC next day result",
+                json.dumps({"user": "U12345678", "text": "ABC next day result"}),
+                1,
+                1,
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO message(channel_id, ts, thread_ts, txt, data, chunk_id, idx)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+        result = slack.query_search(
+            conn,
+            query="ABC after:2025-01-01",
+            limit=20,
+            workspace="demo",
+            match_mode="all",
+        )
+    finally:
+        conn.close()
+
+    assert result["resultCount"] == 2
+    assert result["appliedModifiers"] == ["after:2025-01-01"]
+    assert [item["text"] for item in result["results"]] == [
+        "ABC next day result",
+        "ABC same day result",
+    ]
+
+
 def test_slack_search_defaults_to_live_source() -> None:
     args = slack.build_parser().parse_args(["search", "auth"])
     assert args.source == "live"
@@ -1037,6 +1109,18 @@ def test_live_search_any_keeps_modifiers_attached_to_each_term() -> None:
     assert slack._live_search_queries(spec) == [
         "ABC before:2025-01-01 in:ops",
         "Relay before:2025-01-01 in:ops",
+    ]
+
+
+def test_live_search_any_rewrites_date_only_after_for_recall() -> None:
+    spec = slack.search_spec(
+        "ABC Relay after:2025-01-01 in:ops",
+        match_mode="any",
+    )
+
+    assert slack._live_search_queries(spec) == [
+        "ABC after:2024-12-31 in:ops",
+        "Relay after:2024-12-31 in:ops",
     ]
 
 
@@ -1109,6 +1193,73 @@ def test_search_live_payload_preserves_native_result_order(monkeypatch) -> None:
     assert [thread["title"] for thread in result["threads"]] == [
         "first result",
         "second result",
+    ]
+
+
+def test_live_search_date_only_after_uses_inclusive_day_lower_bound(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        slack,
+        "ensure_live_search_auth",
+        lambda workspace, interactive_ok: ({}, None),
+    )
+    calls: list[dict[str, str]] = []
+
+    def fake_slack_api_post(
+        workspace: str,
+        auth_state: dict[str, object],
+        method: str,
+        *,
+        data: dict[str, str],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        calls.append(data)
+        assert method == "search.messages"
+        return {
+            "messages": {
+                "matches": [
+                    {
+                        "channel": {"id": "C123", "name": "ops"},
+                        "ts": f"{int(dt.datetime(2024, 12, 31, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                        "permalink": "https://demo.slack.com/archives/C123/p1735668000000000",
+                        "text": "previous day result",
+                        "user": "U1",
+                        "username": "Alice",
+                    },
+                    {
+                        "channel": {"id": "C123", "name": "ops"},
+                        "ts": f"{int(dt.datetime(2025, 1, 1, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                        "permalink": "https://demo.slack.com/archives/C123/p1735754400000000",
+                        "text": "same day result",
+                        "user": "U2",
+                        "username": "Bob",
+                    },
+                    {
+                        "channel": {"id": "C123", "name": "ops"},
+                        "ts": f"{int(dt.datetime(2025, 1, 2, 18, tzinfo=dt.timezone.utc).timestamp())}.000000",
+                        "permalink": "https://demo.slack.com/archives/C123/p1735840800000000",
+                        "text": "next day result",
+                        "user": "U3",
+                        "username": "Charlie",
+                    },
+                ]
+            }
+        }
+
+    monkeypatch.setattr(slack, "slack_api_post", fake_slack_api_post)
+
+    result = slack.search_live_payload(
+        workspace="demo",
+        query="ABC after:2025-01-01",
+        limit=5,
+        match_mode="all",
+    )
+
+    assert calls == [{"query": "ABC after:2024-12-31", "count": "20"}]
+    assert [item["text"] for item in result["results"]] == [
+        "same day result",
+        "next day result",
     ]
 
 

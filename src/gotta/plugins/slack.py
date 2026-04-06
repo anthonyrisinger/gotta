@@ -134,6 +134,7 @@ class ChannelWindow:
 @dataclass
 class SearchSpec:
     raw_query: str
+    parts: list[str]
     terms: list[str]
     match_mode: str
     modifiers: list[str]
@@ -145,6 +146,28 @@ class SearchSpec:
     @property
     def has_terms(self) -> bool:
         return bool(self.terms)
+
+
+@dataclass(frozen=True)
+class SearchDateRange:
+    start: dt.datetime
+    end: dt.datetime
+    precision: str
+
+
+@dataclass(frozen=True)
+class SearchModifier:
+    token: str
+    name: str
+    value: str
+    negated: bool
+
+
+@dataclass(frozen=True)
+class SearchTimeFilter:
+    modifier: SearchModifier
+    lower: dt.datetime | None = None
+    upper: dt.datetime | None = None
 
 
 def die(message: str, code: int = 2) -> int:
@@ -1610,10 +1633,12 @@ def parse_search_terms(query: str, *, match_mode: str) -> list[str]:
     return parts or [stripped]
 
 
-def _parse_search_parts(query: str, *, match_mode: str) -> tuple[list[str], list[str]]:
+def _parse_search_parts(
+    query: str, *, match_mode: str
+) -> tuple[list[str], list[str], list[str]]:
     parts = parse_search_terms(query, match_mode=match_mode)
     if match_mode == "literal":
-        return parts, []
+        return parts, parts, []
     terms: list[str] = []
     modifiers: list[str] = []
     for part in parts:
@@ -1621,18 +1646,31 @@ def _parse_search_parts(query: str, *, match_mode: str) -> tuple[list[str], list
             modifiers.append(part)
         else:
             terms.append(part)
-    return terms, modifiers
+    return parts, terms, modifiers
 
 
 def search_spec(query: str, *, match_mode: str) -> SearchSpec:
     if match_mode not in {"literal", "all", "any"}:
         raise ToolError(f"unsupported Slack search match mode: {match_mode}")
-    terms, modifiers = _parse_search_parts(query, match_mode=match_mode)
+    parts, terms, modifiers = _parse_search_parts(query, match_mode=match_mode)
     return SearchSpec(
         raw_query=query,
+        parts=parts,
         terms=terms,
         match_mode=match_mode,
         modifiers=modifiers,
+    )
+
+
+def _parse_search_modifier(token: str) -> SearchModifier | None:
+    match = SEARCH_MODIFIER_RE.fullmatch(token)
+    if not match:
+        return None
+    return SearchModifier(
+        token=token,
+        name=match.group("name").lower(),
+        value=match.group("value"),
+        negated=bool(match.group("neg")),
     )
 
 
@@ -1701,26 +1739,139 @@ def format_archive_bound(value: float | None) -> str | None:
     return format_utc_iso(dt.datetime.fromtimestamp(value, dt.timezone.utc))
 
 
-def _parse_search_date_range(value: str) -> tuple[dt.datetime, dt.datetime] | None:
+def _parse_search_date_range(value: str) -> SearchDateRange | None:
     cleaned = value.strip()
     if not cleaned:
         return None
     if YEAR_RE.fullmatch(cleaned):
         start = dt.datetime(int(cleaned), 1, 1, tzinfo=local_timezone())
         end = dt.datetime(int(cleaned) + 1, 1, 1, tzinfo=local_timezone())
-        return start.astimezone(dt.timezone.utc), end.astimezone(dt.timezone.utc)
+        return SearchDateRange(
+            start=start.astimezone(dt.timezone.utc),
+            end=end.astimezone(dt.timezone.utc),
+            precision="year",
+        )
     if YEAR_MONTH_RE.fullmatch(cleaned):
         year, month = (int(part) for part in cleaned.split("-", 1))
         next_year = year + 1 if month == 12 else year
         next_month = 1 if month == 12 else month + 1
         start = dt.datetime(year, month, 1, tzinfo=local_timezone())
         end = dt.datetime(next_year, next_month, 1, tzinfo=local_timezone())
-        return start.astimezone(dt.timezone.utc), end.astimezone(dt.timezone.utc)
+        return SearchDateRange(
+            start=start.astimezone(dt.timezone.utc),
+            end=end.astimezone(dt.timezone.utc),
+            precision="month",
+        )
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}$", cleaned):
         start = parse_time_arg(cleaned, flag="search qualifier")
         end = start + dt.timedelta(days=1)
-        return start, end
+        return SearchDateRange(start=start, end=end, precision="day")
     return None
+
+
+def _search_time_filter(token: str, *, strict: bool) -> SearchTimeFilter | None:
+    modifier = _parse_search_modifier(token)
+    if modifier is None or modifier.name not in {"before", "after", "on", "during"}:
+        return None
+    if modifier.negated:
+        if strict:
+            raise ToolError(
+                f"archive search does not support negated time qualifier `{token}`"
+            )
+        return None
+    range_bounds = _parse_search_date_range(modifier.value)
+    if modifier.name in {"on", "during"}:
+        if range_bounds is None:
+            if strict:
+                raise ToolError(
+                    f"archive search can only translate `{modifier.name}:` with YYYY, YYYY-MM, or YYYY-MM-DD values; got `{token}`"
+                )
+            return None
+        return SearchTimeFilter(
+            modifier=modifier,
+            lower=range_bounds.start,
+            upper=range_bounds.end,
+        )
+    if range_bounds is not None:
+        boundary = range_bounds.start
+    else:
+        try:
+            boundary = parse_time_arg(modifier.value, flag=f"{modifier.name}:")
+        except ToolError:
+            if strict:
+                raise
+            return None
+    if modifier.name == "before":
+        return SearchTimeFilter(modifier=modifier, upper=boundary)
+    return SearchTimeFilter(modifier=modifier, lower=boundary)
+
+
+def _search_time_filters(spec: SearchSpec, *, strict: bool) -> list[SearchTimeFilter]:
+    filters: list[SearchTimeFilter] = []
+    for token in spec.modifiers:
+        parsed = _search_time_filter(token, strict=strict)
+        if parsed is not None:
+            filters.append(parsed)
+    return filters
+
+
+def _previous_search_range_value(value: str) -> str | None:
+    cleaned = value.strip()
+    if YEAR_RE.fullmatch(cleaned):
+        return f"{int(cleaned) - 1:04d}"
+    if YEAR_MONTH_RE.fullmatch(cleaned):
+        year, month = (int(part) for part in cleaned.split("-", 1))
+        if month == 1:
+            return f"{year - 1:04d}-12"
+        return f"{year:04d}-{month - 1:02d}"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}$", cleaned):
+        return (dt.date.fromisoformat(cleaned) - dt.timedelta(days=1)).isoformat()
+    return None
+
+
+def _rewrite_live_search_modifier(token: str) -> str:
+    modifier = _parse_search_modifier(token)
+    if (
+        modifier is None
+        or modifier.negated
+        or modifier.name != "after"
+        or _parse_search_date_range(modifier.value) is None
+    ):
+        return token
+    previous_value = _previous_search_range_value(modifier.value)
+    if previous_value is None:
+        return token
+    return f"after:{previous_value}"
+
+
+def _format_live_query_part(part: str) -> str:
+    if not part:
+        return part
+    if SEARCH_MODIFIER_RE.fullmatch(part):
+        return part
+    if any(char.isspace() for char in part) or '"' in part:
+        escaped = part.replace('"', '\\"')
+        return f'"{escaped}"'
+    return part
+
+
+def _format_live_query(parts: list[str]) -> str:
+    return " ".join(_format_live_query_part(part) for part in parts if part)
+
+
+def _matches_search_time_filters(
+    ts: str,
+    filters: list[SearchTimeFilter],
+) -> bool:
+    if not filters:
+        return True
+    candidate = slack_ts_to_datetime(ts)
+    for search_filter in filters:
+        if search_filter.lower is not None and candidate < search_filter.lower:
+            return False
+        if search_filter.upper is not None and candidate >= search_filter.upper:
+            return False
+    return True
 
 
 def _archive_search_time_predicates(
@@ -1729,46 +1880,14 @@ def _archive_search_time_predicates(
     predicates: list[str] = []
     params: list[Any] = []
     applied: list[str] = []
-    for token in spec.modifiers:
-        match = SEARCH_MODIFIER_RE.fullmatch(token)
-        if not match:
-            continue
-        name = match.group("name").lower()
-        value = match.group("value")
-        if name not in {"before", "after", "on", "during"}:
-            continue
-        if match.group("neg"):
-            raise ToolError(
-                f"archive search does not support negated time qualifier `{token}`"
-            )
-        range_bounds = _parse_search_date_range(value)
-        if name in {"on", "during"}:
-            if range_bounds is None:
-                raise ToolError(
-                    f"archive search can only translate `{name}:` with YYYY, YYYY-MM, or YYYY-MM-DD values; got `{token}`"
-                )
-            start, end = range_bounds
-            predicates.extend(
-                [
-                    "CAST(REPLACE(ts, '.', '') AS INTEGER) >= ?",
-                    "CAST(REPLACE(ts, '.', '') AS INTEGER) < ?",
-                ]
-            )
-            params.extend([datetime_to_slack_key(start), datetime_to_slack_key(end)])
-            applied.append(token)
-            continue
-        if range_bounds is not None:
-            start, end = range_bounds
-            boundary = start if name == "before" else end
-        else:
-            boundary = parse_time_arg(value, flag=f"{name}:")
-        if name == "before":
-            predicates.append("CAST(REPLACE(ts, '.', '') AS INTEGER) < ?")
-            params.append(datetime_to_slack_key(boundary))
-        else:
+    for search_filter in _search_time_filters(spec, strict=True):
+        if search_filter.lower is not None:
             predicates.append("CAST(REPLACE(ts, '.', '') AS INTEGER) >= ?")
-            params.append(datetime_to_slack_key(boundary))
-        applied.append(token)
+            params.append(datetime_to_slack_key(search_filter.lower))
+        if search_filter.upper is not None:
+            predicates.append("CAST(REPLACE(ts, '.', '') AS INTEGER) < ?")
+            params.append(datetime_to_slack_key(search_filter.upper))
+        applied.append(search_filter.modifier.token)
     return predicates, params, applied
 
 
@@ -3457,6 +3576,9 @@ def _normalize_live_channel(channel: dict[str, Any]) -> dict[str, Any]:
 
 
 def _live_search_queries(spec: SearchSpec) -> list[str]:
+    rewritten_modifiers = [
+        _rewrite_live_search_modifier(token) for token in spec.modifiers
+    ]
     if spec.match_mode == "literal":
         raw = spec.raw_query.strip()
         if not raw:
@@ -3467,9 +3589,20 @@ def _live_search_queries(spec: SearchSpec) -> list[str]:
         return [f'"{escaped}"']
     if spec.match_mode == "any":
         if not spec.terms:
-            return [spec.raw_query.strip()]
-        suffix = f" {' '.join(spec.modifiers)}" if spec.modifiers else ""
-        return [f"{term}{suffix}" for term in spec.terms]
+            return [_format_live_query(rewritten_modifiers) or spec.raw_query.strip()]
+        return [_format_live_query([term, *rewritten_modifiers]) for term in spec.terms]
+    if rewritten_modifiers == spec.modifiers:
+        raw = spec.raw_query.strip()
+        return [raw]
+    rewritten_parts = [
+        _rewrite_live_search_modifier(part)
+        if _parse_search_modifier(part) is not None
+        else part
+        for part in spec.parts
+    ]
+    rewritten_query = _format_live_query(rewritten_parts)
+    if rewritten_query:
+        return [rewritten_query]
     raw = spec.raw_query.strip()
     return [raw]
 
@@ -3597,6 +3730,7 @@ def search_live_payload(
         interactive_ok=is_interactive(),
     )
     spec = search_spec(query, match_mode=match_mode)
+    time_filters = _search_time_filters(spec, strict=False)
     results_by_key: dict[str, dict[str, Any]] = {}
     page_size = _live_search_page_size(limit, channel_id=channel_id)
     for wire_query in _live_search_queries(spec):
@@ -3611,6 +3745,8 @@ def search_live_payload(
             if channel_id and item["channelId"] != channel_id:
                 continue
             if not item["channelId"] or not item["ts"] or not item["permalink"]:
+                continue
+            if not _matches_search_time_filters(str(item["ts"]), time_filters):
                 continue
             results_by_key.setdefault(f"{item['channelId']}:{item['ts']}", item)
     results = list(results_by_key.values())[:limit]
