@@ -1083,9 +1083,9 @@ def test_archive_search_applies_after_date_modifier_inclusively() -> None:
     ]
 
 
-def test_slack_search_defaults_to_live_source() -> None:
+def test_slack_search_defaults_to_auto_source() -> None:
     args = slack.build_parser().parse_args(["search", "auth"])
-    assert args.source == "live"
+    assert args.source == "auto"
     assert args.match == "all"
     assert args.output == "markdown"
 
@@ -1326,6 +1326,144 @@ def test_live_channel_search_does_not_require_recent_sync(monkeypatch, capsys) -
             "ops",
             "--source",
             "live",
+            "--output",
+            "json",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source"] == "live-search"
+
+
+def test_channel_search_defaults_to_archive_when_cache_exists(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    archive = slack.ArchiveResult(
+        root_dir=tmp_path,
+        db_path=tmp_path / "slackdump.sqlite",
+        log_path=tmp_path / "slackdump.log",
+    )
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
+    monkeypatch.setattr(
+        slack,
+        "resolve_slack_ref",
+        lambda raw, workspace: slack.SlackRef(
+            raw=raw,
+            workspace=workspace,
+            kind="channel",
+            channel_id="C12345678",
+            url="https://demo.slack.com/archives/C12345678",
+        ),
+    )
+    monkeypatch.setattr(
+        slack, "existing_channel_cache", lambda workspace, channel_id: archive
+    )
+    monkeypatch.setattr(
+        slack,
+        "try_opportunistic_sync",
+        lambda ref: (_ for _ in ()).throw(
+            AssertionError("should not opportunistically sync")
+        ),
+    )
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        slack,
+        "search_archive_payload",
+        lambda **kwargs: (
+            seen.append(kwargs)
+            or {
+                "workspace": "demo",
+                "query": kwargs["query"],
+                "terms": ["auth"],
+                "matchMode": kwargs["match_mode"],
+                "scope": "channel",
+                "source": "local-archive",
+                "channel": {"id": "C12345678", "name": "ops"},
+                "channelCount": 1,
+                "channels": [],
+                "resultCount": 0,
+                "threadCount": 0,
+                "threads": [],
+                "results": [],
+            }
+        ),
+    )
+
+    code = slack.main(
+        [
+            "search",
+            "auth",
+            "--workspace",
+            "demo",
+            "--channel",
+            "ops",
+            "--output",
+            "json",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source"] == "local-archive"
+    assert seen[0]["result"] == archive
+
+
+def test_channel_search_auto_falls_back_to_live_when_archive_unavailable(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        slack, "ensure_workspace_auth", lambda workspace, interactive_ok: None
+    )
+    monkeypatch.setattr(
+        slack,
+        "resolve_slack_ref",
+        lambda raw, workspace: slack.SlackRef(
+            raw=raw,
+            workspace=workspace,
+            kind="channel",
+            channel_id="C12345678",
+            url="https://demo.slack.com/archives/C12345678",
+        ),
+    )
+    monkeypatch.setattr(
+        slack, "existing_channel_cache", lambda workspace, channel_id: None
+    )
+    monkeypatch.setattr(
+        slack,
+        "try_opportunistic_sync",
+        lambda ref: (_ for _ in ()).throw(slack.ToolError("slow archive path")),
+    )
+    monkeypatch.setattr(
+        slack,
+        "search_live_payload",
+        lambda **kwargs: {
+            "workspace": "demo",
+            "query": kwargs["query"],
+            "terms": ["auth"],
+            "matchMode": kwargs["match_mode"],
+            "scope": "channel",
+            "source": "live-search",
+            "channel": {"id": "C12345678", "name": "ops"},
+            "channelCount": 1,
+            "channels": [],
+            "resultCount": 0,
+            "threadCount": 0,
+            "threads": [],
+            "results": [],
+        },
+    )
+
+    code = slack.main(
+        [
+            "search",
+            "auth",
+            "--workspace",
+            "demo",
+            "--channel",
+            "ops",
             "--output",
             "json",
         ]

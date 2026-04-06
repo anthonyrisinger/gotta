@@ -4391,11 +4391,12 @@ def cmd_search(args: argparse.Namespace) -> int:
     channel_ref: SlackRef | None = None
     workspace = args.workspace
     channel_result: ArchiveResult | None = None
+    effective_source = str(args.source)
     if args.channel:
         channel_ref = resolve_slack_ref(args.channel, workspace=args.workspace)
         ensure_workspace_auth(channel_ref.workspace, interactive_ok=is_interactive())
         workspace = channel_ref.workspace
-        if args.source == "live":
+        if effective_source == "live":
             if args.pull_recent or args.refresh:
                 raise ToolError(
                     "`--pull-recent` and `--refresh` do not apply to Slack live search; "
@@ -4409,22 +4410,30 @@ def cmd_search(args: argparse.Namespace) -> int:
             channel_result = run_sync_archive(
                 channel_ref, lookback=args.pull_recent, refresh=args.refresh
             )
+            effective_source = "archive"
         else:
             channel_result = existing_channel_cache(
                 channel_ref.workspace, channel_ref.channel_id
             )
-            if channel_result is None:
+            if channel_result is not None:
+                effective_source = "archive"
+            elif effective_source != "live":
                 try:
                     channel_result = try_opportunistic_sync(channel_ref)
+                    effective_source = "archive"
                 except ToolError as exc:
-                    raise ToolError(
-                        "no local archive exists for that channel, and the bounded opportunistic "
-                        "pull did not finish quickly. run "
-                        f"'gotta slack sync {channel_ref.channel_id} --lookback {DEFAULT_RECENT_LOOKBACK}' "
-                        f"or use '--pull-recent {DEFAULT_RECENT_LOOKBACK}'. detail: {exc}"
-                    ) from exc
+                    if effective_source == "archive":
+                        raise ToolError(
+                            "no local archive exists for that channel, and the bounded opportunistic "
+                            "pull did not finish quickly. run "
+                            f"'gotta slack sync {channel_ref.channel_id} --lookback {DEFAULT_RECENT_LOOKBACK}' "
+                            f"or use '--pull-recent {DEFAULT_RECENT_LOOKBACK}'. detail: {exc}"
+                        ) from exc
+                    effective_source = "live"
+            else:
+                effective_source = "live"
     else:
-        if args.source == "live" and (args.pull_recent or args.refresh):
+        if effective_source in {"live", "auto"} and (args.pull_recent or args.refresh):
             raise ToolError(
                 "`--pull-recent` and `--refresh` do not apply to workspace live search; "
                 "use `--source archive` for explicit bounded archive search"
@@ -4433,8 +4442,10 @@ def cmd_search(args: argparse.Namespace) -> int:
             raise ToolError(
                 "`--pull-recent` and `--refresh` require `--channel`; workspace search only reads the existing local archive"
             )
+        if effective_source == "auto":
+            effective_source = "live"
     payload: dict[str, Any]
-    if args.source == "live":
+    if effective_source == "live":
         payload = search_live_payload(
             workspace=workspace,
             query=args.query,
@@ -4979,7 +4990,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "search",
-        help="search Slack live by default; use archive mode for explicit local-only search",
+        help="search Slack channel scopes via archive-first auto mode and workspace scopes via native live search",
     )
     p.add_argument("query")
     p.add_argument(
@@ -4995,9 +5006,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--source",
-        choices=["archive", "live"],
-        default="live",
-        help="search the native Slack search API or the explicit local archive",
+        choices=["auto", "archive", "live"],
+        default="auto",
+        help="search archive-first for channel-scoped retrieval, native live for workspace discovery, or force one source explicitly",
     )
     p.add_argument(
         "--match",
