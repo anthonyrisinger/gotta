@@ -1069,7 +1069,9 @@ def test_external_plugin_can_shadow_builtin(monkeypatch) -> None:
         plugin_api.clear_binding_cache()
 
 
-def test_plugin_discovery_is_group_scoped(monkeypatch) -> None:
+def test_plugin_discovery_is_group_scoped(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("GOTTA_CONFIG_FILE", str(tmp_path / "gotta.toml"))
+
     class Dist:
         def __init__(self, name: str) -> None:
             self.name = name
@@ -1121,6 +1123,125 @@ def test_plugin_discovery_is_group_scoped(monkeypatch) -> None:
         ]
     finally:
         plugin_api.clear_binding_cache()
+
+
+def test_ask_entry_point_factory_can_expand_to_multiple_bindings(monkeypatch) -> None:
+    class Dist:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class EntryPoint:
+        def __init__(self, name: str, dist_name: str, payload) -> None:
+            self.name = name
+            self.dist = Dist(dist_name)
+            self.value = f"{dist_name}:{name}"
+            self._payload = payload
+
+        def load(self):
+            return self._payload
+
+    def binding(name: str) -> plugin_api.SurfaceBinding:
+        return plugin_api.SurfaceBinding(
+            name=name,
+            command_path=plugin_api.CommandPath(("ask", name)),
+            package=plugin_api.PackageSpec("demo"),
+            surface=plugin_api.SurfaceSpec(
+                name=name,
+                description=f"{name} binding",
+                runner=lambda argv: 0,
+            ),
+        )
+
+    monkeypatch.setattr(
+        plugin_api,
+        "entry_points",
+        lambda group: (
+            [
+                EntryPoint(
+                    "kapa",
+                    "gotta-plugin-ask-kapa",
+                    lambda: [binding("it"), binding("sre")],
+                )
+            ]
+            if group == plugin_api.ASK_BINDING_GROUP
+            else []
+        ),
+    )
+
+    plugin_api.clear_binding_cache()
+    try:
+        assert plugin_api.available_surfaces(group=plugin_api.ASK_BINDING_GROUP) == [
+            "it",
+            "sre",
+        ]
+        sre = plugin_api.get_binding("sre", group=plugin_api.ASK_BINDING_GROUP)
+        assert sre is not None
+        assert sre.command_path.tokens == ("ask", "sre")
+        assert sre.package.name == "gotta-plugin-ask-kapa"
+    finally:
+        plugin_api.clear_binding_cache()
+
+
+def test_ask_binding_name_conflicts_warn_when_shadowed(monkeypatch, capsys) -> None:
+    class Dist:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class EntryPoint:
+        def __init__(self, name: str, dist_name: str, payload) -> None:
+            self.name = name
+            self.dist = Dist(dist_name)
+            self.value = f"{dist_name}:{name}"
+            self._payload = payload
+
+        def load(self):
+            return self._payload
+
+    def binding(name: str, dist_name: str) -> plugin_api.SurfaceBinding:
+        return plugin_api.SurfaceBinding(
+            name=name,
+            command_path=plugin_api.CommandPath(("ask", name)),
+            package=plugin_api.PackageSpec(dist_name),
+            surface=plugin_api.SurfaceSpec(
+                name=name,
+                description=f"{dist_name} binding",
+                runner=lambda argv: 0,
+            ),
+        )
+
+    monkeypatch.setattr(
+        plugin_api,
+        "entry_points",
+        lambda group: (
+            [
+                EntryPoint(
+                    "consul",
+                    "gotta-plugin-ask-consul",
+                    lambda: [binding("sre", "gotta-plugin-ask-consul")],
+                ),
+                EntryPoint(
+                    "kapa",
+                    "gotta-plugin-ask-kapa",
+                    lambda: [binding("sre", "gotta-plugin-ask-kapa")],
+                ),
+            ]
+            if group == plugin_api.ASK_BINDING_GROUP
+            else []
+        ),
+    )
+
+    plugin_api.clear_binding_cache()
+    try:
+        sre = plugin_api.get_binding("sre", group=plugin_api.ASK_BINDING_GROUP)
+        assert sre is not None
+        assert sre.package.name == "gotta-plugin-ask-kapa"
+    finally:
+        plugin_api.clear_binding_cache()
+
+    error = capsys.readouterr().err
+    assert "warning: shadowing binding gotta.ask:sre" in error
+    assert "gotta-plugin-ask-consul" in error
+    assert "gotta-plugin-ask-kapa" in error
 
 
 def test_builtin_core_plugins_are_available_without_reinstalled_metadata() -> None:
@@ -1185,8 +1306,10 @@ def test_source_seeded_core_plugins_ignore_stale_core_metadata(monkeypatch) -> N
 
 
 def test_broken_external_ask_entry_points_do_not_break_help_all(
-    monkeypatch, capsys
+    tmp_path, monkeypatch, capsys
 ) -> None:
+    monkeypatch.setenv("GOTTA_CONFIG_FILE", str(tmp_path / "gotta.toml"))
+
     class Dist:
         def __init__(self, name: str) -> None:
             self.name = name

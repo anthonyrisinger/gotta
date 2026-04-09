@@ -755,14 +755,82 @@ target.
 Ask surfaces are provided by extensions that register the `gotta.ask`
 entry-point group.
 
-An ask extension registers the `gotta.ask` entry-point group and then becomes
-available as:
+An ask extension can register either:
+
+- one direct ask binding, or
+- one factory that expands into multiple named ask bindings
+
+Those bindings then become available as:
 
 ```bash
 gotta ask <surface> ...
 ```
 
 Use `gotta ask --help-all` to inspect installed ask surfaces recursively.
+
+The built-in Kapa ask provider exports a config-backed binding family through
+`gotta.ask`. Each binding lives under `[providers.kapa.bindings.<name>]` and
+becomes available as `gotta ask <name> ...`.
+
+The simplest binding uses a binding-shaped token name:
+
+```toml
+[providers.kapa.env]
+GOTTA_KAPA_TOKEN_SRE = "..."
+
+[providers.kapa.bindings.sre]
+project = "00000000-0000-0000-0000-000000000000"
+```
+
+That enables:
+
+```bash
+gotta ask sre "How do I get help from SRE?"
+```
+
+Additional named Kapa bindings can either use the binding-shaped default token
+name or declare an explicit `GOTTA_*` env var:
+
+```toml
+[providers.kapa.env]
+GOTTA_KAPA_TOKEN_SRE = "..."
+GOTTA_KAPA_TOKEN_IT = "..."
+GOTTA_KAPA_TOKEN_1 = "..."
+GOTTA_KAPA_TOKEN_HELPDESK = "..."
+
+[providers.kapa.bindings.sre]
+project = "00000000-0000-0000-0000-000000000000"
+
+[providers.kapa.bindings.it]
+project = "00000000-0000-0000-0000-000000000000"
+description = "query the IT Kapa knowledge base"
+
+[providers.kapa.bindings.ops]
+project = "00000000-0000-0000-0000-000000000000"
+token_index = 1
+
+[providers.kapa.bindings.helpdesk]
+project = "00000000-0000-0000-0000-000000000000"
+token_env = "GOTTA_KAPA_TOKEN_HELPDESK"
+description = "query the IT Kapa knowledge base"
+```
+
+That enables bindings like:
+
+```bash
+gotta ask sre "How do I get help from SRE?"
+gotta ask it "How do I reset my laptop?"
+```
+
+Token resolution rules:
+
+- default binding token: `GOTTA_KAPA_TOKEN_<BINDING_NAME_UPPER>`
+- optional shared fallback: `GOTTA_KAPA_TOKEN`
+- indexed override: `token_index = N` -> `GOTTA_KAPA_TOKEN_<N>`
+- explicit override: `token_env = "GOTTA_*"`
+
+If two ask providers export the same visible binding name, `gotta` keeps the
+last discovered binding and emits a warning instead of silently shadowing it.
 
 ## Project Docs
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import cache
 import importlib
@@ -268,6 +268,53 @@ def _coerce_binding(
     return binding
 
 
+def _coerce_bindings(
+    name: str,
+    loaded: object,
+    *,
+    group: str,
+    package: PackageSpec,
+) -> dict[str, SurfaceBinding]:
+    if callable(loaded) and _is_zero_arg_factory(loaded):
+        return _coerce_bindings(name, loaded(), group=group, package=package)
+    if isinstance(loaded, Mapping):
+        bindings: dict[str, SurfaceBinding] = {}
+        for binding_name, value in loaded.items():
+            if not isinstance(binding_name, str) or not binding_name.strip():
+                raise RuntimeError(
+                    "binding factory mappings must use non-empty string keys"
+                )
+            bindings.update(
+                _coerce_bindings(
+                    binding_name,
+                    value,
+                    group=group,
+                    package=package,
+                )
+            )
+        return bindings
+    if isinstance(loaded, Iterable) and not isinstance(loaded, (str, bytes, bytearray)):
+        bindings = {}
+        for value in loaded:
+            binding_name = getattr(value, "name", "")
+            if not isinstance(binding_name, str) or not binding_name.strip():
+                raise RuntimeError(
+                    "binding factory iterables must contain named SurfaceBinding "
+                    "or SurfaceSpec values"
+                )
+            bindings.update(
+                _coerce_bindings(
+                    binding_name,
+                    value,
+                    group=group,
+                    package=package,
+                )
+            )
+        return bindings
+    binding = _coerce_binding(name, loaded, group=group, package=package)
+    return {binding.name: binding}
+
+
 def _dist_name(entry_point: Any) -> str:
     dist = getattr(entry_point, "dist", None)
     name = getattr(dist, "name", "")
@@ -290,16 +337,33 @@ def _warn_broken_entry_point(entry_point: Any, group: str, exc: Exception) -> No
     )
 
 
+def _warn_shadowed_binding(
+    name: str,
+    *,
+    group: str,
+    previous: SurfaceBinding,
+    incoming: SurfaceBinding,
+) -> None:
+    print(
+        "warning: shadowing binding "
+        f"{group}:{name} from {previous.package.name} with {incoming.package.name}",
+        file=sys.stderr,
+    )
+
+
 @cache
 def discovered_bindings(
     group: str = DEFAULT_BINDING_GROUP,
 ) -> dict[str, SurfaceBinding]:
-    discovered: dict[str, SurfaceBinding] = (
-        _builtin_core_bindings() if group == DEFAULT_BINDING_GROUP else {}
-    )
+    if group == DEFAULT_BINDING_GROUP:
+        discovered: dict[str, SurfaceBinding] = _builtin_core_bindings()
+    elif group == ASK_BINDING_GROUP:
+        discovered = _builtin_core_ask_bindings()
+    else:
+        discovered = {}
     for entry_point in sorted(entry_points(group=group), key=_shadow_priority):
         if (
-            group == DEFAULT_BINDING_GROUP
+            group in {DEFAULT_BINDING_GROUP, ASK_BINDING_GROUP}
             and _dist_name(entry_point) in CORE_PLUGIN_DISTS
         ):
             # Source-defined core bindings are canonical. When running from source,
@@ -307,7 +371,7 @@ def discovered_bindings(
             # bindings; skip all core entry-point metadata instead of warning on it.
             continue
         try:
-            binding = _coerce_binding(
+            bindings = _coerce_bindings(
                 entry_point.name,
                 entry_point.load(),
                 group=group,
@@ -317,7 +381,16 @@ def discovered_bindings(
             # Stale or broken external entry-point metadata must not break the core CLI.
             _warn_broken_entry_point(entry_point, group, exc)
             continue
-        discovered[binding.name] = binding
+        for binding_name, binding in bindings.items():
+            existing = discovered.get(binding_name)
+            if group == ASK_BINDING_GROUP and existing is not None:
+                _warn_shadowed_binding(
+                    binding_name,
+                    group=group,
+                    previous=existing,
+                    incoming=binding,
+                )
+            discovered[binding_name] = binding
     return discovered
 
 
@@ -435,6 +508,7 @@ def _core_binding(
     description: str,
     runner: Runner,
     *,
+    group: str = DEFAULT_BINDING_GROUP,
     route_target: RouteTarget | None = None,
     search_route: SearchRoute | None = None,
     route_priority: int = 100,
@@ -452,10 +526,12 @@ def _core_binding(
     project: ProjectHook | None = None,
     provider_bundle: ProviderBundle | None = None,
     capabilities: tuple[CapabilitySpec, ...] = (),
+    auth_profile: str | None = None,
+    defaults: tuple[tuple[str, str], ...] = (),
 ) -> SurfaceBinding:
     return SurfaceBinding(
         name=name,
-        command_path=_command_path(name, DEFAULT_BINDING_GROUP),
+        command_path=_command_path(name, group),
         package=CORE_PACKAGE,
         surface=SurfaceSpec(
             name=name,
@@ -479,6 +555,8 @@ def _core_binding(
             provider_bundle=provider_bundle,
             capabilities=capabilities,
         ),
+        auth_profile=auth_profile,
+        defaults=defaults,
     )
 
 
@@ -556,7 +634,7 @@ def ask_plugin() -> SurfaceBinding:
         description="dispatch to installed ask-family extensions",
         runner=_runner("gotta.plugins.ask"),
         should_materialize=_module_attr("gotta.plugins.ask", "should_materialize"),
-        session_access="none",
+        session_access="ambient",
         invocation_locator=_module_attr("gotta.plugins.ask", "invocation_locator"),
         canonical_locator=_module_attr("gotta.plugins.ask", "canonical_locator"),
         preferred_name=_module_attr("gotta.plugins.ask", "preferred_name"),
@@ -1013,3 +1091,12 @@ def _builtin_core_bindings() -> dict[str, SurfaceBinding]:
         want_plugin,
     )
     return {binding.name: binding for binding in (factory() for factory in factories)}
+
+
+def _builtin_core_ask_bindings() -> dict[str, SurfaceBinding]:
+    factories = (_module_attr("gotta.providers.kapa", "ask_bindings"),)
+    bindings: dict[str, SurfaceBinding] = {}
+    for factory in factories:
+        for binding in factory():
+            bindings[binding.name] = binding
+    return bindings

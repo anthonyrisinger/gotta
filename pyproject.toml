@@ -88,6 +88,9 @@ slack = "gotta.builtin:slack_plugin"
 todo = "gotta.builtin:todo_plugin"
 want = "gotta.builtin:want_plugin"
 
+[project.entry-points."gotta.ask"]
+kapa = "gotta.providers.kapa:ask_bindings"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["gotta*"]

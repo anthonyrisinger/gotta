@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import sys
 from typing import Any
 
 from gotta.builtin import ASK_BINDING_GROUP, available_bindings, get_binding
-from gotta.helptext import is_long_help_request
+from gotta.helptext import is_long_help_request, strip_long_help_boilerplate
 
 
 def die(message: str, code: int = 2) -> int:
@@ -134,11 +136,19 @@ def main(argv: list[str]) -> int:
             if binding is None:
                 continue
             print("")
-            print(f"## gotta ask {surface}")
-            print("")
-            result = int(binding.runner(["--help-all"]))
+            buffer = io.StringIO()
+            with redirect_stdout(buffer), redirect_stderr(buffer):
+                result = int(binding.runner(["--help-all"]))
             if result != 0:
                 return result
+            rendered = strip_long_help_boilerplate(buffer.getvalue().strip())
+            if not rendered:
+                print(f"## gotta ask {surface}")
+                continue
+            if not rendered.startswith(f"## gotta ask {surface}"):
+                print(f"## gotta ask {surface}")
+                print("")
+            print(rendered)
         return 0
 
     if argv[0] == "help":

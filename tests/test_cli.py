@@ -302,6 +302,30 @@ def test_main_stable_fingerprint_provider_search_auto_bootstraps_session(
     assert (session_root / "state" / "env").exists()
 
 
+def test_main_stable_fingerprint_ask_auto_bootstraps_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append((list(inner_argv or []), os.environ.get("GOTTA_SESSION_DIR", "")))
+        return 0
+
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+
+    assert cli.main(["ask", "sre", "How do I get help from SRE?"]) == 0
+
+    captured = capsys.readouterr()
+    session_root = _grouped_root(tmp_path / "session", "thread-123")
+    assert seen == [(["ask", "sre", "How do I get help from SRE?"], str(session_root))]
+    assert "created a new gotta session" in captured.err
+    assert (session_root / "state" / "env").exists()
+    assert (session_root / "WANT.md").is_file()
+    assert (session_root / "GOAL.md").is_file()
+
+
 def test_main_ambient_provider_search_materializes_discovery_in_bound_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
