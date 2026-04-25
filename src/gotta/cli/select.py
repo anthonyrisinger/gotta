@@ -17,7 +17,11 @@ from gotta import topology
 from gotta.session import registry as session_registry
 from gotta.session import scope as session_scope
 
-_AUTO_BOOTSTRAP_CONTEXT_SOURCES = {"codex_thread", "terminal_session"}
+_AUTO_BOOTSTRAP_CONTEXT_SOURCES = {
+    "codex_thread",
+    "terminal_session",
+    "sandbox_boot_id",
+}
 
 
 def _resolve_shared_explicit_session(raw: str) -> Path | None:

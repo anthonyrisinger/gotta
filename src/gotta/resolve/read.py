@@ -8,7 +8,7 @@ from gotta.content.model import CommonOptions
 from gotta.resolve.model import ReadRequest, ReadTarget
 from gotta.resolve.parse import build_parser, parse_args
 from gotta.resolve.route import discover_plugin_route, discover_surface_route
-from gotta.resolve.target import resolve_target
+from gotta.resolve.target import _fallback_read_name, resolve_target
 
 __all__ = [
     "ReadRequest",
@@ -50,4 +50,4 @@ def preferred_name(argv: list[str], options: CommonOptions | Any) -> str:
         return resolve_read_target(argv, options).preferred_name
     except SystemExit:
         save_as = str(getattr(options, "save_as", "") or "").strip()
-        return save_as or "read.txt"
+        return save_as or _fallback_read_name("read")

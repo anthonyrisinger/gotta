@@ -61,7 +61,6 @@ def resolve_local_target(
     content_root: str = "",
 ) -> Path | None:
     candidate = Path(target).expanduser()
-    session_root = session_root or nearby_session_context()[0]
     content_root = content_root or nearby_session_context()[1]
     digest_target = (
         target.removeprefix("content:") if target.startswith("content:") else target
@@ -74,21 +73,15 @@ def resolve_local_target(
             return digest_candidate
     if candidate.is_absolute():
         return candidate.resolve() if candidate.exists() else None
-    if session_root:
-        session_candidate = (Path(session_root).expanduser() / target).resolve()
-        if session_candidate.exists():
-            return session_candidate
-    return None
+    cwd_candidate = (Path.cwd() / candidate).resolve()
+    return cwd_candidate if cwd_candidate.exists() else None
 
 
 def expected_local_target(target: str, *, session_root: str = "") -> Path | None:
     candidate = Path(target).expanduser()
-    session_root = session_root or nearby_session_context()[0]
     if candidate.is_absolute():
         return candidate.resolve()
-    if session_root:
-        return (Path(session_root).expanduser() / target).resolve()
-    return None
+    return (Path.cwd() / candidate).resolve()
 
 
 def resolve_session_artifact_name(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import mimetypes
 import os
 from pathlib import Path
 import re
@@ -59,15 +60,14 @@ Routing:
   local directories   -> native listing, with optional recursive traversal
 
   Materialization:
-  routed provider fetches and direct remote reads store durable evidence
-  only when an initialized session is already active or passed explicitly.
-  `--head`, `--tail`, and `--section` only trim what is shown to the operator;
-  the full canonical remote/provider payload still lands underneath when the
-  read materializes. Local files, local directories, and session-owned artifact
-  rereads stay as non-materializing views so reopening evidence does not fork
-  the evidence graph. Use session manifest, session leads <artifact>, or
-  session analyze to continue from the content store rather than re-fetching
-  blindly.
+  routed provider fetches, direct remote reads, and local file/directory reads
+  store durable evidence only when an initialized session is already active or
+  passed explicitly. `--head`, `--tail`, and `--section` only trim what is
+  shown to the operator; the full canonical payload still lands underneath when
+  the read materializes. Session-owned artifact rereads stay as
+  non-materializing views so reopening evidence does not fork the evidence
+  graph. Use session manifest, session leads <artifact>, or session analyze to
+  continue from the content store rather than re-fetching blindly.
 
   Attribution:
   pass `--actor <actor>` to attribute any materialized artifact from this read
@@ -370,6 +370,11 @@ def _directory_listing_text(path: Path, *, recursive: bool, max_depth: int) -> s
     return "\n".join(lines) + "\n"
 
 
+def _local_file_content_type(path: Path) -> str:
+    guessed, _encoding = mimetypes.guess_type(path.name, strict=False)
+    return guessed or "application/octet-stream"
+
+
 def _extract_section(text: str, needle: str) -> str:
     lines = text.splitlines()
     if not needle.strip():
@@ -576,15 +581,8 @@ class _ReadMainState:
         if resolved.kind == "missing_local" and resolved.path is not None:
             return die(
                 "error: local target "
-                f"'{self.target}' does not exist at `{resolved.path}` under the current "
-                "session context",
+                f"'{self.target}' does not exist at `{resolved.path}`",
                 code=2,
-            )
-        if resolved.kind == "missing_session_relative":
-            return die(
-                f"error: relative local target '{self.target}' requires an active or explicit "
-                "session root; bind one with `gotta ...`, pass `--session <absolute-root>`, or "
-                "use an absolute path directly"
             )
         return die(
             f"error: unsupported target '{self.target}'. no native local or routed provider path "
@@ -656,6 +654,22 @@ def capture(argv: list[str], options: object) -> Capture:
             preferred_name=_canonical_remote_name(target, content_type),
             content_type=content_type or "application/octet-stream",
         )
+    if resolved.kind == "local_file" and resolved.path is not None:
+        return Capture(
+            data=resolved.path.read_bytes(),
+            preferred_name=resolved.path.name or "read.txt",
+            content_type=_local_file_content_type(resolved.path),
+        )
+    if resolved.kind == "local_dir" and resolved.path is not None:
+        return Capture(
+            data=_directory_listing_text(
+                resolved.path,
+                recursive=request.recursive,
+                max_depth=max(0, request.max_depth),
+            ).encode("utf-8"),
+            preferred_name=resolved.path.name or "read.txt",
+            content_type="text/markdown",
+        )
     raise RuntimeError(
         f"read target kind `{resolved.kind}` does not support canonical acquisition"
     )
@@ -681,6 +695,14 @@ def project(argv: list[str], capture: Capture) -> Projection:
             projected = surface.project(resolved.routed_argv, capture)
         else:
             projected = projection_for_capture(capture, capture.data)
+    elif resolved.kind == "local_file" and resolved.path is not None:
+        display, _language = stored_display(resolved.path)
+        projected = projection_bytes(
+            display,
+            content_type=capture.content_type or "application/octet-stream",
+        )
+    elif resolved.kind == "local_dir" and resolved.path is not None:
+        projected = projection_bytes(capture.data, content_type="text/markdown")
     else:
         projected = _project_canonical(capture)
     if view.active():

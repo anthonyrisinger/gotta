@@ -9,6 +9,7 @@ import pytest
 
 from gotta.actors import ACTOR_SPEAKER_ENV
 from gotta import builtin
+import gotta.content.context as content_context
 import gotta.content.env as content_env
 from gotta.content.filesystem import FileSystemLedgerStore
 import gotta.content.model as content_model
@@ -224,26 +225,83 @@ def test_main_stable_fingerprint_read_retrieval_auto_bootstraps_session(
     assert (session_root / "GOAL.md").is_file()
 
 
-def test_main_stable_fingerprint_local_relative_read_stays_sessionless(
+def test_main_sandbox_boot_id_read_retrieval_auto_bootstraps_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
+    seen: list[tuple[list[str], str, str, str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append(
+            (
+                list(inner_argv or []),
+                os.environ.get("GOTTA_SESSION_DIR", ""),
+                os.environ.get("GOTTA_CONTEXT_ID", ""),
+                os.environ.get("GOTTA_CONTEXT_SOURCE", ""),
+            )
+        )
+        return 0
+
+    boot_id_path = tmp_path / "boot_id"
+    boot_id_path.write_text("00000000-0000-4000-8000-000000000001\n", encoding="utf-8")
     _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("TERM_SESSION_ID", raising=False)
+    monkeypatch.setenv("IS_SANDBOX", "yes")
+    monkeypatch.setattr(content_context, "_SANDBOX_BOOT_ID_PATH", boot_id_path)
+
+    assert cli.main(["read", "https://example.com/manual.txt"]) == 0
+
+    captured = capsys.readouterr()
+    context_id = "00000000-0000-4000-8000-000000000001"
+    session_root = _grouped_root(tmp_path / "session", context_id)
+    assert seen == [
+        (
+            ["read", "https://example.com/manual.txt"],
+            str(session_root),
+            context_id,
+            "sandbox_boot_id",
+        )
+    ]
+    assert "created a new gotta session" in captured.err
+    assert (session_root / "state" / "env").exists()
+
+
+def test_main_stable_fingerprint_local_relative_read_auto_bootstraps_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append((list(inner_argv or []), os.environ.get("GOTTA_SESSION_DIR", "")))
+        return 0
+
+    _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
     monkeypatch.chdir(tmp_path)
     (tmp_path / "README.md").write_text("local doc\n", encoding="utf-8")
 
-    assert cli.main(["read", "README.md"]) == 2
+    assert cli.main(["read", "README.md"]) == 0
 
     captured = capsys.readouterr()
-    assert "requires an active or explicit session root" in captured.err
-    assert captured.out == ""
-    assert not (tmp_path / "session").exists()
+    session_root = _grouped_root(tmp_path / "session", "thread-123")
+    assert seen == [(["read", "README.md"], str(session_root))]
+    assert "created a new gotta session" in captured.err
+    assert (session_root / "state" / "env").exists()
 
 
-def test_main_stable_fingerprint_local_absolute_read_stays_sessionless(
+def test_main_stable_fingerprint_local_absolute_read_auto_bootstraps_session(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    def fake_gotta_main(inner_argv: list[str] | None = None) -> int:
+        seen.append((list(inner_argv or []), os.environ.get("GOTTA_SESSION_DIR", "")))
+        return 0
+
     _set_default_session_root(monkeypatch, tmp_path / "session")
+    monkeypatch.setattr(cli_argv, "_gotta_main", fake_gotta_main)
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
     local_file = tmp_path / "README.md"
     local_file.write_text("local doc\n", encoding="utf-8")
@@ -251,9 +309,10 @@ def test_main_stable_fingerprint_local_absolute_read_stays_sessionless(
     assert cli.main(["read", str(local_file)]) == 0
 
     captured = capsys.readouterr()
-    assert captured.out == "local doc\n"
-    assert captured.err == ""
-    assert not (tmp_path / "session").exists()
+    session_root = _grouped_root(tmp_path / "session", "thread-123")
+    assert seen == [(["read", str(local_file)], str(session_root))]
+    assert "created a new gotta session" in captured.err
+    assert (session_root / "state" / "env").exists()
 
 
 def test_main_fallback_fingerprint_read_retrieval_remains_sessionless(

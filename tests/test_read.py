@@ -54,7 +54,7 @@ def test_read_local_directory_renders_native_listing(tmp_path: Path, capsys) -> 
     assert "`docs/README.md`" in output
 
 
-def test_read_requires_session_context_for_relative_hidden_file(
+def test_read_resolves_relative_hidden_file_from_shell_cwd(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     repo = tmp_path / "repo"
@@ -65,15 +65,14 @@ def test_read_requires_session_context_for_relative_hidden_file(
         '[remote "origin"]\n\turl = git@github.com:acme/widgets.git\n', encoding="utf-8"
     )
 
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GOTTA_SESSION_REPO", str(repo))
+    monkeypatch.chdir(repo)
 
-    assert read.main([".git/config"]) == 2
-    err = capsys.readouterr().err
-    assert "requires an active or explicit session root" in err
+    assert read.main([".git/config"]) == 0
+    output = capsys.readouterr().out
+    assert "url = git@github.com:acme/widgets.git" in output
 
 
-def test_read_prefers_session_relative_target_over_shell_cwd(
+def test_read_prefers_shell_cwd_target_over_session_root(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     cwd_root = tmp_path / "cwd"
@@ -88,8 +87,8 @@ def test_read_prefers_session_relative_target_over_shell_cwd(
 
     assert read.main(["BRIEF.md"]) == 0
     output = capsys.readouterr().out
-    assert "session copy" in output
-    assert "cwd copy" not in output
+    assert "cwd copy" in output
+    assert "session copy" not in output
 
 
 def test_read_can_follow_stored_content_digest(
@@ -347,7 +346,7 @@ def test_read_missing_actor_goal_surface_reports_missing_local_path(
     assert "unsupported target" not in err
 
 
-def test_read_seeded_actor_local_charter_surfaces(
+def test_read_relative_paths_follow_shell_cwd_even_with_actor_session_env(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     root = tmp_path / "session-root"
@@ -363,14 +362,17 @@ def test_read_seeded_actor_local_charter_surfaces(
     actor_root = session_registry._actor_session_dir(root, "claude")
     monkeypatch.setenv("GOTTA_SESSION_DIR", str(actor_root))
     monkeypatch.setenv("GOTTA_SESSION_CONTENT_DIR", str(actor_root / "content"))
+    monkeypatch.chdir(root)
 
     assert read.main(["WANT.md"]) == 0
     want_output = capsys.readouterr().out
-    assert "# Actor Want Placeholder" in want_output
+    assert "# Want" in want_output
+    assert "Real intent." in want_output
 
     assert read.main(["GOAL.md"]) == 0
     goal_output = capsys.readouterr().out
-    assert "# Seed Actor Goal Placeholder" in goal_output
+    assert "# Goal" in goal_output
+    assert "Real goal." in goal_output
 
 
 def test_read_does_not_materialize_local_artifact_rereads(
@@ -399,6 +401,20 @@ def test_read_does_not_materialize_local_artifact_rereads(
             "2",
         ]
     )
+
+
+def test_read_materializes_live_local_files(tmp_path: Path) -> None:
+    target = tmp_path / "notes.md"
+    target.write_text("# Notes\n\nbody\n", encoding="utf-8")
+
+    assert resolve_read.should_materialize([str(target)])
+
+
+def test_read_materializes_live_local_directories(tmp_path: Path) -> None:
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    assert resolve_read.should_materialize([str(target)])
 
 
 def test_read_ambiguous_session_artifact_name_suggests_explicit_artifact_locators(
@@ -642,13 +658,14 @@ def test_read_help_text_describes_plain_vs_shaped_materialization() -> None:
     description = resolve_read.build_parser().description or ""
 
     assert (
-        "Remote/provider reads store durable evidence only when an initialized session"
+        "Remote/provider reads and local file/directory reads store durable evidence"
         in description
     )
     assert (
-        "`--head`, `--tail`, and `--section` only trim what is shown to the operator"
-        in read.USAGE
+        "Relative local paths resolve from the current working directory."
+        in description
     )
+    assert "`--head`, `--tail`, and `--section` only trim what is" in read.USAGE
     assert "--actor" in resolve_read.build_parser().format_help()
 
 
@@ -718,6 +735,34 @@ def test_execute_materializing_read_keeps_full_remote_bytes_under_bounded_view(
     assert outcome.code == 0
     assert outcome.display_bytes.decode("utf-8") == "line 2\nline 3\n"
     assert outcome.canonical_bytes.decode("utf-8") == "line 1\nline 2\nline 3\n"
+
+
+def test_execute_materializing_read_keeps_full_local_file_bytes_under_bounded_view(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "notes.md"
+    target.write_text("# Intro\n\nline 1\nline 2\n", encoding="utf-8")
+
+    outcome = read.execute_materializing_read([str(target), "--head", "3"])
+
+    assert outcome.code == 0
+    assert outcome.display_bytes.decode("utf-8") == "# Intro\n\nline 1\n"
+    assert outcome.canonical_bytes.decode("utf-8") == "# Intro\n\nline 1\nline 2\n"
+
+
+def test_execute_materializing_read_keeps_full_local_directory_listing_under_view(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "repo"
+    target.mkdir()
+    (target / "README.md").write_text("# Docs\n", encoding="utf-8")
+
+    outcome = read.execute_materializing_read([str(target), "--head", "6"])
+
+    assert outcome.code == 0
+    assert "# Directory:" in outcome.canonical_bytes.decode("utf-8")
+    assert "README.md" in outcome.canonical_bytes.decode("utf-8")
+    assert outcome.display_bytes.decode("utf-8").startswith("# Directory:")
 
 
 def test_read_passes_provider_flags_through_for_routed_targets(monkeypatch) -> None:

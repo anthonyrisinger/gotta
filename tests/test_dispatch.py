@@ -54,11 +54,16 @@ def scan_content_store(content_dir: Path) -> list[content_model.ContentSnapshot]
     return FileSystemLedgerStore.for_content_dir(content_dir).scan_artifacts()
 
 
-def test_should_materialize_respects_help_and_suppression(monkeypatch) -> None:
+def test_should_materialize_respects_help_and_suppression(
+    monkeypatch, tmp_path: Path
+) -> None:
     assert not dispatch.should_materialize("read", ["--help"])
     assert not dispatch.should_materialize(
         "read", ["artifact:demo.md@abc123", "--head", "20"]
     )
+    (tmp_path / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert dispatch.should_materialize("read", ["notes.md"])
     assert dispatch.should_materialize(
         "read", ["https://github.com/acme/widgets", "--head", "3"]
     )
@@ -515,6 +520,12 @@ def test_derive_preferred_name_for_delegated_read_targets() -> None:
 
     for target, expected in cases.items():
         assert dispatch.derive_preferred_name("read", [target], options) == expected
+
+
+def test_derive_preferred_name_for_unresolved_read_targets_prefers_bin() -> None:
+    options = content_model.CommonOptions()
+
+    assert dispatch.derive_preferred_name("read", ["--bogus"], options) == "read.bin"
 
 
 def test_derive_preferred_name_for_provider_search_artifacts() -> None:
@@ -1402,7 +1413,9 @@ def test_cli_plugin_help_all_works_from_top_level_dispatch(plugin: str, capsys) 
     assert "required: command" not in output
 
 
-def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> None:
+def test_cli_pipe_close_exits_cleanly_for_materializing_local_reads(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "session-root"
     dirs = content_model.ResolvedDirs(
         session_dir=root,
@@ -1444,10 +1457,11 @@ def test_cli_pipe_close_exits_cleanly_for_local_read_views(tmp_path: Path) -> No
     assert "BrokenPipeError" not in stderr
 
     snapshots = scan_content_store(dirs.content_dir)
-    assert snapshots == []
+    assert len(snapshots) == 1
+    assert snapshots[0].layout.blob_path.read_bytes() == large_file.read_bytes()
 
 
-def test_run_surface_local_read_does_not_emit_stored_content_receipt(
+def test_run_surface_local_read_materializes_and_emits_receipt(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     root = tmp_path / "session-root"
@@ -1468,7 +1482,11 @@ def test_run_surface_local_read_does_not_emit_stored_content_receipt(
     captured = capsys.readouterr()
 
     assert captured.out == "hello\n"
-    assert captured.err == ""
+    receipt = json.loads(captured.err.splitlines()[-1])
+    assert receipt["artifactKind"] == "evidence"
+    snapshots = scan_content_store(dirs.content_dir)
+    assert len(snapshots) == 1
+    assert snapshots[0].layout.blob_path.read_bytes() == b"hello\n"
 
 
 def test_emit_budgeted_output_skips_default_budget_with_full_output_escape(
@@ -1494,15 +1512,26 @@ def test_emit_budgeted_output_skips_default_budget_with_full_output_escape(
 def test_run_surface_read_section_miss_returns_clean_error_for_local_view(
     tmp_path: Path, capsys
 ) -> None:
+    local_root = tmp_path / "local"
+    assert session_plugin.main(["init", "--session", str(local_root)]) == 0
+    capsys.readouterr()
+
     sample = tmp_path / "sample.md"
     sample.write_text("# Intro\n\nbody\n", encoding="utf-8")
 
-    assert dispatch.run_surface("read", [str(sample), "--section", "Missing"]) == 1
+    assert (
+        dispatch.run_surface(
+            "read",
+            [str(sample), "--section", "Missing", "--session", str(local_root)],
+        )
+        == 1
+    )
     captured = capsys.readouterr()
 
     assert captured.out == ""
     assert "no section heading matched: Missing" in captured.err
     assert "Traceback" not in captured.err
+    assert scan_content_store(local_root / "content") == []
 
 
 def test_run_surface_materializing_read_section_miss_returns_clean_error(

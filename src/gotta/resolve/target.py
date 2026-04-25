@@ -23,6 +23,13 @@ def _save_as(options: CommonOptions | Any | None) -> str:
     return str(getattr(options, "save_as", "") or "").strip()
 
 
+def _fallback_read_name(kind: str, target: str = "") -> str:
+    stem = sanitize_name(target) or "read"
+    if kind == "local_dir":
+        return f"{stem}.md"
+    return f"{stem}.bin"
+
+
 def _build_target(
     request: ReadRequest,
     *,
@@ -69,7 +76,9 @@ def _direct_target(
             kind="artifact_locator",
             path=artifact_path,
             canonical_locator=target,
-            preferred_name=save_as or artifact_path.name or "read.txt",
+            preferred_name=save_as
+            or artifact_path.name
+            or _fallback_read_name("artifact_locator"),
             should_materialize=False,
         )
     local_path = resolve_local_target(
@@ -82,9 +91,13 @@ def _direct_target(
             request,
             kind="local_dir" if local_path.is_dir() else "local_file",
             path=local_path,
-            canonical_locator=target,
-            preferred_name=save_as or local_path.name or "read.txt",
-            should_materialize=False,
+            canonical_locator=str(local_path),
+            preferred_name=save_as
+            or local_path.name
+            or _fallback_read_name(
+                "local_dir" if local_path.is_dir() else "local_file"
+            ),
+            should_materialize=True,
         )
     artifact_name_path = resolve_session_artifact_name(
         target,
@@ -96,7 +109,9 @@ def _direct_target(
             kind="artifact_name",
             path=artifact_name_path,
             canonical_locator=target,
-            preferred_name=save_as or artifact_name_path.name or "read.txt",
+            preferred_name=save_as
+            or artifact_name_path.name
+            or _fallback_read_name("artifact_name"),
             should_materialize=False,
         )
     if ":" in target:
@@ -110,16 +125,10 @@ def _direct_target(
             request,
             kind="missing_local",
             path=expected_local,
-            canonical_locator=target,
-            preferred_name=save_as or expected_local.name or "read.txt",
-            should_materialize=False,
-        )
-    if not Path(target).expanduser().is_absolute():
-        return _build_target(
-            request,
-            kind="missing_session_relative",
-            canonical_locator=target,
-            preferred_name=save_as or "read.txt",
+            canonical_locator=str(expected_local),
+            preferred_name=save_as
+            or expected_local.name
+            or _fallback_read_name("missing_local", target),
             should_materialize=False,
         )
     return None
@@ -138,7 +147,7 @@ def resolve_target(
             request,
             kind="stdin",
             canonical_locator="read",
-            preferred_name=save_as or "read.txt",
+            preferred_name=save_as or _fallback_read_name("stdin"),
             should_materialize=False,
         )
     if target == "-":
@@ -146,7 +155,7 @@ def resolve_target(
             request,
             kind="stdin",
             canonical_locator="-",
-            preferred_name=save_as or "read.txt",
+            preferred_name=save_as or _fallback_read_name("stdin"),
             should_materialize=False,
         )
     routed = resolve_routed_target(request, target, options, save_as=save_as)
@@ -165,6 +174,6 @@ def resolve_target(
         request,
         kind="unsupported",
         canonical_locator=target,
-        preferred_name=save_as or f"{sanitize_name(target) or 'read'}.txt",
+        preferred_name=save_as or _fallback_read_name("unsupported", target),
         should_materialize=False,
     )

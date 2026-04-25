@@ -344,6 +344,40 @@ def test_current_context_binding_prefers_codex_thread_over_term_session(
     assert binding.context_id == "thread-123"
 
 
+def test_current_context_binding_uses_sandbox_boot_id_when_present(
+    tmp_path: Path, monkeypatch
+) -> None:
+    boot_id_path = tmp_path / "boot_id"
+    boot_id_path.write_text("00000000-0000-4000-8000-000000000001\n", encoding="utf-8")
+    monkeypatch.delenv(content_env.CONTEXT_ID_ENV, raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("TERM_SESSION_ID", raising=False)
+    monkeypatch.setenv("IS_SANDBOX", "yes")
+    monkeypatch.setattr(content_context, "_SANDBOX_BOOT_ID_PATH", boot_id_path)
+
+    binding = content_context.current_context_binding()
+
+    assert binding.context_source == "sandbox_boot_id"
+    assert binding.context_id == "00000000-0000-4000-8000-000000000001"
+
+
+def test_current_context_binding_prefers_term_session_over_sandbox_boot_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    boot_id_path = tmp_path / "boot_id"
+    boot_id_path.write_text("00000000-0000-4000-8000-000000000001\n", encoding="utf-8")
+    monkeypatch.delenv(content_env.CONTEXT_ID_ENV, raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.setenv("TERM_SESSION_ID", "term-session-1")
+    monkeypatch.setenv("IS_SANDBOX", "yes")
+    monkeypatch.setattr(content_context, "_SANDBOX_BOOT_ID_PATH", boot_id_path)
+
+    binding = content_context.current_context_binding()
+
+    assert binding.context_source == "terminal_session"
+    assert binding.context_id == "term-session-1"
+
+
 def test_current_context_binding_uses_cwd_only_as_last_resort_fallback(
     tmp_path: Path, monkeypatch
 ) -> None:

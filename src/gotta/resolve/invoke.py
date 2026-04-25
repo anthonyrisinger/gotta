@@ -69,7 +69,7 @@ def resolve_invocation(
             resolved_target = resolve_read_target(argv, options)
         except SystemExit:
             target = next((item for item in argv if not item.startswith("-")), "")
-            preferred = options.save_as or "read.txt"
+            preferred = options.save_as or "read.bin"
             return ResolvedInvocation(
                 entry_plugin=entry_plugin,
                 entry_argv=entry_argv,

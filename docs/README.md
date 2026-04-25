@@ -17,7 +17,8 @@ At a glance:
 
 - `gotta search` routes plain-text remote discovery into provider-native search
   surfaces
-- `gotta read` materializes local or remote evidence into a durable session
+- `gotta read` materializes remote reads and live local file or directory
+  acquisition into a durable session
   graph
 - `gotta session` turns that graph into manifest, timeline, graph, leads,
   analyze, and scan views
@@ -529,9 +530,10 @@ Inside this topology:
 Read-only session-rooted surfaces such as `gotta oops`, `gotta logs`,
 `gotta todo`, `gotta want`, `gotta goal`, `gotta actor status`, and
 `gotta session show` auto-bootstrap the deterministic default session for
-stable interactive fingerprints like Codex threads and terminal sessions.
-Fallback synthetic fingerprints still require either an existing bound session
-or an explicit `--session <session-id>`.
+stable interactive fingerprints like Codex threads, terminal sessions, and
+Linux sandbox boot IDs when `IS_SANDBOX=yes`. Fallback synthetic fingerprints
+still require either an existing bound session or an explicit
+`--session <session-id>`.
 
 This split is deliberate:
 
@@ -664,8 +666,8 @@ These terms appear throughout `gotta` and its documentation:
 - **fingerprint** — the context identity that binds the current terminal,
   thread, or environment to one concrete session scope: an exact root, a shared
   session through the caller's actor root, or an explicit actor root.
-  Fingerprints are derived from terminal session IDs, Codex thread IDs, or
-  explicit bindings.
+  Fingerprints are derived from terminal session IDs, Codex thread IDs, Linux
+  sandbox boot IDs when `IS_SANDBOX=yes`, or explicit bindings.
 
 - **materialization** — the act of capturing command output as a durable,
   content-addressed artifact in the session's content store. Materialized

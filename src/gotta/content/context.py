@@ -6,6 +6,7 @@ import io
 import os
 import select
 import sys
+from pathlib import Path
 
 try:
     import fcntl
@@ -23,6 +24,18 @@ from gotta.content.env import (
 )
 from gotta.content.model import ContextBinding
 from gotta import topology
+
+
+_SANDBOX_BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+
+
+def _sandbox_boot_id() -> str:
+    if os.environ.get("IS_SANDBOX", "").strip().lower() != "yes":
+        return ""
+    try:
+        return _SANDBOX_BOOT_ID_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def current_context_binding() -> ContextBinding:
@@ -47,6 +60,13 @@ def current_context_binding() -> ContextBinding:
             context_id=term_session,
             context_source="terminal_session",
             binding_id=session_token(term_session),
+        )
+    sandbox_boot_id = _sandbox_boot_id()
+    if sandbox_boot_id:
+        return ContextBinding(
+            context_id=sandbox_boot_id,
+            context_source="sandbox_boot_id",
+            binding_id=session_token(sandbox_boot_id),
         )
     values = [
         os.environ.get("TTY", "").strip(),

@@ -21,11 +21,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gotta read",
         description=(
             "Render one local or remote target through the native retrieval surface. "
-            "Remote/provider reads store durable evidence only when an "
-            "initialized session is already in play or passed explicitly; "
+            "Remote/provider reads and local file/directory reads store durable "
+            "evidence only when an initialized session is already in play or "
+            "passed explicitly; "
             "`--head`, `--tail`, and `--section` only change what is shown to "
-            "the operator, while local/session-owned rereads stay as "
-            "non-materializing views."
+            "the operator, while session-owned rereads stay as non-materializing "
+            "views. Relative local paths resolve from the current working "
+            "directory."
         ),
     )
     parser.add_argument("target", nargs="?")
