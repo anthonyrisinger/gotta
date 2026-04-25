@@ -146,7 +146,9 @@ def bound_session_root(*, include_context_session: bool = True) -> Path | None:
 
 def resolve_dirs(options: CommonOptions, *, create: bool) -> ResolvedDirs:
     discovered = discover_state_env()
-    explicit_session = bool(options.session_dir)
+    explicit_session = bool(
+        options.session_dir or os.environ.get(SESSION_ENV, "").strip()
+    )
     session_raw = (
         options.session_dir
         or os.environ.get(SESSION_ENV, "").strip()

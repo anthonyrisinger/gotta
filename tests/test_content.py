@@ -302,6 +302,23 @@ def test_resolve_dirs_falls_back_to_context_bound_session(
     assert resolved.content_dir == (default_root / fingerprint / "content").resolve()
 
 
+def test_resolve_dirs_treats_env_session_root_as_explicit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    exact_root = tmp_path / "exact"
+    unrelated_content = tmp_path / "unrelated-content"
+    initialize_session(exact_root)
+    unrelated_content.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv(content_env.SESSION_ENV, str(exact_root))
+    monkeypatch.setenv(content_env.CONTENT_ENV, str(unrelated_content))
+
+    resolved = content_scope.resolve_dirs(content_model.CommonOptions(), create=False)
+
+    assert resolved.session_dir == exact_root.resolve()
+    assert resolved.content_dir == (exact_root / "content").resolve()
+
+
 def test_current_context_binding_uses_term_session_as_first_class_identity(
     tmp_path: Path, monkeypatch
 ) -> None:
