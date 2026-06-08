@@ -185,6 +185,35 @@ def test_confluence_page_ref_accepts_bare_and_prefixed_page_ids(monkeypatch) -> 
     assert long_short_url.page_id == "4345135130"
 
 
+def test_confluence_content_ref_accepts_folder_urls(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+
+    folder_url = confluence.parse_content_ref(
+        "https://example.atlassian.net/wiki/spaces/ENG/folder/30303/Runbooks"
+    )
+    prefixed = confluence.parse_content_ref("confluence:folder:40404")
+
+    assert folder_url.requested_id == "30303"
+    assert folder_url.folder_id == "30303"
+    assert folder_url.page_id is None
+    assert folder_url.base_url == "https://example.atlassian.net/wiki"
+    assert prefixed.requested_id == "40404"
+    assert prefixed.folder_id == "40404"
+
+
+def test_confluence_page_ref_rejects_folder_urls(monkeypatch) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+
+    with pytest.raises(confluence.ToolError) as excinfo:
+        confluence.parse_page_ref(
+            "https://example.atlassian.net/wiki/spaces/ENG/folder/30303/Runbooks"
+        )
+
+    assert "could not parse Confluence page ID" in str(excinfo.value)
+
+
 def test_confluence_page_ref_rejects_blogpost_urls(monkeypatch) -> None:
     monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
     monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
@@ -259,6 +288,56 @@ def test_confluence_get_trimmed_shortlink_resolves_to_page(monkeypatch, capsys) 
     assert payload["type"] == "page"
     assert payload["title"] == "The Ultimate Guide to the Pipeline (WIP)"
     assert any("/pages/3627384834?" in url for url in seen_urls)
+
+
+def test_confluence_get_folder_url_renders_markdown(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("GOTTA_CONFLUENCE_BASE_URL", raising=False)
+    monkeypatch.setattr(confluence, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        confluence,
+        "load_session",
+        lambda page_ref, allow_reauth=True: confluence.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+    seen_urls: list[str] = []
+
+    def fake_api_json(method: str, url: str, _token: str, body=None):
+        seen_urls.append(url)
+        assert method == "GET"
+        assert body is None
+        if "/folders/30303?" in url:
+            return {
+                "id": "30303",
+                "title": "Runbooks",
+                "spaceId": "SPACE-1",
+                "status": "current",
+                "_links": {"webui": "/spaces/ENG/folder/30303/Runbooks"},
+                "directChildren": [
+                    {"id": "10101", "title": "Deployments", "type": "page"},
+                ],
+            }
+        raise AssertionError(url)
+
+    monkeypatch.setattr(confluence, "api_json", fake_api_json)
+
+    assert (
+        confluence.main(
+            [
+                "get",
+                "https://example.atlassian.net/wiki/spaces/ENG/folder/30303/Runbooks",
+            ]
+        )
+        == 0
+    )
+
+    rendered = capsys.readouterr().out
+    assert "# Runbooks" in rendered
+    assert "- Folder ID: 30303" in rendered
+    assert "- Deployments (page) `10101`" in rendered
+    assert any("/folders/30303?" in url for url in seen_urls)
 
 
 def test_confluence_get_shortlink_falls_back_to_blogpost_lookup(

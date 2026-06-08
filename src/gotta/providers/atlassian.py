@@ -52,7 +52,7 @@ DEFAULT_OAUTH_SCOPE = (
     " write:sprint:jira-software read:project:jira"
     " read:confluence-content.all read:confluence-space.summary"
     " read:confluence-props search:confluence read:page:confluence"
-    " read:space:confluence read:attachment:confluence"
+    " read:space:confluence read:folder:confluence read:attachment:confluence"
     " readonly:content.attachment:confluence write:confluence-content"
     " write:confluence-file write:confluence-props write:page:confluence"
     " read:comment:confluence"
@@ -124,6 +124,22 @@ def extract_confluence_page_id(raw: str) -> str | None:
         short_match = re.search(r"/wiki/x/([A-Za-z0-9_-]+)(?:/|$)", parsed.path)
         if short_match:
             return decode_confluence_tiny_page_id(short_match.group(1))
+    return None
+
+
+def extract_confluence_folder_id(raw: str) -> str | None:
+    candidate = raw.strip()
+    if candidate.startswith("confluence:"):
+        candidate = candidate.removeprefix("confluence:")
+    if candidate.startswith("folder:"):
+        candidate = candidate.removeprefix("folder:")
+    parsed = urllib.parse.urlparse(candidate)
+    if parsed.scheme and parsed.netloc:
+        match = re.search(r"/folder/(\d+)(?:/|$)", parsed.path)
+        if match:
+            return match.group(1)
+    if candidate.isdigit():
+        return candidate
     return None
 
 

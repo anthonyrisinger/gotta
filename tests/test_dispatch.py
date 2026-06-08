@@ -509,6 +509,7 @@ def test_derive_preferred_name_for_delegated_read_targets() -> None:
         "github:search --type pr --repo acme/widgets ABC": "github-search-prs-acme-widgets-abc.json",
         "https://example.atlassian.net/wiki/spaces/ENG/pages/10101/Platform+Architecture+Overview": "10101.html",
         "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=20202": "20202.html",
+        "https://example.atlassian.net/wiki/spaces/ENG/folder/30303/Runbooks": "folder-30303.json",
         "https://example.atlassian.net/wiki/x/1J0AAA": "40404.html",
         "https://example.atlassian.net/browse/PROJ-3960": "PROJ-3960.json",
         "https://drive.google.com/file/d/drive-file-123/view?usp=sharing": "drive-file-123.bin",
@@ -812,6 +813,16 @@ def test_canonical_locator_normalizes_common_provider_shapes() -> None:
             ],
         )
         == "confluence:20202"
+    )
+    assert (
+        dispatch.canonical_locator(
+            "confluence",
+            [
+                "get",
+                "https://example.atlassian.net/wiki/spaces/ENG/folder/30303/Runbooks",
+            ],
+        )
+        == "confluence:folder:30303"
     )
     assert (
         dispatch.canonical_locator(
@@ -2377,6 +2388,9 @@ def test_granola_route_target_rejects_invalid_locators_quietly(capsys) -> None:
     assert plugin_api.get_surface("confluence").route_target(
         "confluence:search Architecture"
     ) == ["search", "Architecture"]
+    assert plugin_api.get_surface("confluence").route_target(
+        "confluence:folder:30303"
+    ) == ["get", "folder:30303"]
     assert plugin_api.get_surface("gdocs").route_target("gdocs:doc-123") == [
         "get",
         "doc-123",

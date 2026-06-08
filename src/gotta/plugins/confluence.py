@@ -40,7 +40,7 @@ PAGE_ARG_HELP = (
     f"against {CONFLUENCE_BASE_URL_ENV} when a Confluence base URL is persisted"
 )
 CONTENT_ARG_HELP = (
-    "Confluence page, blog post, or comment URL, or numeric content ID "
+    "Confluence page, blog post, folder, or comment URL, or numeric content ID "
     f"against {CONFLUENCE_BASE_URL_ENV} when a Confluence base URL is persisted"
 )
 DISALLOWED_MCP_PASSTHROUGH_FLAGS = atl.DISALLOWED_MCP_PASSTHROUGH_FLAGS
@@ -59,6 +59,7 @@ class ContentRef:
     requested_id: str | None = None
     page_id: str | None = None
     comment_id: str | None = None
+    folder_id: str | None = None
     base_url: str = ""
     space_key: str = ""
     allow_comment_fallback: bool = False
@@ -171,6 +172,8 @@ def canonical_locator(argv: list[str]) -> str:
     args = _parse_cli(argv)
     if args.command == "get":
         content_ref = parse_content_ref(args.page)
+        if content_ref.folder_id:
+            return f"confluence:folder:{content_ref.folder_id}"
         if content_ref.comment_id:
             return f"confluence:{content_ref.comment_id}"
         if content_ref.requested_id:
@@ -191,6 +194,8 @@ def preferred_name(argv: list[str], options: object) -> str:
     args = _parse_cli(argv)
     if args.command == "get":
         content_ref = parse_content_ref(args.page)
+        if content_ref.folder_id:
+            return f"folder-{content_ref.folder_id}.json"
         content_id = content_ref.comment_id or content_ref.requested_id or ""
         if content_id:
             return f"{content_id}.html"
@@ -308,6 +313,14 @@ def parse_content_ref(raw: str) -> ContentRef:
     base_match = re.match(r"^(https://[^/]+\.atlassian\.net)(?:/wiki/.*)?$", candidate)
     if base_match:
         base_url = f"{base_match.group(1)}/wiki"
+    parsed_path = urllib.parse.urlparse(candidate).path
+    folder_id = atl.extract_confluence_folder_id(candidate)
+    if folder_id and (candidate.startswith("folder:") or "/folder/" in parsed_path):
+        return ContentRef(
+            requested_id=folder_id,
+            folder_id=folder_id,
+            base_url=base_url,
+        )
     focused_comment_id = _extract_focused_comment_id(candidate)
     if focused_comment_id.isdigit():
         return ContentRef(
@@ -434,6 +447,14 @@ def comment_api_url(
     return (
         f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
         f"{comment_kind}/{comment_id}?{params}"
+    )
+
+
+def folder_api_url(session: Session, folder_id: str) -> str:
+    params = urllib.parse.urlencode({"include-direct-children": "true"})
+    return (
+        f"https://api.atlassian.com/ex/confluence/{session.cloud_id}/wiki/api/v2/"
+        f"folders/{folder_id}?{params}"
     )
 
 
@@ -975,6 +996,13 @@ def fetch_read_target(
         session = load_session(
             PageRef(base_url=content_ref.base_url), allow_reauth=allow_reauth
         )
+        if content_ref.folder_id:
+            folder = api_json(
+                "GET", folder_api_url(session, content_ref.folder_id), session.token
+            )
+            if not isinstance(folder, dict):
+                raise ToolError("unexpected folder response")
+            return session, "folder", folder
         if content_ref.comment_id:
             comment = _fetch_comment_payload(
                 session,
@@ -1744,6 +1772,54 @@ def render_comment_markdown(comment: dict[str, Any], session: Session) -> str:
     return "\n".join(lines)
 
 
+def _folder_children(folder: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("directChildren", "children", "results"):
+        value = folder.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            results = value.get("results")
+            if isinstance(results, list):
+                return [item for item in results if isinstance(item, dict)]
+    return []
+
+
+def render_folder_markdown(folder: dict[str, Any], session: Session) -> str:
+    folder_id = str(folder.get("id") or "")
+    title = str(folder.get("title") or folder.get("name") or "Confluence Folder")
+    space_id = str(folder.get("spaceId") or "")
+    status = str(folder.get("status") or "")
+    folder_url = ""
+    links = folder.get("_links")
+    if isinstance(links, dict):
+        webui = str(links.get("webui") or "").strip()
+        if webui:
+            folder_url = absolutize_confluence_url(
+                webui, base_url=f"{session.base_url.rstrip('/')}/wiki"
+            )
+    lines = [f"# {title}", ""]
+    if folder_url:
+        lines.append(f"- URL: {folder_url}")
+    if folder_id:
+        lines.append(f"- Folder ID: {folder_id}")
+    if space_id:
+        lines.append(f"- Space ID: {space_id}")
+    if status:
+        lines.append(f"- Status: {status}")
+    children = _folder_children(folder)
+    lines.extend(["", "## Direct Children", ""])
+    if not children:
+        lines.append("- (none returned)")
+    for child in children:
+        child_id = str(child.get("id") or "")
+        child_title = str(child.get("title") or child.get("name") or "(untitled)")
+        child_type = str(child.get("type") or child.get("contentType") or "content")
+        suffix = f" `{child_id}`" if child_id else ""
+        lines.append(f"- {child_title} ({child_type}){suffix}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _content_capture_meta(
     session: Session,
     kind: str,
@@ -1759,6 +1835,16 @@ def _content_capture_meta(
             f"{session.base_url.rstrip('/')}/wiki/pages/viewpage.action?"
             f"pageId={page_id}&focusedCommentId={content_id}"
             if session.base_url and page_id and content_id
+            else ""
+        )
+    elif kind == "folder":
+        links = content.get("_links")
+        webui = str(links.get("webui") or "").strip() if isinstance(links, dict) else ""
+        url = (
+            absolutize_confluence_url(
+                webui, base_url=f"{session.base_url.rstrip('/')}/wiki"
+            )
+            if webui
             else ""
         )
     else:
@@ -1784,6 +1870,10 @@ def _content_capture_meta(
 
 def _content_capture_name(kind: str, content: dict[str, Any], fallback: str) -> str:
     content_id = str(content.get("id") or "").strip()
+    if kind == "folder":
+        if content_id:
+            return f"folder-{content_id}.json"
+        return f"{fallback or 'folder'}.json"
     if content_id:
         return f"{content_id}.html"
     if fallback:
@@ -1793,6 +1883,16 @@ def _content_capture_name(kind: str, content: dict[str, Any], fallback: str) -> 
 
 def _markdown_from_capture(capture: Capture) -> bytes:
     kind = str(capture.metadata.get("content_kind") or "page")
+    if kind == "folder":
+        try:
+            payload = json.loads(capture.data.decode("utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            base_url = str(capture.metadata.get("source_base_url") or "").strip()
+            session = Session(token="", cloud_id="", base_url=base_url)
+            return render_folder_markdown(payload, session).encode("utf-8")
+        return projection_bytes(capture.data, content_type=capture.content_type).data
     session: Session | None = None
     base_url = str(capture.metadata.get("source_base_url") or "").strip()
     if base_url:
@@ -1861,7 +1961,9 @@ def capture(argv: list[str], _options: object) -> Capture:
         raise NotImplementedError("confluence capture does not support this command")
     session, content_kind, content = fetch_read_target(parse_content_ref(args.page))
     body = (
-        comment_storage_value(content)
+        json_bytes(content).decode("utf-8")
+        if content_kind == "folder"
+        else comment_storage_value(content)
         if content_kind == "comment"
         else storage_value(content)
     )
@@ -1872,7 +1974,7 @@ def capture(argv: list[str], _options: object) -> Capture:
     return Capture(
         data=body.encode("utf-8"),
         preferred_name=_content_capture_name(content_kind, content, fallback),
-        content_type="text/html",
+        content_type="application/json" if content_kind == "folder" else "text/html",
         metadata=_content_capture_meta(session, content_kind, content),
         view_data={"content": content, "content_kind": content_kind},
     )
@@ -2186,6 +2288,9 @@ def cmd_create_page(args: argparse.Namespace) -> int:
 def cmd_get(args: argparse.Namespace) -> int:
     session, content_kind, content = fetch_read_target(parse_content_ref(args.page))
     if args.output == "body":
+        if content_kind == "folder":
+            print_json(content)
+            return 0
         if content_kind == "comment":
             sys.stdout.write(comment_storage_value(content))
         else:
@@ -2194,6 +2299,8 @@ def cmd_get(args: argparse.Namespace) -> int:
     if args.output == "markdown":
         if content_kind == "comment":
             sys.stdout.write(render_comment_markdown(content, session))
+        elif content_kind == "folder":
+            sys.stdout.write(render_folder_markdown(content, session))
         else:
             sys.stdout.write(render_page_markdown(content, session))
         return 0
@@ -2205,6 +2312,14 @@ def cmd_get(args: argparse.Namespace) -> int:
                 "pageId": content.get("pageId"),
                 "version": content.get("version"),
                 "status": content.get("status"),
+            }
+        elif content_kind == "folder":
+            content = {
+                "id": content["id"],
+                "type": "folder",
+                "title": content.get("title") or content.get("name"),
+                "status": content.get("status"),
+                "spaceId": content.get("spaceId"),
             }
         else:
             content = {
@@ -2570,7 +2685,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser(
-        "get", help="fetch Confluence page, blog post, or comment content"
+        "get", help="fetch Confluence page, blog post, folder, or comment content"
     )
     p.add_argument("page", help=CONTENT_ARG_HELP)
     p.add_argument(
