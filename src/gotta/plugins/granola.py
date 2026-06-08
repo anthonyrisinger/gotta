@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import contextlib
 import datetime as dt
 import gzip
@@ -22,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.content.file import write_text_atomic
 from gotta.projection import Projection, projection_bytes
 from gotta.helptext import is_long_help_request, print_long_help
 from gotta.project import pretty_json
@@ -35,6 +38,7 @@ DEFAULT_SUPABASE = (
 )
 DEFAULT_API_URL = "https://api.granola.ai/v2/get-documents"
 DEFAULT_TRANSCRIPT_API_URL = "https://api.granola.ai/v1/get-document-transcript"
+DEFAULT_REFRESH_API_URL = "https://api.granola.ai/v1/refresh-access-token"
 DEFAULT_LIST_LIMIT = 10
 DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_EXPORT_LIMIT = 20
@@ -100,7 +104,7 @@ def _is_document_id(raw: str) -> bool:
 
 DISCOVERY_COMMANDS = {"list", "search", "search-transcript"}
 EVIDENCE_COMMANDS = {"get", "transcript"}
-NON_ARTIFACT_COMMANDS = {"export", "status"}
+NON_ARTIFACT_COMMANDS = {"auth", "export", "status"}
 
 
 def artifact_intent(argv: list[str]) -> str:
@@ -155,6 +159,8 @@ def canonical_locator(argv: list[str]) -> str:
     args = _parse_cli(argv)
     if args.command == "status":
         return "granola:status"
+    if args.command == "auth":
+        return f"granola:{shlex.join(argv)}"
     if args.command == "transcript":
         selector = args.selector.strip()
         if (
@@ -447,8 +453,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         ) from exc
 
 
-def load_access_token(supabase_path: Path) -> str:
-    wrapper = _read_json(supabase_path)
+def _workos_tokens(wrapper: dict[str, Any], supabase_path: Path) -> dict[str, Any]:
     raw_tokens = wrapper.get("workos_tokens")
     if isinstance(raw_tokens, str):
         try:
@@ -463,12 +468,122 @@ def load_access_token(supabase_path: Path) -> str:
         raise ToolError(
             f"Granola local session is missing workos_tokens: {supabase_path}"
         )
-    token = str(tokens.get("access_token") or "").strip()
+    if not isinstance(tokens, dict):
+        raise ToolError(
+            f"Granola local session token blob is not a JSON object: {supabase_path}"
+        )
+    return tokens
+
+
+def _session_token(wrapper: dict[str, Any], supabase_path: Path, key: str) -> str:
+    tokens = _workos_tokens(wrapper, supabase_path)
+    return str(tokens.get(key) or "").strip()
+
+
+def load_access_token(supabase_path: Path) -> str:
+    wrapper = _read_json(supabase_path)
+    token = _session_token(wrapper, supabase_path, "access_token")
     if not token:
         raise ToolError(
             f"Granola local session does not contain an access token: {supabase_path}"
         )
     return token
+
+
+def load_refresh_token(supabase_path: Path) -> str:
+    wrapper = _read_json(supabase_path)
+    token = _session_token(wrapper, supabase_path, "refresh_token")
+    if not token:
+        raise ToolError(
+            f"Granola local session does not contain a refresh token: {supabase_path}"
+        )
+    return token
+
+
+def ensure_access_token(supabase_path: Path, refresh_api_url: str) -> str:
+    token = load_access_token(supabase_path)
+    if _session_is_current(token):
+        return token
+    refresh_session_payload(
+        supabase_path=supabase_path,
+        refresh_api_url=refresh_api_url,
+    )
+    return load_access_token(supabase_path)
+
+
+def _iso_file_mtime(path: Path) -> str:
+    try:
+        stamp = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc)
+    except OSError:
+        return ""
+    return stamp.isoformat().replace("+00:00", "Z")
+
+
+def _jwt_timestamp(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, int | float):
+        return ""
+    stamp = dt.datetime.fromtimestamp(value, dt.timezone.utc)
+    return stamp.isoformat().replace("+00:00", "Z")
+
+
+def _decode_jwt_payload(token: str) -> dict[str, Any]:
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {}
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = base64.urlsafe_b64decode(padded.encode("ascii"))
+        decoded = json.loads(payload)
+    except (binascii.Error, ValueError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def access_token_metadata_for_token(token: str) -> dict[str, Any]:
+    payload = _decode_jwt_payload(token)
+    if not payload:
+        return {}
+    expires_at = _jwt_timestamp(payload, "exp")
+    issued_at = _jwt_timestamp(payload, "iat")
+    metadata: dict[str, Any] = {
+        "accessTokenIssuedAt": issued_at,
+        "accessTokenExpiresAt": expires_at,
+    }
+    exp = payload.get("exp")
+    if isinstance(exp, int | float):
+        metadata["accessTokenExpired"] = utc_now().timestamp() >= float(exp)
+    return metadata
+
+
+def access_token_metadata(supabase_path: Path) -> dict[str, Any]:
+    try:
+        token = load_access_token(supabase_path)
+    except ToolError:
+        return {}
+    return access_token_metadata_for_token(token)
+
+
+def encrypted_session_metadata(supabase_path: Path) -> dict[str, Any]:
+    encrypted_path = supabase_path.with_name(f"{supabase_path.name}.enc")
+    plaintext_mtime = _iso_file_mtime(supabase_path)
+    encrypted_mtime = _iso_file_mtime(encrypted_path)
+    metadata: dict[str, Any] = {
+        "encryptedSessionFile": str(encrypted_path),
+        "encryptedSessionPresent": encrypted_path.exists(),
+        "plaintextSessionModifiedAt": plaintext_mtime,
+        "encryptedSessionModifiedAt": encrypted_mtime,
+        "encryptedSessionNewer": False,
+    }
+    try:
+        metadata["encryptedSessionNewer"] = (
+            encrypted_path.exists()
+            and supabase_path.exists()
+            and encrypted_path.stat().st_mtime > supabase_path.stat().st_mtime
+        )
+    except OSError:
+        metadata["encryptedSessionNewer"] = False
+    return metadata
 
 
 def _http_error_message(exc: urllib.error.HTTPError) -> str:
@@ -485,7 +600,13 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
     return f"{base}: {detail}" if detail else base
 
 
-def request_json(url: str, token: str, payload: dict[str, Any]) -> Any:
+def request_json(
+    url: str,
+    token: str,
+    payload: dict[str, Any],
+    *,
+    extra_headers: dict[str, str] | None = None,
+) -> Any:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, method="POST")
     request.add_header("Authorization", f"Bearer {token}")
@@ -494,6 +615,8 @@ def request_json(url: str, token: str, payload: dict[str, Any]) -> Any:
     request.add_header("Content-Type", "application/json")
     request.add_header("User-Actor", USER_ACTOR)
     request.add_header("X-Client-Version", CLIENT_VERSION)
+    for key, value in (extra_headers or {}).items():
+        request.add_header(key, value)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read()
@@ -512,11 +635,115 @@ def request_json(url: str, token: str, payload: dict[str, Any]) -> Any:
         raise ToolError("Granola API returned invalid JSON") from exc
 
 
-def post_json(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
-    response = request_json(url, token, payload)
+def post_json(
+    url: str,
+    token: str,
+    payload: dict[str, Any],
+    *,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    response = request_json(url, token, payload, extra_headers=extra_headers)
     if not isinstance(response, dict):
         raise ToolError("Granola API returned an unexpected payload shape")
     return response
+
+
+def _workos_token_blob_was_string(wrapper: dict[str, Any]) -> bool:
+    return isinstance(wrapper.get("workos_tokens"), str)
+
+
+def _store_workos_tokens(
+    wrapper: dict[str, Any],
+    tokens: dict[str, Any],
+    *,
+    preserve_string_blob: bool,
+) -> None:
+    if preserve_string_blob:
+        wrapper["workos_tokens"] = json.dumps(tokens, separators=(",", ":"))
+    else:
+        wrapper["workos_tokens"] = tokens
+    session_id = str(tokens.get("session_id") or "").strip()
+    if session_id:
+        wrapper["session_id"] = session_id
+
+
+def _session_is_current(access_token: str) -> bool:
+    if not access_token:
+        return False
+    metadata = access_token_metadata_for_token(access_token)
+    return metadata.get("accessTokenExpired") is not True
+
+
+def refresh_session_payload(
+    *,
+    supabase_path: Path,
+    refresh_api_url: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    wrapper = _read_json(supabase_path)
+    tokens = _workos_tokens(wrapper, supabase_path)
+    access_token = str(tokens.get("access_token") or "").strip()
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    token_metadata = access_token_metadata_for_token(access_token)
+    payload: dict[str, Any] = {
+        "surface": "granola",
+        "command": "auth refresh",
+        "supabaseFile": str(supabase_path),
+        "refreshApiUrl": refresh_api_url,
+        "refreshed": False,
+        "forced": force,
+        "accessTokenPresent": bool(access_token),
+        "refreshTokenPresent": bool(refresh_token),
+        "accessTokenExpiresAt": token_metadata.get("accessTokenExpiresAt", ""),
+        "accessTokenExpired": bool(token_metadata.get("accessTokenExpired")),
+        "status": "skipped",
+        "nextStep": "ready",
+    }
+    if not access_token:
+        raise ToolError(
+            f"Granola local session does not contain an access token: {supabase_path}"
+        )
+    if not refresh_token:
+        raise ToolError(
+            f"Granola local session does not contain a refresh token: {supabase_path}"
+        )
+    if not force and _session_is_current(access_token):
+        payload["reason"] = "plaintext session already has a non-expired access token"
+        return payload
+
+    response = post_json(
+        refresh_api_url,
+        access_token,
+        {"refresh_token": refresh_token},
+    )
+    refreshed_access_token = str(response.get("access_token") or "").strip()
+    if not refreshed_access_token:
+        raise ToolError("Granola auth refresh did not return an access token")
+    refreshed_tokens = {**tokens, **response}
+    refreshed_tokens["access_token"] = refreshed_access_token
+    refreshed_tokens["refresh_token"] = str(
+        refreshed_tokens.get("refresh_token") or refresh_token
+    ).strip()
+    refreshed_tokens["obtained_at"] = int(utc_now().timestamp() * 1000)
+    _store_workos_tokens(
+        wrapper,
+        refreshed_tokens,
+        preserve_string_blob=_workos_token_blob_was_string(wrapper),
+    )
+    write_text_atomic(
+        supabase_path, json.dumps(wrapper, indent=2, sort_keys=True) + "\n"
+    )
+    refreshed_metadata = access_token_metadata_for_token(refreshed_access_token)
+    payload.update(
+        {
+            "refreshed": True,
+            "status": "refreshed",
+            "accessTokenExpiresAt": refreshed_metadata.get("accessTokenExpiresAt", ""),
+            "accessTokenExpired": bool(refreshed_metadata.get("accessTokenExpired")),
+            "nextStep": "rerun `gotta granola status` or the original Granola command",
+        }
+    )
+    return payload
 
 
 def fetch_documents(
@@ -1322,6 +1549,7 @@ def granola_status_payload(supabase_path: Path, api_url: str) -> dict[str, Any]:
             "from supabase.json"
         ),
     }
+    payload.update(encrypted_session_metadata(supabase_path))
     if not supabase_path.exists():
         return payload
     try:
@@ -1335,13 +1563,35 @@ def granola_status_payload(supabase_path: Path, api_url: str) -> dict[str, Any]:
         return payload
     payload["accessTokenPresent"] = bool(token)
     try:
+        payload["refreshTokenPresent"] = bool(load_refresh_token(supabase_path))
+    except ToolError:
+        payload["refreshTokenPresent"] = False
+    payload.update(access_token_metadata(supabase_path))
+    try:
         documents = fetch_documents(api_url, token, limit=1)
     except ToolError as exc:
         payload["sessionStatus"] = "invalid"
         payload["error"] = str(exc)
-        payload["nextStep"] = (
-            "open Granola to refresh the local session, then rerun `gotta granola status`"
-        )
+        if payload.get("accessTokenExpired") and payload.get("refreshTokenPresent"):
+            payload["nextStep"] = (
+                "run `gotta granola auth refresh`, then rerun `gotta granola status`"
+            )
+        elif payload.get("accessTokenExpired") and payload.get("encryptedSessionNewer"):
+            payload["nextStep"] = (
+                "Granola has newer encrypted session state, but gotta currently reads "
+                "the stale plaintext supabase.json token; run "
+                "`gotta granola auth refresh` or expose a fresh plaintext session "
+                "before retrying"
+            )
+        elif payload.get("accessTokenExpired"):
+            payload["nextStep"] = (
+                "open Granola or sign in again to refresh the expired local session, "
+                "then rerun `gotta granola status`"
+            )
+        else:
+            payload["nextStep"] = (
+                "open Granola to refresh the local session, then rerun `gotta granola status`"
+            )
         return payload
     payload["sessionStatus"] = "ready"
     payload["documentAccess"] = True
@@ -1353,7 +1603,7 @@ def granola_status_payload(supabase_path: Path, api_url: str) -> dict[str, Any]:
 def _load_recent_documents(
     args: argparse.Namespace, *, limit: int | None
 ) -> list[dict[str, Any]]:
-    token = load_access_token(args.supabase)
+    token = ensure_access_token(args.supabase, args.refresh_api_url)
     return fetch_documents(args.api_url, token, limit=limit)
 
 
@@ -1367,11 +1617,45 @@ def cmd_status(args: argparse.Namespace) -> int:
         f"supabase_file\t{payload['supabaseFile']}",
         f"session_status\t{payload['sessionStatus']}",
         f"local_session_present\t{str(bool(payload.get('localSessionPresent'))).lower()}",
+        f"encrypted_session_present\t{str(bool(payload.get('encryptedSessionPresent'))).lower()}",
+        f"encrypted_session_newer\t{str(bool(payload.get('encryptedSessionNewer'))).lower()}",
         f"document_access\t{str(bool(payload.get('documentAccess'))).lower()}",
         f"next_step\t{payload.get('nextStep') or ''}",
     ]
+    if payload.get("accessTokenExpiresAt"):
+        lines.append(f"access_token_expires_at\t{payload['accessTokenExpiresAt']}")
+    if "accessTokenExpired" in payload:
+        lines.append(
+            f"access_token_expired\t{str(bool(payload.get('accessTokenExpired'))).lower()}"
+        )
     if payload.get("error"):
         lines.append(f"error\t{payload['error']}")
+    print("\n".join(lines))
+    return 0
+
+
+def cmd_auth_refresh(args: argparse.Namespace) -> int:
+    payload = refresh_session_payload(
+        supabase_path=args.supabase,
+        refresh_api_url=args.refresh_api_url,
+        force=args.force,
+    )
+    if args.output == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    lines = [
+        "surface\tgranola",
+        "command\tauth refresh",
+        f"status\t{payload.get('status') or 'unknown'}",
+        f"refreshed\t{str(bool(payload.get('refreshed'))).lower()}",
+        f"forced\t{str(bool(payload.get('forced'))).lower()}",
+        f"access_token_expired\t{str(bool(payload.get('accessTokenExpired'))).lower()}",
+    ]
+    if payload.get("accessTokenExpiresAt"):
+        lines.append(f"access_token_expires_at\t{payload['accessTokenExpiresAt']}")
+    if payload.get("reason"):
+        lines.append(f"reason\t{payload['reason']}")
+    lines.append(f"next_step\t{payload.get('nextStep') or ''}")
     print("\n".join(lines))
     return 0
 
@@ -1435,7 +1719,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    token = load_access_token(args.supabase)
+    token = ensure_access_token(args.supabase, args.refresh_api_url)
     documents = fetch_documents(args.api_url, token)
     window = _resolve_note_window(args)
     payload = search_documents(
@@ -1492,7 +1776,7 @@ def capture(argv: list[str], _options: object) -> Capture:
             metadata=_capture_meta(document),
         )
     if args.command == "transcript":
-        token = load_access_token(args.supabase)
+        token = ensure_access_token(args.supabase, args.refresh_api_url)
         documents = fetch_documents(args.api_url, token, limit=None)
         document = select_document(documents, args.selector)
         segments = fetch_transcript(
@@ -1671,7 +1955,7 @@ def project(argv: list[str], capture: Capture) -> Projection:
 
 
 def cmd_transcript(args: argparse.Namespace) -> int:
-    token = load_access_token(args.supabase)
+    token = ensure_access_token(args.supabase, args.refresh_api_url)
     documents = fetch_documents(args.api_url, token, limit=None)
     document = select_document(documents, args.selector)
     segments = fetch_transcript(
@@ -1714,7 +1998,7 @@ def cmd_transcript(args: argparse.Namespace) -> int:
 
 
 def cmd_search_transcript(args: argparse.Namespace) -> int:
-    token = load_access_token(args.supabase)
+    token = ensure_access_token(args.supabase, args.refresh_api_url)
     documents = fetch_documents(args.api_url, token, limit=None)
     window = _resolve_transcript_search_window(args)
     payload = search_transcripts(
@@ -1820,11 +2104,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TRANSCRIPT_API_URL,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--refresh-api-url",
+        default=DEFAULT_REFRESH_API_URL,
+        help=argparse.SUPPRESS,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("status", help="inspect local Granola session readiness")
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_status)
+
+    auth = sub.add_parser("auth", help="manage local Granola auth")
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    p = auth_sub.add_parser(
+        "refresh",
+        help="refresh the local Granola access token with the cached refresh token",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="refresh even when the current plaintext access token is not expired",
+    )
+    p.add_argument("--output", choices=["summary", "json"], default="summary")
+    p.set_defaults(func=cmd_auth_refresh)
 
     p = sub.add_parser("list", help="list recent Granola notes")
     p.add_argument("--limit", type=positive_int, default=DEFAULT_LIST_LIMIT)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
 from gotta.plugins import granola
@@ -34,6 +36,21 @@ def _freeze_now(monkeypatch) -> None:
     )
 
 
+def _jwt_payload(payload: dict[str, object]) -> str:
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    return encoded.rstrip("=")
+
+
+def _fake_jwt(payload: dict[str, object]) -> str:
+    return ".".join(
+        [
+            _jwt_payload({"alg": "none", "typ": "JWT"}),
+            _jwt_payload(payload),
+            "signature",
+        ]
+    )
+
+
 def test_granola_parser_defaults() -> None:
     assert granola.build_parser().parse_args(["status"]).output == "summary"
     assert granola.build_parser().parse_args(["list"]).output == "markdown"
@@ -41,6 +58,9 @@ def test_granola_parser_defaults() -> None:
     assert granola.build_parser().parse_args(["list"]).order == "desc"
     assert granola.build_parser().parse_args(["list"]).offset == 0
     assert granola.build_parser().parse_args(["list"]).time_range == "last_90_days"
+    assert (
+        granola.build_parser().parse_args(["auth", "refresh"]).auth_command == "refresh"
+    )
     assert granola.build_parser().parse_args(["search", "needle"]).mode == "auto"
     assert (
         granola.build_parser().parse_args(["search", "needle"]).time_range
@@ -74,6 +94,225 @@ def test_granola_status_reports_missing_local_session(capsys, tmp_path: Path) ->
     assert "surface\tgranola" in out
     assert "session_status\tmissing" in out
     assert "local_session_present\tfalse" in out
+
+
+def test_granola_status_reports_expired_plaintext_token_with_newer_encrypted_session(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    _freeze_now(monkeypatch)
+    expired_token = _fake_jwt(
+        {
+            "iss": "https://auth.granola.ai/user_management/client",
+            "iat": 1773770400,
+            "exp": 1773774000,
+        }
+    )
+    supabase = tmp_path / "supabase.json"
+    supabase.write_text(
+        json.dumps(
+            {
+                "workos_tokens": json.dumps(
+                    {
+                        "access_token": expired_token,
+                        "refresh_token": "refresh-token",
+                    }
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
+    encrypted = tmp_path / "supabase.json.enc"
+    encrypted.write_bytes(b"encrypted")
+    os.utime(supabase, (1773770400, 1773770400))
+    os.utime(encrypted, (1773777600, 1773777600))
+
+    def fail_fetch(api_url, token, limit=None):
+        raise granola.ToolError(
+            'Granola API request failed: HTTP 401: {"message":"Unauthorized"}'
+        )
+
+    monkeypatch.setattr(granola, "fetch_documents", fail_fetch)
+
+    result = granola.main(["--supabase", str(supabase), "status"])
+
+    out = capsys.readouterr().out
+    assert result == 0
+    assert "session_status\tinvalid" in out
+    assert "encrypted_session_present\ttrue" in out
+    assert "encrypted_session_newer\ttrue" in out
+    assert "access_token_expires_at\t2026-03-17T19:00:00Z" in out
+    assert "access_token_expired\ttrue" in out
+    assert "`gotta granola auth refresh`" in out
+
+
+def test_granola_auth_refresh_skips_when_plaintext_token_is_current(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    _freeze_now(monkeypatch)
+    fresh_token = _fake_jwt(
+        {
+            "iss": "https://auth.granola.ai/user_management/client",
+            "iat": 1773835200,
+            "exp": 1773921600,
+        }
+    )
+    supabase = tmp_path / "supabase.json"
+    supabase.write_text(
+        json.dumps(
+            {
+                "workos_tokens": json.dumps(
+                    {
+                        "access_token": fresh_token,
+                        "refresh_token": "refresh-token",
+                    }
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def unexpected_post_json(*args, **kwargs):
+        raise AssertionError("current access tokens should not be refreshed")
+
+    monkeypatch.setattr(granola, "post_json", unexpected_post_json)
+
+    result = granola.main(["--supabase", str(supabase), "auth", "refresh"])
+
+    out = capsys.readouterr().out
+    assert result == 0
+    assert "status\tskipped" in out
+    assert "refreshed\tfalse" in out
+    assert "already has a non-expired access token" in out
+
+
+def test_granola_auth_refresh_updates_plaintext_workos_tokens(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    _freeze_now(monkeypatch)
+    expired_token = _fake_jwt(
+        {
+            "iss": "https://auth.granola.ai/user_management/client",
+            "iat": 1773770400,
+            "exp": 1773774000,
+        }
+    )
+    refreshed_token = _fake_jwt(
+        {
+            "iss": "https://auth.granola.ai/user_management/client",
+            "iat": 1773835200,
+            "exp": 1773921600,
+        }
+    )
+    supabase = tmp_path / "supabase.json"
+    supabase.write_text(
+        json.dumps(
+            {
+                "session_id": "old-session",
+                "workos_tokens": json.dumps(
+                    {
+                        "access_token": expired_token,
+                        "expires_in": 3600,
+                        "refresh_token": "old-refresh-token",
+                        "session_id": "old-session",
+                        "token_type": "Bearer",
+                    }
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: dict[str, object] = {}
+
+    def fake_post_json(url, token, payload, *, extra_headers=None):
+        seen["url"] = url
+        seen["token"] = token
+        seen["payload"] = payload
+        return {
+            "access_token": refreshed_token,
+            "expires_in": 3600,
+            "refresh_token": "new-refresh-token",
+            "session_id": "new-session",
+            "token_type": "Bearer",
+        }
+
+    monkeypatch.setattr(granola, "post_json", fake_post_json)
+
+    result = granola.main(["--supabase", str(supabase), "auth", "refresh"])
+
+    out = capsys.readouterr().out
+    refreshed = json.loads(supabase.read_text(encoding="utf-8"))
+    refreshed_tokens = json.loads(refreshed["workos_tokens"])
+    assert result == 0
+    assert "status\trefreshed" in out
+    assert "refreshed\ttrue" in out
+    assert seen["payload"] == {"refresh_token": "old-refresh-token"}
+    assert refreshed_tokens["access_token"] == refreshed_token
+    assert refreshed_tokens["refresh_token"] == "new-refresh-token"
+    assert refreshed_tokens["obtained_at"] == 1773835200000
+    assert refreshed["session_id"] == "new-session"
+
+
+def test_granola_list_refreshes_expired_plaintext_token_before_fetching(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    _freeze_now(monkeypatch)
+    expired_token = _fake_jwt(
+        {
+            "iss": "https://auth.granola.ai/user_management/client",
+            "iat": 1773770400,
+            "exp": 1773774000,
+        }
+    )
+    refreshed_token = _fake_jwt(
+        {
+            "iss": "https://auth.granola.ai/user_management/client",
+            "iat": 1773835200,
+            "exp": 1773921600,
+        }
+    )
+    supabase = tmp_path / "supabase.json"
+    supabase.write_text(
+        json.dumps(
+            {
+                "workos_tokens": json.dumps(
+                    {
+                        "access_token": expired_token,
+                        "expires_in": 3600,
+                        "refresh_token": "refresh-token",
+                        "token_type": "Bearer",
+                    }
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        granola,
+        "post_json",
+        lambda url, token, payload, *, extra_headers=None: {
+            "access_token": refreshed_token,
+            "expires_in": 3600,
+            "refresh_token": "refresh-token",
+            "token_type": "Bearer",
+        },
+    )
+    seen_tokens: list[str] = []
+
+    def fake_fetch_documents(api_url, token, limit=None):
+        seen_tokens.append(token)
+        return [_doc("11111111-1111-1111-1111-111111111111", "Weekly Review")]
+
+    monkeypatch.setattr(granola, "fetch_documents", fake_fetch_documents)
+
+    result = granola.main(
+        ["--supabase", str(supabase), "list", "--limit", "1", "--output", "summary"]
+    )
+
+    out = capsys.readouterr().out
+    assert result == 0
+    assert seen_tokens == [refreshed_token]
+    assert "Weekly Review" in out
 
 
 def test_best_note_body_prefers_notes_markdown_then_panel_html() -> None:
