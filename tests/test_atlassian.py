@@ -1000,6 +1000,234 @@ def test_jira_and_confluence_get_default_to_markdown() -> None:
     assert confluence.build_parser().parse_args(["get", "10101"]).output == "markdown"
 
 
+def test_jira_get_fetches_and_renders_story_points_and_issue_links(
+    monkeypatch,
+) -> None:
+    seen_urls: list[str] = []
+    monkeypatch.setattr(jira, "_STORY_POINTS_FIELD_CACHE", {})
+    monkeypatch.setattr(
+        jira,
+        "load_atlassian_config_env",
+        lambda: {"GOTTA_JIRA_STORY_POINTS_FIELD": "customfield_12345"},
+    )
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: jira.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, _token: str, payload=None):
+        seen_urls.append(url)
+        assert method == "GET"
+        assert payload is None
+        return {
+            "id": "10001",
+            "key": "OPS-1",
+            "fields": {
+                "summary": "Investigate queue pressure",
+                "status": {"name": "In Progress"},
+                "issuetype": {"name": "Story"},
+                "project": {"key": "OPS", "name": "Operations"},
+                "priority": {"name": "High"},
+                "assignee": {"displayName": "Alex"},
+                "reporter": {"displayName": "Blair"},
+                "labels": ["queues"],
+                "created": "2026-06-01T00:00:00Z",
+                "updated": "2026-06-02T00:00:00Z",
+                "customfield_12345": 8,
+                "issuelinks": [
+                    {
+                        "id": "20001",
+                        "type": {
+                            "name": "Blocks",
+                            "outward": "blocks",
+                            "inward": "is blocked by",
+                        },
+                        "outwardIssue": {
+                            "id": "10002",
+                            "key": "OPS-2",
+                            "fields": {
+                                "summary": "Drain worker backlog",
+                                "status": {"name": "To Do"},
+                                "issuetype": {"name": "Task"},
+                            },
+                        },
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(jira, "api_json", fake_api_json)
+
+    envelope = jira.fetch_issue(
+        jira.IssueRef(
+            issue_key="OPS-1",
+            base_url="https://example.atlassian.net",
+        ),
+        fields=jira.DEFAULT_GET_FIELDS,
+    )
+    rendered = jira.markdown_issue(envelope)
+
+    assert "customfield_12345" in seen_urls[0]
+    assert "issuelinks" in seen_urls[0]
+    assert envelope["storyPoints"] == 8
+    assert envelope["issueLinks"][0]["relationship"] == "blocks"
+    assert "- Story Points: 8" in rendered
+    assert "## Issue Links" in rendered
+    assert (
+        "- blocks [OPS-2](https://example.atlassian.net/browse/OPS-2): "
+        "Drain worker backlog (To Do)"
+    ) in rendered
+
+
+def test_jira_get_discovers_story_point_field_by_name(
+    monkeypatch, tmp_path: Path
+) -> None:
+    seen_urls: list[str] = []
+    monkeypatch.setattr(
+        jira, "STORY_POINTS_FIELD_CACHE_FILE", tmp_path / "jira-field-cache.json"
+    )
+    monkeypatch.setattr(jira, "_STORY_POINTS_FIELD_CACHE", {})
+    monkeypatch.setattr(jira, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        jira,
+        "load_session",
+        lambda base_url, allow_reauth=True: jira.Session(
+            token="token",
+            cloud_id="cloud",
+            base_url="https://example.atlassian.net",
+        ),
+    )
+
+    def fake_api_json(method: str, url: str, _token: str, payload=None):
+        seen_urls.append(url)
+        assert method == "GET"
+        assert payload is None
+        if "/field/search?" in url:
+            return {
+                "values": [
+                    {
+                        "id": "customfield_12345",
+                        "name": "Story Points",
+                        "schema": {"type": "number", "custom": "com.example.points"},
+                    }
+                ]
+            }
+        return {
+            "id": "10001",
+            "key": "OPS-1",
+            "fields": {
+                "summary": "Estimate cleanup",
+                "customfield_12345": "3.0",
+            },
+        }
+
+    monkeypatch.setattr(jira, "api_json", fake_api_json)
+
+    envelope = jira.fetch_issue(
+        jira.IssueRef(
+            issue_key="OPS-1",
+            base_url="https://example.atlassian.net",
+        ),
+        fields=jira.DEFAULT_GET_FIELDS,
+    )
+
+    assert any("/field/search?" in url for url in seen_urls)
+    assert "customfield_12345" in seen_urls[-1]
+    assert envelope["storyPoints"] == 3
+
+
+def test_jira_story_point_field_discovery_persists_positive_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cache_file = tmp_path / "jira-field-cache.json"
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(jira, "STORY_POINTS_FIELD_CACHE_FILE", cache_file)
+    monkeypatch.setattr(jira, "_STORY_POINTS_FIELD_CACHE", {})
+    monkeypatch.setattr(jira, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(
+        jira,
+        "api_json",
+        lambda method, url, _token: {
+            "values": [{"id": "customfield_12345", "name": "Story Points"}]
+        },
+    )
+
+    assert jira.resolve_story_points_field_id(session) == "customfield_12345"
+
+    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert (
+        payload["storyPointsFields"]["cloud:https://example.atlassian.net"]
+        == "customfield_12345"
+    )
+
+    monkeypatch.setattr(jira, "_STORY_POINTS_FIELD_CACHE", {})
+
+    def fail_api_json(method: str, url: str, _token: str):
+        raise AssertionError("persisted story-points cache should be reused")
+
+    monkeypatch.setattr(jira, "api_json", fail_api_json)
+
+    assert jira.resolve_story_points_field_id(session) == "customfield_12345"
+
+
+def test_jira_story_point_field_discovery_persists_negative_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cache_file = tmp_path / "jira-field-cache.json"
+    session = jira.Session(
+        token="token",
+        cloud_id="cloud",
+        base_url="https://example.atlassian.net",
+    )
+    monkeypatch.setattr(jira, "STORY_POINTS_FIELD_CACHE_FILE", cache_file)
+    monkeypatch.setattr(jira, "_STORY_POINTS_FIELD_CACHE", {})
+    monkeypatch.setattr(jira, "load_atlassian_config_env", lambda: {})
+    monkeypatch.setattr(jira, "api_json", lambda method, url, _token: {"values": []})
+
+    assert jira.resolve_story_points_field_id(session) == ""
+
+    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert payload["storyPointsFields"]["cloud:https://example.atlassian.net"] == ""
+
+    monkeypatch.setattr(jira, "_STORY_POINTS_FIELD_CACHE", {})
+
+    def fail_api_json(method: str, url: str, _token: str):
+        raise AssertionError("persisted negative story-points cache should be reused")
+
+    monkeypatch.setattr(jira, "api_json", fail_api_json)
+
+    assert jira.resolve_story_points_field_id(session) == ""
+
+
+def test_jira_get_without_story_point_field_omits_story_points(monkeypatch) -> None:
+    monkeypatch.setattr(jira, "_STORY_POINTS_FIELD_CACHE", {})
+    monkeypatch.setattr(jira, "load_atlassian_config_env", lambda: {})
+
+    envelope = jira.normalize_issue(
+        {
+            "id": "10001",
+            "key": "OPS-1",
+            "fields": {
+                "summary": "Estimate cleanup",
+                "customfield_12345": 5,
+            },
+        },
+        base_url="https://example.atlassian.net",
+        include_description=True,
+    )
+
+    assert envelope["storyPoints"] is None
+
+
 def test_atlassian_status_defaults_to_summary() -> None:
     assert jira.build_parser().parse_args(["status"]).output == "summary"
     assert (

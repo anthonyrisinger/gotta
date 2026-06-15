@@ -199,6 +199,8 @@ GOTTA_ATLASSIAN_OAUTH_CLIENT_SECRET = "your-client-secret"
 GOTTA_ATLASSIAN_OAUTH_REDIRECT_URI = "http://localhost:8080/callback"
 GOTTA_ATLASSIAN_TOOLSETS = "all"
 GOTTA_JIRA_BASE_URL = "https://example.atlassian.net"
+# Optional override; Jira story-points fields are discovered automatically by name.
+GOTTA_JIRA_STORY_POINTS_FIELD = "customfield_12345"
 GOTTA_CONFLUENCE_BASE_URL = "https://example.atlassian.net/wiki"
 
 [providers.google.env]

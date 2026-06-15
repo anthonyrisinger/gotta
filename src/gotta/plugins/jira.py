@@ -38,6 +38,8 @@ from gotta.providers import atlassian as atl
 OAUTH_DIR = atl.OAUTH_DIR
 TOKEN_FILE = atl.TOKEN_FILE
 CLOUD_ID_FILE = atl.CLOUD_ID_FILE
+STORY_POINTS_FIELD_CACHE_FILE = OAUTH_DIR / "jira-field-cache.json"
+STORY_POINTS_FIELD_CACHE_VERSION = 1
 DEFAULT_JIRA_BASE_URL = ""
 JIRA_BASE_URL_ENV = "GOTTA_JIRA_BASE_URL"
 DEFAULT_GET_FIELDS = [
@@ -54,6 +56,7 @@ DEFAULT_GET_FIELDS = [
     "updated",
     "project",
     "parent",
+    "issuelinks",
 ]
 DEFAULT_SEARCH_FIELDS = [
     "summary",
@@ -68,6 +71,12 @@ DEFAULT_SEARCH_FIELDS = [
 ]
 DISALLOWED_MCP_PASSTHROUGH_FLAGS = atl.DISALLOWED_MCP_PASSTHROUGH_FLAGS
 ISSUE_KEY_RE = re.compile(r"^(?P<project>[A-Za-z][A-Za-z0-9_]*)-(?P<number>\d+)$")
+JIRA_STORY_POINTS_FIELD_ENV = "GOTTA_JIRA_STORY_POINTS_FIELD"
+STORY_POINTS_FIELD_NAMES = (
+    "Story Points",
+    "Story point estimate",
+)
+_STORY_POINTS_FIELD_CACHE: dict[str, str] = {}
 OBVIOUS_JQL_FIELDS = (
     "affectedVersion",
     "assignee",
@@ -266,6 +275,20 @@ def default_base_url() -> str:
             config_env, JIRA_BASE_URL_ENV, default=DEFAULT_JIRA_BASE_URL
         ).strip()
     )
+
+
+def configured_story_points_field() -> str:
+    config_env = load_atlassian_config_env()
+    return atl.env_or_config(config_env, JIRA_STORY_POINTS_FIELD_ENV).strip()
+
+
+def _issue_fields_with_story_points(
+    fields: list[str], *, story_points_field_id: str = ""
+) -> list[str]:
+    result = list(dict.fromkeys(fields))
+    if story_points_field_id and story_points_field_id not in result:
+        result.append(story_points_field_id)
+    return result
 
 
 def _slug(value: str, *, fallback: str) -> str:
@@ -687,6 +710,16 @@ def jira_editmeta_api_url(session: Session, issue_key: str) -> str:
     )
 
 
+def jira_field_search_api_url(session: Session, *, query: str) -> str:
+    params = urllib.parse.urlencode(
+        {"query": query, "type": "custom", "maxResults": 50}
+    )
+    return (
+        f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/api/3/"
+        f"field/search?{params}"
+    )
+
+
 def jira_comment_api_url(session: Session, issue_key: str) -> str:
     return (
         f"https://api.atlassian.com/ex/jira/{session.cloud_id}/rest/api/3/issue/"
@@ -931,6 +964,99 @@ def fetch_edit_fields(issue_ref: IssueRef) -> tuple[Session, dict[str, dict[str,
         field_id: normalize_field_metadata(field_id, meta)
         for field_id, meta in fields.items()
     }
+
+
+def _field_search_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        values = payload.get("values")
+        if isinstance(values, list):
+            return [item for item in values if isinstance(item, dict)]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def _story_points_field_match(item: dict[str, Any], *, target_name: str) -> str:
+    field_id = str(item.get("id") or "").strip()
+    field_name = str(item.get("name") or "").strip()
+    if not field_id.startswith("customfield_"):
+        return ""
+    if _normalize_lookup(field_name) != _normalize_lookup(target_name):
+        return ""
+    return field_id
+
+
+def discover_story_points_field_id(session: Session) -> str:
+    for field_name in STORY_POINTS_FIELD_NAMES:
+        try:
+            payload = api_json(
+                "GET",
+                jira_field_search_api_url(session, query=field_name),
+                session.token,
+            )
+        except ToolError:
+            continue
+        for item in _field_search_items(payload):
+            field_id = _story_points_field_match(item, target_name=field_name)
+            if field_id:
+                return field_id
+    return ""
+
+
+def _story_points_field_cache_key(session: Session) -> str:
+    return f"{session.cloud_id}:{site_root(session.base_url)}"
+
+
+def load_story_points_field_cache() -> dict[str, str]:
+    try:
+        payload = atl.parse_json_file(STORY_POINTS_FIELD_CACHE_FILE)
+    except (OSError, ValueError, ToolError):
+        return {}
+    if payload.get("version") != STORY_POINTS_FIELD_CACHE_VERSION:
+        return {}
+    entries = payload.get("storyPointsFields")
+    if not isinstance(entries, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, value in entries.items():
+        if isinstance(key, str) and isinstance(value, str):
+            result[key] = value
+    return result
+
+
+def persist_story_points_field_cache(entries: dict[str, str]) -> None:
+    payload = {
+        "version": STORY_POINTS_FIELD_CACHE_VERSION,
+        "storyPointsFields": dict(sorted(entries.items())),
+    }
+    try:
+        atl.write_secret_json_atomic(
+            STORY_POINTS_FIELD_CACHE_FILE,
+            payload,
+            ensure_dir=atl.ensure_oauth_dir,
+            indent=2,
+            sort_keys=True,
+            trailing_newline=True,
+        )
+    except OSError:
+        return
+
+
+def resolve_story_points_field_id(session: Session) -> str:
+    configured = configured_story_points_field()
+    if configured:
+        return configured
+    cache_key = _story_points_field_cache_key(session)
+    if cache_key not in _STORY_POINTS_FIELD_CACHE:
+        persisted = load_story_points_field_cache()
+        if cache_key in persisted:
+            _STORY_POINTS_FIELD_CACHE[cache_key] = persisted[cache_key]
+        else:
+            field_id = discover_story_points_field_id(session)
+            _STORY_POINTS_FIELD_CACHE[cache_key] = field_id
+            persisted[cache_key] = field_id
+            persist_story_points_field_cache(persisted)
+    return _STORY_POINTS_FIELD_CACHE[cache_key]
 
 
 def fetch_issue_link_types(base_url: str) -> tuple[Session, list[dict[str, Any]]]:
@@ -1463,6 +1589,88 @@ def normalize_parent(value: Any) -> dict[str, Any] | None:
         if status:
             result["status"] = status
     return result or None
+
+
+def normalize_story_points(
+    fields: dict[str, Any], *, story_points_field_id: str = ""
+) -> int | float | None:
+    if not story_points_field_id:
+        return None
+    value = fields.get(story_points_field_id)
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    if isinstance(value, int | float):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            return None
+        return int(parsed) if parsed.is_integer() else parsed
+    return None
+
+
+def normalize_linked_issue(value: Any, *, base_url: str) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    key = str(value.get("key") or "").strip()
+    if not key:
+        return None
+    fields = value.get("fields")
+    if not isinstance(fields, dict):
+        fields = {}
+    result: dict[str, Any] = {
+        "id": str(value.get("id") or ""),
+        "key": key,
+        "issueUrl": issue_url(base_url, key),
+        "summary": str(fields.get("summary") or ""),
+        "status": named_object(fields.get("status")),
+        "issueType": named_object(fields.get("issuetype")),
+    }
+    return {
+        key: item for key, item in result.items() if item is not None and item != ""
+    }
+
+
+def normalize_issue_links(values: Any, *, base_url: str) -> list[dict[str, Any]]:
+    if not isinstance(values, list):
+        return []
+    links: list[dict[str, Any]] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        link_type = item.get("type")
+        if not isinstance(link_type, dict):
+            link_type = {}
+        outward = normalize_linked_issue(item.get("outwardIssue"), base_url=base_url)
+        inward = normalize_linked_issue(item.get("inwardIssue"), base_url=base_url)
+        if outward:
+            links.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "direction": "outward",
+                    "relationship": str(
+                        link_type.get("outward")
+                        or link_type.get("name")
+                        or "relates to"
+                    ),
+                    "type": str(link_type.get("name") or ""),
+                    "issue": outward,
+                }
+            )
+        if inward:
+            links.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "direction": "inward",
+                    "relationship": str(
+                        link_type.get("inward") or link_type.get("name") or "relates to"
+                    ),
+                    "type": str(link_type.get("name") or ""),
+                    "issue": inward,
+                }
+            )
+    return links
 
 
 def adf_text(node: Any) -> str:
@@ -2112,7 +2320,11 @@ def classify_visibility(
 
 
 def normalize_issue(
-    payload: dict[str, Any], *, base_url: str, include_description: bool
+    payload: dict[str, Any],
+    *,
+    base_url: str,
+    include_description: bool,
+    story_points_field_id: str = "",
 ) -> dict[str, Any]:
     fields = payload.get("fields")
     if not isinstance(fields, dict):
@@ -2133,6 +2345,12 @@ def normalize_issue(
         "assignee": normalize_person(fields.get("assignee")),
         "reporter": normalize_person(fields.get("reporter")),
         "parent": normalize_parent(fields.get("parent")),
+        "storyPoints": normalize_story_points(
+            fields, story_points_field_id=story_points_field_id
+        ),
+        "issueLinks": normalize_issue_links(
+            fields.get("issuelinks"), base_url=base_url
+        ),
         "labels": [item for item in fields.get("labels", []) if isinstance(item, str)],
         "created": str(fields.get("created") or ""),
         "updated": str(fields.get("updated") or ""),
@@ -2158,6 +2376,8 @@ def meta_issue(envelope: dict[str, Any]) -> dict[str, Any]:
             "assignee": envelope.get("assignee"),
             "reporter": envelope.get("reporter"),
             "parent": envelope.get("parent"),
+            "storyPoints": envelope.get("storyPoints"),
+            "issueLinks": envelope.get("issueLinks"),
             "labels": envelope.get("labels"),
             "created": envelope.get("created"),
             "updated": envelope.get("updated"),
@@ -2188,15 +2408,27 @@ def jira_search_api_url(session: Session) -> str:
 
 def fetch_issue(issue_ref: IssueRef, *, fields: list[str]) -> dict[str, Any]:
     session = load_session(issue_ref.base_url)
+    story_points_field_id = resolve_story_points_field_id(session)
     payload = api_json(
         "GET",
-        jira_issue_api_url(session, issue_ref.issue_key, fields),
+        jira_issue_api_url(
+            session,
+            issue_ref.issue_key,
+            _issue_fields_with_story_points(
+                fields, story_points_field_id=story_points_field_id
+            ),
+        ),
         session.token,
     )
     if not isinstance(payload, dict):
         raise ToolError("unexpected Jira issue response")
     return _with_jira_visibility(
-        normalize_issue(payload, base_url=session.base_url, include_description=True),
+        normalize_issue(
+            payload,
+            base_url=session.base_url,
+            include_description=True,
+            story_points_field_id=story_points_field_id,
+        ),
         subcommand="get",
         locator=_issue_locator(issue_ref.issue_key),
     )
@@ -2808,6 +3040,42 @@ def transition_issue(
     )
 
 
+def _format_story_points(value: Any) -> str:
+    if isinstance(value, bool) or value is None or value == "":
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _issue_link_lines(envelope: dict[str, Any]) -> list[str]:
+    links = envelope.get("issueLinks")
+    if not isinstance(links, list) or not links:
+        return []
+    lines = ["", "## Issue Links", ""]
+    for item in links:
+        if not isinstance(item, dict):
+            continue
+        issue = item.get("issue")
+        if not isinstance(issue, dict):
+            continue
+        key = str(issue.get("key") or "").strip()
+        if not key:
+            continue
+        url = str(issue.get("issueUrl") or "").strip()
+        summary = str(issue.get("summary") or "").strip()
+        status = ""
+        raw_status = issue.get("status")
+        if isinstance(raw_status, dict):
+            status = str(raw_status.get("name") or "").strip()
+        relationship = str(item.get("relationship") or "relates to").strip()
+        link_text = f"[{key}]({url})" if url else key
+        detail = f": {summary}" if summary else ""
+        status_text = f" ({status})" if status else ""
+        lines.append(f"- {relationship} {link_text}{detail}{status_text}")
+    return lines if len(lines) > 3 else []
+
+
 def markdown_issue(envelope: dict[str, Any]) -> str:
     envelope = _with_jira_visibility(
         envelope,
@@ -2821,6 +3089,11 @@ def markdown_issue(envelope: dict[str, Any]) -> str:
         f"- Type: {(envelope.get('issueType') or {}).get('name') or 'Unknown'}",
         f"- Project: {((envelope.get('project') or {}).get('key') or '')} {((envelope.get('project') or {}).get('name') or '')}".strip(),
         f"- Priority: {(envelope.get('priority') or {}).get('name') or 'Unspecified'}",
+        *(
+            [f"- Story Points: {_format_story_points(envelope.get('storyPoints'))}"]
+            if _format_story_points(envelope.get("storyPoints"))
+            else []
+        ),
         f"- Assignee: {(envelope.get('assignee') or {}).get('displayName') or 'Unassigned'}",
         f"- Reporter: {(envelope.get('reporter') or {}).get('displayName') or 'Unknown'}",
         f"- Parent: {((envelope.get('parent') or {}).get('key') or 'None')}"
@@ -2837,7 +3110,10 @@ def markdown_issue(envelope: dict[str, Any]) -> str:
         "## Description",
         "",
     ]
-    lines[13:13] = render_visibility_metadata_lines(envelope)
+    description_index = lines.index("## Description")
+    lines[description_index:description_index] = render_visibility_metadata_lines(
+        envelope
+    )
     description_adf = envelope.get("descriptionAdf")
     description_md = ""
     if isinstance(description_adf, dict):
@@ -2847,6 +3123,10 @@ def markdown_issue(envelope: dict[str, Any]) -> str:
     else:
         lines.append("_No description_")
     lines.append("")
+    issue_link_lines = _issue_link_lines(envelope)
+    if issue_link_lines:
+        insert_at = lines.index("## Description")
+        lines[insert_at:insert_at] = issue_link_lines
     return "\n".join(lines)
 
 
