@@ -277,6 +277,35 @@ def test_run_surface_actor_launch_streams_live_without_buffered_capture(
     assert "launch stderr" in captured.err
 
 
+def test_run_surface_granola_auth_login_streams_live_without_buffered_capture(
+    monkeypatch, capsys
+) -> None:
+    def fake_runner(_argv: list[str]) -> int:
+        print("verification URL")
+        print("authorization code", file=sys.stderr, flush=True)
+        return 0
+
+    def fake_resolve_invocation(
+        _plugin: str, _argv: list[str], _options: content_model.CommonOptions
+    ):
+        return SimpleNamespace(should_materialize=False, artifact_intent="none")
+
+    def forbidden_capture(*_args, **_kwargs):
+        raise AssertionError("Granola login should bypass buffered capture")
+
+    monkeypatch.setattr(dispatch, "load_surface_runner", lambda _plugin: fake_runner)
+    monkeypatch.setattr(dispatch, "resolve_invocation", fake_resolve_invocation)
+    monkeypatch.setattr(dispatch, "session_access_mode", lambda _plugin, _argv: "none")
+    monkeypatch.setattr(dispatch, "capture_stdout", forbidden_capture)
+    monkeypatch.setattr(dispatch, "capture_stderr", forbidden_capture)
+
+    assert dispatch.run_surface("granola", ["auth", "login", "--no-browser"]) == 0
+    captured = capsys.readouterr()
+
+    assert "verification URL" in captured.out
+    assert "authorization code" in captured.err
+
+
 def test_session_access_mode_tracks_artifact_bearing_surfaces() -> None:
     assert dispatch.session_access_mode("jira", ["search", "platform"]) == "ambient"
     assert dispatch.session_access_mode("jira", ["status"]) == "none"

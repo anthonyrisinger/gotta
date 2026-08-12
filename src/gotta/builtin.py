@@ -803,7 +803,7 @@ def grafana_plugin() -> SurfaceBinding:
 def granola_plugin() -> SurfaceBinding:
     return _core_binding(
         name="granola",
-        description="read personal Granola notes through the local desktop session",
+        description="read personal Granola notes through browser-authorized MCP",
         runner=_runner("gotta.plugins.granola"),
         route_target=_module_attr("gotta.plugins.granola", "route_target"),
         search_route=_module_attr("gotta.plugins.granola", "search_route"),

@@ -6,7 +6,19 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from gotta.plugins import granola
+
+
+@pytest.fixture(autouse=True)
+def _isolate_granola_credentials(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "default-gotta.toml"
+    config_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GOTTA_CONFIG_FILE", str(config_file))
+    oauth_dir = tmp_path / "auth" / "granola"
+    monkeypatch.setattr(granola, "MCP_OAUTH_DIR", oauth_dir)
+    monkeypatch.setattr(granola, "MCP_OAUTH_FILE", oauth_dir / "oauth.json")
 
 
 def _doc(
@@ -60,6 +72,10 @@ def test_granola_parser_defaults() -> None:
     assert granola.build_parser().parse_args(["list"]).time_range == "last_90_days"
     assert (
         granola.build_parser().parse_args(["auth", "refresh"]).auth_command == "refresh"
+    )
+    assert granola.build_parser().parse_args(["auth", "login"]).auth_command == "login"
+    assert (
+        granola.build_parser().parse_args(["auth", "logout"]).auth_command == "logout"
     )
     assert granola.build_parser().parse_args(["search", "needle"]).mode == "auto"
     assert (
@@ -954,3 +970,485 @@ def test_granola_export_supports_bounded_sort_and_offset(
     assert result == 0
     assert len(exported) == 1
     assert "Middle" in exported[0].read_text(encoding="utf-8")
+
+
+def test_granola_encrypted_only_session_directs_user_to_browser_login(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    config_file = tmp_path / "gotta.toml"
+    config_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GOTTA_CONFIG_FILE", str(config_file))
+    supabase = tmp_path / "supabase.json"
+    supabase.with_name("supabase.json.enc").write_bytes(b"encrypted")
+
+    status_result = granola.main(["--supabase", str(supabase), "status"])
+    status_output = capsys.readouterr().out
+    list_result = granola.main(["--supabase", str(supabase), "list"])
+    list_error = capsys.readouterr().err
+    refresh_result = granola.main(["--supabase", str(supabase), "auth", "refresh"])
+    refresh_error = capsys.readouterr().err
+
+    assert status_result == 0
+    assert "encrypted_session_present\ttrue" in status_output
+    assert "gotta granola auth login" in status_output
+    assert list_result == 1
+    assert "desktop session" in list_error
+    assert "gotta granola auth login" in list_error
+    assert refresh_result == 1
+    assert "gotta granola auth login" in refresh_error
+
+
+def test_granola_mcp_registers_public_client_once_and_secures_state(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        granola,
+        "oauth_get_json",
+        lambda url, *, context: {
+            "registration_endpoint": "https://auth.example/register",
+            "device_authorization_endpoint": "https://auth.example/device",
+            "token_endpoint": "https://auth.example/token",
+        },
+    )
+    registrations: list[dict[str, object]] = []
+
+    def fake_register(url, payload, *, context):
+        registrations.append(payload)
+        return {
+            "client_id": "client-123",
+            "token_endpoint_auth_method": "none",
+        }
+
+    monkeypatch.setattr(granola, "oauth_post_json", fake_register)
+
+    first = granola.ensure_mcp_oauth_client(issuer="https://auth.example")
+    second = granola.ensure_mcp_oauth_client(issuer="https://auth.example")
+
+    assert first["client_id"] == "client-123"
+    assert second["client_id"] == "client-123"
+    assert registrations == [
+        {
+            "client_name": "gotta local CLI",
+            "redirect_uris": [granola.DEFAULT_MCP_REDIRECT_URI],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "scope": granola.DEFAULT_MCP_OAUTH_SCOPE,
+        }
+    ]
+    assert granola.MCP_OAUTH_FILE.stat().st_mode & 0o777 == 0o600
+
+
+def test_granola_mcp_device_login_polls_and_persists_tokens(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        granola,
+        "discover_mcp_authorization_server",
+        lambda **kwargs: "https://auth.example",
+    )
+    monkeypatch.setattr(
+        granola,
+        "ensure_mcp_oauth_client",
+        lambda **kwargs: {
+            "client_id": "client-123",
+            "device_authorization_endpoint": "https://auth.example/device",
+            "token_endpoint": "https://auth.example/token",
+            "scope": granola.DEFAULT_MCP_OAUTH_SCOPE,
+        },
+    )
+    token_attempts = 0
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    def fake_post(url, payload, *, context):
+        nonlocal token_attempts
+        requests.append((url, payload))
+        if url.endswith("/device"):
+            return {
+                "device_code": "device-secret",
+                "user_code": "ABCD-EFGH",
+                "verification_uri_complete": "https://auth.example/activate?code=ABCD",
+                "interval": 1,
+                "expires_in": 300,
+            }
+        token_attempts += 1
+        if token_attempts == 1:
+            return {"error": "authorization_pending"}
+        return {
+            "access_token": "access-secret",
+            "refresh_token": "refresh-secret",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        }
+
+    monkeypatch.setattr(granola, "oauth_post_form_json", fake_post)
+    monkeypatch.setattr(granola.time, "sleep", lambda seconds: None)
+
+    state = granola.run_mcp_oauth_login(
+        mcp_url="https://mcp.example/mcp",
+        issuer="https://auth.example",
+        open_browser=False,
+    )
+
+    err = capsys.readouterr().err
+    stored = json.loads(granola.MCP_OAUTH_FILE.read_text(encoding="utf-8"))
+    assert state["access_token"] == "access-secret"
+    assert stored["refresh_token"] == "refresh-secret"
+    assert "ABCD-EFGH" in err
+    assert requests[0][1]["resource"] == "https://mcp.example/mcp"
+    assert requests[-1][1]["grant_type"] == (
+        "urn:ietf:params:oauth:grant-type:device_code"
+    )
+
+
+def test_granola_mcp_discovers_authorization_server_from_resource_metadata(
+    monkeypatch,
+) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_get(url, *, context):
+        seen["url"] = url
+        return {
+            "resource": "https://mcp.example/mcp",
+            "authorization_servers": ["https://auth.example"],
+        }
+
+    monkeypatch.setattr(granola, "oauth_get_json", fake_get)
+
+    issuer = granola.discover_mcp_authorization_server(
+        mcp_url="https://mcp.example/mcp",
+        preferred_issuer=granola.DEFAULT_MCP_OAUTH_ISSUER,
+    )
+
+    assert issuer == "https://auth.example"
+    assert seen["url"] == (
+        "https://mcp.example/.well-known/oauth-protected-resource/mcp"
+    )
+
+
+def test_granola_mcp_re_registers_client_when_issuer_changes(monkeypatch) -> None:
+    granola.persist_mcp_oauth_state(
+        {
+            "authorization_server": "https://old-auth.example",
+            "client_id": "old-client",
+            "access_token": "old-access",
+            "refresh_token": "old-refresh",
+        }
+    )
+    monkeypatch.setattr(
+        granola,
+        "oauth_get_json",
+        lambda url, *, context: {
+            "registration_endpoint": "https://new-auth.example/register",
+            "device_authorization_endpoint": "https://new-auth.example/device",
+            "token_endpoint": "https://new-auth.example/token",
+        },
+    )
+    registrations: list[str] = []
+
+    def fake_register(url, payload, *, context):
+        registrations.append(url)
+        return {"client_id": "new-client"}
+
+    monkeypatch.setattr(granola, "oauth_post_json", fake_register)
+
+    state = granola.ensure_mcp_oauth_client(issuer="https://new-auth.example")
+
+    assert state["client_id"] == "new-client"
+    assert "access_token" not in state
+    assert "refresh_token" not in state
+    assert registrations == ["https://new-auth.example/register"]
+
+
+def test_granola_mcp_refresh_rotates_tokens(monkeypatch) -> None:
+    granola.persist_mcp_oauth_state(
+        {
+            "client_id": "client-123",
+            "token_endpoint": "https://auth.example/token",
+            "access_token": "expired-access",
+            "refresh_token": "old-refresh",
+            "expires_at": 0,
+        }
+    )
+    seen: dict[str, str] = {}
+
+    def fake_post(url, payload, *, context):
+        seen.update(payload)
+        return {
+            "access_token": "fresh-access",
+            "refresh_token": "new-refresh",
+            "expires_in": 3600,
+        }
+
+    monkeypatch.setattr(granola, "oauth_post_form_json", fake_post)
+
+    token = granola.ensure_mcp_access_token(mcp_url="https://mcp.example/mcp")
+
+    stored = json.loads(granola.MCP_OAUTH_FILE.read_text(encoding="utf-8"))
+    assert token == "fresh-access"
+    assert stored["refresh_token"] == "new-refresh"
+    assert seen == {
+        "grant_type": "refresh_token",
+        "refresh_token": "old-refresh",
+        "client_id": "client-123",
+        "resource": "https://mcp.example/mcp",
+    }
+
+
+def test_granola_mcp_client_initializes_session_before_tool_call(
+    monkeypatch,
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    def fake_request(**kwargs):
+        requests.append(kwargs)
+        method = kwargs["payload"]["method"]
+        if method == "initialize":
+            return (
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"protocolVersion": granola.MCP_PROTOCOL_VERSION},
+                },
+                "session-123",
+            )
+        if method == "notifications/initialized":
+            return None, "session-123"
+        return (
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"content": [{"type": "text", "text": "<meetings_data />"}]},
+            },
+            "session-123",
+        )
+
+    monkeypatch.setattr(granola, "mcp_http_request", fake_request)
+
+    result = granola.call_mcp_tool(
+        "https://mcp.example/mcp",
+        "access-secret",
+        "list_meetings",
+        {"time_range": "last_30_days"},
+    )
+
+    assert granola.mcp_tool_text(result) == "<meetings_data />"
+    assert [request["payload"]["method"] for request in requests] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+    ]
+    assert requests[-1]["session_id"] == "session-123"
+    assert requests[-1]["protocol_version"] == granola.MCP_PROTOCOL_VERSION
+
+
+def test_granola_mcp_sse_response_parses_json_rpc_payload() -> None:
+    payload = granola._parse_mcp_sse(
+        b'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n'
+    )
+
+    assert payload["result"] == {"ok": True}
+
+
+def test_granola_mcp_notification_accepts_json_null_response() -> None:
+    assert granola._parse_mcp_http_body(b"null", "application/json") is None
+
+
+def test_granola_mcp_meeting_xml_normalizes_metadata_and_summary() -> None:
+    text = """
+<access_notice>Personal notes only.</access_notice>
+<meetings_data from="Aug 11, 2026" to="Aug 11, 2026" count="1">
+  <meeting id="11111111-1111-1111-1111-111111111111"
+           title="Weekly Review"
+           date="Aug 11, 2026 11:00 AM CDT"
+           captured_by_me="true"
+           listed_as_participant="true"
+           is_workspace_visible="false">
+    <known_participants>
+      Person One (note creator) from Example Organization &lt;person.one@example.test&gt;,
+      Person Two &lt;person.two@example.test&gt;
+    </known_participants>
+    <summary># Highlights
+
+- Reviewed rollout steps.</summary>
+  </meeting>
+</meetings_data>
+"""
+
+    documents = granola.parse_mcp_meetings(text)
+
+    assert len(documents) == 1
+    assert documents[0]["created_at"] == "2026-08-11T16:00:00Z"
+    assert documents[0]["notes_markdown"].startswith("# Highlights")
+    assert documents[0]["captured_by_me"] is True
+    assert granola.extract_people(documents[0]) == ["Person One", "Person Two"]
+    assert documents[0]["_granola_api"] == "mcp"
+
+
+def test_granola_mcp_custom_window_adds_timezone_boundary_margin() -> None:
+    arguments = granola._mcp_list_arguments(
+        created_after="2026-08-01T00:00:00Z",
+        created_before="2026-08-11T23:59:59Z",
+    )
+
+    assert arguments == {
+        "time_range": "custom",
+        "custom_start": "2026-07-31",
+        "custom_end": "2026-08-12",
+    }
+
+
+def test_granola_mcp_transcript_json_normalizes_speaker_blocks() -> None:
+    payload = granola._mcp_transcript_payload(
+        'Warning preamble\n{"id":"meeting-1","title":"Review",'
+        '"transcript":"Them: First line\\ncontinued\\nMe: Second line"}'
+    )
+    segments = granola.normalize_mcp_transcript(
+        "meeting-1",
+        payload["transcript"],
+    )
+
+    assert [segment["speaker"]["name"] for segment in segments] == ["Them", "Me"]
+    assert segments[0]["text"] == "First line\ncontinued"
+    assert segments[1]["text"] == "Second line"
+
+
+def test_granola_commands_use_mcp_oauth_before_legacy_session(
+    monkeypatch, capsys
+) -> None:
+    _freeze_now(monkeypatch)
+    granola.persist_mcp_oauth_state(
+        {
+            "client_id": "client-123",
+            "access_token": "mcp-access-secret",
+            "refresh_token": "mcp-refresh-secret",
+            "expires_at": granola.time.time() + 3600,
+        }
+    )
+    seen: dict[str, str] = {}
+
+    def fake_fetch(mcp_url, token, limit=None, **kwargs):
+        seen.update({"mcp_url": mcp_url, "token": token})
+        return [_doc("11111111-1111-1111-1111-111111111111", "Weekly Review")]
+
+    monkeypatch.setattr(granola, "fetch_mcp_documents", fake_fetch)
+    monkeypatch.setattr(
+        granola,
+        "ensure_access_token",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy desktop session must not be read")
+        ),
+    )
+
+    result = granola.main(
+        [
+            "--mcp-url",
+            "https://mcp.example/mcp",
+            "list",
+            "--output",
+            "summary",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert result == 0
+    assert seen == {
+        "mcp_url": "https://mcp.example/mcp",
+        "token": "mcp-access-secret",
+    }
+    assert "Weekly Review" in out
+
+
+def test_granola_status_uses_mcp_oauth_without_exposing_tokens(
+    monkeypatch, capsys
+) -> None:
+    granola.persist_mcp_oauth_state(
+        {
+            "client_id": "client-123",
+            "access_token": "mcp-access-do-not-print",
+            "refresh_token": "mcp-refresh-do-not-print",
+            "expires_at": granola.time.time() + 3600,
+        }
+    )
+    monkeypatch.setattr(
+        granola,
+        "fetch_mcp_documents",
+        lambda mcp_url, token, limit=None, **kwargs: [
+            _doc("11111111-1111-1111-1111-111111111111", "Weekly Review")
+        ],
+    )
+
+    result = granola.main(["status"])
+
+    out = capsys.readouterr().out
+    assert result == 0
+    assert "auth_mode\tmcp_oauth" in out
+    assert "mcp_oauth_configured\ttrue" in out
+    assert "session_status\tready" in out
+    assert "mcp-access-do-not-print" not in out
+    assert "mcp-refresh-do-not-print" not in out
+
+
+def test_granola_auth_login_preflights_mcp_without_printing_tokens(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        granola,
+        "run_mcp_oauth_login",
+        lambda **kwargs: {
+            "access_token": "mcp-access-do-not-print",
+            "refresh_token": "mcp-refresh-do-not-print",
+            "expires_at": granola.time.time() + 3600,
+        },
+    )
+    monkeypatch.setattr(
+        granola,
+        "fetch_mcp_documents",
+        lambda mcp_url, token, limit=None, **kwargs: [],
+    )
+
+    result = granola.main(["auth", "login", "--no-browser"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "status\tauthorized" in captured.out
+    assert "refresh_token_present\ttrue" in captured.out
+    assert "mcp-access-do-not-print" not in captured.out + captured.err
+    assert "mcp-refresh-do-not-print" not in captured.out + captured.err
+
+
+def test_granola_auth_login_handles_cancellation_without_traceback(
+    monkeypatch, capsys
+) -> None:
+    def cancel_login(**_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(granola, "run_mcp_oauth_login", cancel_login)
+
+    result = granola.main(["auth", "login", "--no-browser"])
+
+    captured = capsys.readouterr()
+    assert result == 130
+    assert captured.out == ""
+    assert captured.err == "Granola command canceled.\n"
+
+
+def test_granola_auth_logout_preserves_registered_public_client(capsys) -> None:
+    granola.persist_mcp_oauth_state(
+        {
+            "client_id": "client-123",
+            "registration_endpoint": "https://auth.example/register",
+            "access_token": "access-secret",
+            "refresh_token": "refresh-secret",
+        }
+    )
+
+    result = granola.main(["auth", "logout"])
+
+    out = capsys.readouterr().out
+    stored = json.loads(granola.MCP_OAUTH_FILE.read_text(encoding="utf-8"))
+    assert result == 0
+    assert "status\tlogged_out" in out
+    assert stored["client_id"] == "client-123"
+    assert "access_token" not in stored
+    assert "refresh_token" not in stored

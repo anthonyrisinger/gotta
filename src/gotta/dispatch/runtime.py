@@ -103,4 +103,6 @@ def _sessionless_notice_bytes(resolved: ResolvedInvocation) -> bytes:
 
 
 def _streams_live(plugin: str, argv: list[str]) -> bool:
-    return plugin == "actor" and bool(argv) and argv[0] == "launch"
+    return (plugin == "actor" and bool(argv) and argv[0] == "launch") or (
+        plugin == "granola" and argv[:2] == ["auth", "login"]
+    )

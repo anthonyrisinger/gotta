@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Granola note retrieval through the local app session."""
+"""Read-only Granola retrieval through browser OAuth and legacy local sessions."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import base64
 import binascii
 import contextlib
 import datetime as dt
+from email.utils import parsedate_to_datetime
 import gzip
 import html
 import io
@@ -16,14 +17,19 @@ import re
 import shlex
 import signal
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import webbrowser
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 from gotta.capture import Capture, capture_json_command, json_bytes
+from gotta.config import display_path, user_state_dir
 from gotta.content.file import write_text_atomic
 from gotta.projection import Projection, projection_bytes
 from gotta.helptext import is_long_help_request, print_long_help
@@ -31,6 +37,7 @@ from gotta.project import pretty_json
 from gotta.resolve.route import split_locator_tail
 from gotta.resolve.search import plain_text_search_route
 from gotta.source.render import render_source_metadata_lines
+from gotta.vault import load_secret_json_object, write_secret_json_atomic
 
 
 DEFAULT_SUPABASE = (
@@ -39,6 +46,14 @@ DEFAULT_SUPABASE = (
 DEFAULT_API_URL = "https://api.granola.ai/v2/get-documents"
 DEFAULT_TRANSCRIPT_API_URL = "https://api.granola.ai/v1/get-document-transcript"
 DEFAULT_REFRESH_API_URL = "https://api.granola.ai/v1/refresh-access-token"
+DEFAULT_MCP_URL = "https://mcp.granola.ai/mcp"
+DEFAULT_MCP_OAUTH_ISSUER = "https://mcp-auth.granola.ai"
+DEFAULT_MCP_OAUTH_SCOPE = "openid profile email offline_access"
+DEFAULT_MCP_REDIRECT_URI = "http://127.0.0.1:8765/callback"
+MCP_PROTOCOL_VERSION = "2025-06-18"
+MCP_OAUTH_DIR = user_state_dir() / "auth" / "granola"
+MCP_OAUTH_FILE = MCP_OAUTH_DIR / "oauth.json"
+MCP_REQUEST_TIMEOUT_SECONDS = 60
 DEFAULT_LIST_LIMIT = 10
 DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_EXPORT_LIMIT = 20
@@ -46,10 +61,26 @@ DEFAULT_NOTE_TIME_RANGE = "last_90_days"
 DEFAULT_TRANSCRIPT_SEARCH_TIME_RANGE = "last_30_days"
 USER_ACTOR = "Granola/5.354.0"
 CLIENT_VERSION = "5.354.0"
-DOCUMENT_ID_RE = re.compile(
+LEGACY_DOCUMENT_ID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+MCP_MEETING_DATE_RE = re.compile(
+    r"^(?P<month>[A-Za-z]{3}) (?P<day>\d{1,2}), (?P<year>\d{4}) "
+    r"(?P<time>\d{1,2}:\d{2}) (?P<ampm>AM|PM) (?P<timezone>[A-Za-z0-9_+:/-]+)$"
+)
+MCP_TIMEZONE_OFFSETS = {
+    "UTC": 0,
+    "GMT": 0,
+    "EST": -5,
+    "EDT": -4,
+    "CST": -6,
+    "CDT": -5,
+    "MST": -7,
+    "MDT": -6,
+    "PST": -8,
+    "PDT": -7,
+}
 
 
 class ToolError(RuntimeError):
@@ -68,6 +99,14 @@ class WindowSpec:
     end: dt.datetime | None
     time_range: str
     description: str
+
+
+@dataclass(frozen=True)
+class GranolaSession:
+    mode: str
+    token: str = ""
+    documents_url: str = ""
+    transcript_url: str = ""
 
 
 def die(message: str, code: int = 2) -> int:
@@ -99,7 +138,7 @@ def _parse_cli(argv: list[str]) -> argparse.Namespace:
 
 
 def _is_document_id(raw: str) -> bool:
-    return bool(DOCUMENT_ID_RE.fullmatch(raw.strip()))
+    return bool(LEGACY_DOCUMENT_ID_RE.fullmatch(raw.strip()))
 
 
 DISCOVERY_COMMANDS = {"list", "search", "search-transcript"}
@@ -586,6 +625,18 @@ def encrypted_session_metadata(supabase_path: Path) -> dict[str, Any]:
     return metadata
 
 
+def _mcp_login_setup_step() -> str:
+    return "run `gotta granola auth login` to sign in through your browser"
+
+
+def _encrypted_session_unavailable_message(supabase_path: Path) -> str:
+    encrypted_path = supabase_path.with_name(f"{supabase_path.name}.enc")
+    return (
+        "Granola desktop session state is application-protected, so gotta cannot "
+        f"read {encrypted_path}; {_mcp_login_setup_step()}."
+    )
+
+
 def _http_error_message(exc: urllib.error.HTTPError) -> str:
     detail = ""
     try:
@@ -598,6 +649,486 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
         detail = ""
     base = f"Granola API request failed: HTTP {exc.code}"
     return f"{base}: {detail}" if detail else base
+
+
+def ensure_mcp_oauth_dir() -> None:
+    MCP_OAUTH_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        MCP_OAUTH_DIR.chmod(0o700)
+    except OSError:
+        pass
+
+
+def load_mcp_oauth_state() -> dict[str, Any] | None:
+    if not MCP_OAUTH_FILE.exists():
+        return None
+    try:
+        state, _recovered = load_secret_json_object(MCP_OAUTH_FILE)
+    except (OSError, ValueError) as exc:
+        raise ToolError(
+            f"invalid Granola OAuth state file {MCP_OAUTH_FILE}: {exc}"
+        ) from exc
+    return state
+
+
+def persist_mcp_oauth_state(state: dict[str, Any]) -> dict[str, Any]:
+    write_secret_json_atomic(
+        MCP_OAUTH_FILE,
+        state,
+        ensure_dir=ensure_mcp_oauth_dir,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
+    return state
+
+
+def _json_object_from_bytes(raw: bytes, *, context: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        detail = raw.decode("utf-8", errors="replace").strip()
+        suffix = f": {detail}" if detail else ""
+        raise ToolError(f"{context} returned invalid JSON{suffix}") from exc
+    if not isinstance(payload, dict):
+        raise ToolError(f"{context} returned an unexpected payload shape")
+    return payload
+
+
+def oauth_get_json(url: str, *, context: str) -> dict[str, Any]:
+    request = urllib.request.Request(url, method="GET")
+    request.add_header("Accept", "application/json")
+    request.add_header("User-Agent", "gotta/granola-plugin")
+    try:
+        with urllib.request.urlopen(
+            request, timeout=MCP_REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        suffix = f": {detail}" if detail else ""
+        raise ToolError(f"{context} failed with HTTP {exc.code}{suffix}") from exc
+    except urllib.error.URLError as exc:
+        raise ToolError(f"{context} failed: {exc.reason}") from exc
+    return _json_object_from_bytes(raw, context=context)
+
+
+def oauth_post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    context: str,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+    )
+    request.add_header("Accept", "application/json")
+    request.add_header("Content-Type", "application/json")
+    request.add_header("User-Agent", "gotta/granola-plugin")
+    try:
+        with urllib.request.urlopen(
+            request, timeout=MCP_REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read()
+        try:
+            error_payload = _json_object_from_bytes(detail, context=context)
+        except ToolError:
+            text = detail.decode("utf-8", errors="replace").strip()
+            suffix = f": {text}" if text else ""
+            raise ToolError(f"{context} failed with HTTP {exc.code}{suffix}") from exc
+        error = str(
+            error_payload.get("error_description") or error_payload.get("error") or ""
+        ).strip()
+        suffix = f": {error}" if error else ""
+        raise ToolError(f"{context} failed with HTTP {exc.code}{suffix}") from exc
+    except urllib.error.URLError as exc:
+        raise ToolError(f"{context} failed: {exc.reason}") from exc
+    return _json_object_from_bytes(raw, context=context)
+
+
+def oauth_post_form_json(
+    url: str,
+    payload: dict[str, str],
+    *,
+    context: str,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=urllib.parse.urlencode(payload).encode("utf-8"),
+        method="POST",
+    )
+    request.add_header("Accept", "application/json")
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    request.add_header("User-Agent", "gotta/granola-plugin")
+    try:
+        with urllib.request.urlopen(
+            request, timeout=MCP_REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            return _json_object_from_bytes(raw, context=context)
+        except ToolError:
+            detail = raw.decode("utf-8", errors="replace").strip()
+            suffix = f": {detail}" if detail else ""
+            raise ToolError(f"{context} failed with HTTP {exc.code}{suffix}") from exc
+    except urllib.error.URLError as exc:
+        raise ToolError(f"{context} failed: {exc.reason}") from exc
+    return _json_object_from_bytes(raw, context=context)
+
+
+def mcp_oauth_metadata_url(issuer: str) -> str:
+    return f"{issuer.rstrip('/')}/.well-known/oauth-authorization-server"
+
+
+def mcp_protected_resource_metadata_url(mcp_url: str) -> str:
+    parsed = urllib.parse.urlparse(mcp_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ToolError(f"invalid Granola MCP URL: {mcp_url}")
+    resource_path = parsed.path.rstrip("/")
+    metadata_path = f"/.well-known/oauth-protected-resource{resource_path}"
+    return urllib.parse.urlunparse(
+        (parsed.scheme, parsed.netloc, metadata_path, "", "", "")
+    )
+
+
+def discover_mcp_authorization_server(
+    *,
+    mcp_url: str,
+    preferred_issuer: str,
+) -> str:
+    metadata = oauth_get_json(
+        mcp_protected_resource_metadata_url(mcp_url),
+        context="Granola MCP protected-resource discovery",
+    )
+    resource = str(metadata.get("resource") or "").rstrip("/")
+    if resource and resource != mcp_url.rstrip("/"):
+        raise ToolError(
+            "Granola MCP protected-resource metadata does not match the MCP URL"
+        )
+    raw_servers = metadata.get("authorization_servers")
+    servers = (
+        [
+            str(server).rstrip("/")
+            for server in raw_servers
+            if isinstance(server, str) and server.strip()
+        ]
+        if isinstance(raw_servers, list)
+        else []
+    )
+    if not servers:
+        raise ToolError(
+            "Granola MCP protected-resource metadata has no authorization server"
+        )
+    preferred = preferred_issuer.rstrip("/")
+    if preferred and preferred in servers:
+        return preferred
+    if preferred and preferred != DEFAULT_MCP_OAUTH_ISSUER:
+        raise ToolError(
+            f"configured Granola OAuth issuer {preferred!r} is not authorized "
+            "by the MCP protected resource"
+        )
+    return servers[0]
+
+
+def _oauth_error(payload: dict[str, Any], *, context: str) -> str:
+    code = str(payload.get("error") or "").strip()
+    detail = str(payload.get("error_description") or "").strip()
+    if code and detail:
+        return f"{context} failed: {code}: {detail}"
+    if code:
+        return f"{context} failed: {code}"
+    return ""
+
+
+def ensure_mcp_oauth_client(
+    *,
+    issuer: str,
+    scope: str = DEFAULT_MCP_OAUTH_SCOPE,
+    redirect_uri: str = DEFAULT_MCP_REDIRECT_URI,
+) -> dict[str, Any]:
+    state = load_mcp_oauth_state() or {}
+    stored_issuer = str(state.get("authorization_server") or "").rstrip("/")
+    normalized_issuer = issuer.rstrip("/")
+    client_expires_at = state.get("client_id_expires_at")
+    client_expired = (
+        isinstance(client_expires_at, int | float)
+        and float(client_expires_at) > 0
+        and time.time() >= float(client_expires_at)
+    )
+    if (stored_issuer and stored_issuer != normalized_issuer) or client_expired:
+        for key in (
+            "client_id",
+            "client_id_issued_at",
+            "client_id_expires_at",
+            "client_secret",
+            "client_secret_expires_at",
+            "registration_access_token",
+            "registration_client_uri",
+            "access_token",
+            "refresh_token",
+            "token_type",
+            "expires_at",
+            "resource",
+        ):
+            state.pop(key, None)
+    metadata = oauth_get_json(
+        mcp_oauth_metadata_url(issuer),
+        context="Granola OAuth metadata discovery",
+    )
+    token_endpoint = str(metadata.get("token_endpoint") or "").strip()
+    device_endpoint = str(metadata.get("device_authorization_endpoint") or "").strip()
+    registration_endpoint = str(metadata.get("registration_endpoint") or "").strip()
+    if not token_endpoint or not device_endpoint or not registration_endpoint:
+        raise ToolError(
+            "Granola OAuth metadata is missing token, device, or registration endpoints"
+        )
+    state.update(
+        {
+            "authorization_server": normalized_issuer,
+            "registration_endpoint": registration_endpoint,
+            "device_authorization_endpoint": device_endpoint,
+            "token_endpoint": token_endpoint,
+            "scope": scope,
+        }
+    )
+    client_id = str(state.get("client_id") or "").strip()
+    if not client_id:
+        registration = oauth_post_json(
+            registration_endpoint,
+            {
+                "client_name": "gotta local CLI",
+                "redirect_uris": [redirect_uri],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "none",
+                "scope": scope,
+            },
+            context="Granola OAuth client registration",
+        )
+        error = _oauth_error(registration, context="Granola OAuth client registration")
+        if error:
+            raise ToolError(error)
+        client_id = str(registration.get("client_id") or "").strip()
+        if not client_id:
+            raise ToolError(
+                "Granola OAuth client registration did not return a client id"
+            )
+        state.update(registration)
+        state["client_id"] = client_id
+    return persist_mcp_oauth_state(state)
+
+
+def _store_mcp_token_response(
+    state: dict[str, Any],
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    access_token = str(response.get("access_token") or "").strip()
+    if not access_token:
+        raise ToolError("Granola OAuth token response did not include an access token")
+    refresh_token = str(
+        response.get("refresh_token") or state.get("refresh_token") or ""
+    ).strip()
+    expires_in = response.get("expires_in")
+    expires_at = None
+    if isinstance(expires_in, int | float):
+        expires_at = time.time() + float(expires_in)
+    state.update(
+        {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": str(
+                response.get("token_type") or state.get("token_type") or "Bearer"
+            ),
+            "scope": str(response.get("scope") or state.get("scope") or ""),
+            "expires_at": expires_at,
+        }
+    )
+    return persist_mcp_oauth_state(state)
+
+
+def mcp_oauth_token_is_expired(
+    state: dict[str, Any],
+    *,
+    skew_seconds: int = 60,
+) -> bool:
+    expires_at = state.get("expires_at")
+    if isinstance(expires_at, int | float):
+        return time.time() + skew_seconds >= float(expires_at)
+    token = str(state.get("access_token") or "").strip()
+    metadata = access_token_metadata_for_token(token)
+    return metadata.get("accessTokenExpired") is True
+
+
+def run_mcp_oauth_login(
+    *,
+    mcp_url: str,
+    issuer: str,
+    scope: str = DEFAULT_MCP_OAUTH_SCOPE,
+    open_browser: bool = True,
+) -> dict[str, Any]:
+    discovered_issuer = discover_mcp_authorization_server(
+        mcp_url=mcp_url,
+        preferred_issuer=issuer,
+    )
+    state = ensure_mcp_oauth_client(issuer=discovered_issuer, scope=scope)
+    client_id = str(state.get("client_id") or "").strip()
+    device_endpoint = str(state.get("device_authorization_endpoint") or "").strip()
+    token_endpoint = str(state.get("token_endpoint") or "").strip()
+    response = oauth_post_form_json(
+        device_endpoint,
+        {
+            "client_id": client_id,
+            "scope": scope,
+            "resource": mcp_url,
+        },
+        context="Granola device authorization",
+    )
+    error = _oauth_error(response, context="Granola device authorization")
+    if error:
+        raise ToolError(error)
+    device_code = str(response.get("device_code") or "").strip()
+    user_code = str(response.get("user_code") or "").strip()
+    verification_url = str(
+        response.get("verification_uri_complete")
+        or response.get("verification_uri")
+        or ""
+    ).strip()
+    if not device_code or not verification_url:
+        raise ToolError(
+            "Granola device authorization did not return a verification URL and code"
+        )
+    expires_in = response.get("expires_in")
+    lifetime = float(expires_in) if isinstance(expires_in, int | float) else 300.0
+    interval_value = response.get("interval")
+    interval = (
+        max(float(interval_value), 1.0)
+        if isinstance(interval_value, int | float)
+        else 5.0
+    )
+    print(
+        "Granola browser authorization is required.",
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        f"verification URL: {verification_url}",
+        file=sys.stderr,
+        flush=True,
+    )
+    if user_code:
+        print(f"user code: {user_code}", file=sys.stderr, flush=True)
+    if open_browser and not webbrowser.open(verification_url):
+        print(
+            "failed to auto-open browser; open the verification URL manually",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    deadline = time.monotonic() + lifetime
+    while time.monotonic() < deadline:
+        time.sleep(interval)
+        token_response = oauth_post_form_json(
+            token_endpoint,
+            {
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_code": device_code,
+                "client_id": client_id,
+                "resource": mcp_url,
+            },
+            context="Granola OAuth token exchange",
+        )
+        error_code = str(token_response.get("error") or "").strip()
+        if error_code == "authorization_pending":
+            continue
+        if error_code == "slow_down":
+            interval += 5.0
+            continue
+        if error_code:
+            raise ToolError(
+                _oauth_error(
+                    token_response,
+                    context="Granola OAuth token exchange",
+                )
+            )
+        state["resource"] = mcp_url
+        return _store_mcp_token_response(state, token_response)
+    raise ToolError("timed out waiting for Granola browser authorization")
+
+
+def refresh_mcp_oauth_state(
+    state: dict[str, Any],
+    *,
+    mcp_url: str,
+) -> dict[str, Any]:
+    refresh_token = str(state.get("refresh_token") or "").strip()
+    client_id = str(state.get("client_id") or "").strip()
+    token_endpoint = str(state.get("token_endpoint") or "").strip()
+    if not refresh_token:
+        raise ToolError(
+            "cached Granola browser authorization is missing a refresh token; "
+            "run `gotta granola auth login`"
+        )
+    if not client_id or not token_endpoint:
+        raise ToolError(
+            "cached Granola browser authorization is incomplete; "
+            "run `gotta granola auth login`"
+        )
+    response = oauth_post_form_json(
+        token_endpoint,
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            "resource": mcp_url,
+        },
+        context="Granola OAuth token refresh",
+    )
+    error = _oauth_error(response, context="Granola OAuth token refresh")
+    if error:
+        raise ToolError(f"{error}; run `gotta granola auth login`")
+    return _store_mcp_token_response(state, response)
+
+
+def ensure_mcp_access_token(*, mcp_url: str) -> str:
+    state = load_mcp_oauth_state()
+    if not state:
+        raise ToolError(
+            "Granola browser authorization is not configured; "
+            "run `gotta granola auth login`"
+        )
+    access_token = str(state.get("access_token") or "").strip()
+    if not access_token:
+        raise ToolError(
+            "Granola browser authorization is incomplete; "
+            "run `gotta granola auth login`"
+        )
+    if mcp_oauth_token_is_expired(state):
+        state = refresh_mcp_oauth_state(state, mcp_url=mcp_url)
+        access_token = str(state.get("access_token") or "").strip()
+    return access_token
+
+
+def clear_mcp_oauth_tokens() -> bool:
+    state = load_mcp_oauth_state()
+    if not state:
+        return False
+    removed = False
+    for key in (
+        "access_token",
+        "refresh_token",
+        "token_type",
+        "expires_at",
+        "resource",
+    ):
+        removed = state.pop(key, None) is not None or removed
+    persist_mcp_oauth_state(state)
+    return removed
 
 
 def request_json(
@@ -646,6 +1177,472 @@ def post_json(
     if not isinstance(response, dict):
         raise ToolError("Granola API returned an unexpected payload shape")
     return response
+
+
+def _parse_mcp_sse(raw: bytes) -> dict[str, Any]:
+    text = raw.decode("utf-8", errors="replace")
+    payloads: list[dict[str, Any]] = []
+    for event in re.split(r"\r?\n\r?\n", text):
+        data = "\n".join(
+            line.removeprefix("data:").lstrip()
+            for line in event.splitlines()
+            if line.startswith("data:")
+        ).strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ToolError("Granola MCP returned an invalid event stream") from exc
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    if not payloads:
+        raise ToolError("Granola MCP returned an empty event stream")
+    return payloads[-1]
+
+
+def _parse_mcp_http_body(raw: bytes, content_type: str) -> dict[str, Any] | None:
+    if not raw.strip():
+        return None
+    if "text/event-stream" in content_type:
+        return _parse_mcp_sse(raw)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ToolError("Granola MCP returned invalid JSON") from exc
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ToolError("Granola MCP returned an unexpected payload shape")
+    return payload
+
+
+def mcp_http_request(
+    *,
+    mcp_url: str,
+    token: str,
+    payload: dict[str, Any],
+    session_id: str = "",
+    protocol_version: str = "",
+) -> tuple[dict[str, Any] | None, str]:
+    request = urllib.request.Request(
+        mcp_url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+    )
+    request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("Accept", "application/json, text/event-stream")
+    request.add_header("Content-Type", "application/json")
+    request.add_header("User-Agent", "gotta/granola-plugin")
+    if session_id:
+        request.add_header("Mcp-Session-Id", session_id)
+    if protocol_version:
+        request.add_header("MCP-Protocol-Version", protocol_version)
+    try:
+        with urllib.request.urlopen(
+            request, timeout=MCP_REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            raw = response.read()
+            content_type = str(response.headers.get("Content-Type") or "")
+            response_session_id = str(
+                response.headers.get("Mcp-Session-Id") or session_id
+            ).strip()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        suffix = f": {detail}" if detail else ""
+        raise ToolError(
+            f"Granola MCP request failed with HTTP {exc.code}{suffix}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise ToolError(f"Granola MCP request failed: {exc.reason}") from exc
+    return _parse_mcp_http_body(raw, content_type), response_session_id
+
+
+class GranolaMcpClient:
+    def __init__(self, mcp_url: str, token: str) -> None:
+        self.mcp_url = mcp_url
+        self.token = token
+        self.session_id = ""
+        self.protocol_version = ""
+        self.next_request_id = 1
+        self.initialized = False
+
+    def _request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        notification: bool = False,
+    ) -> dict[str, Any] | None:
+        payload: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        if not notification:
+            payload["id"] = self.next_request_id
+            self.next_request_id += 1
+        response, response_session_id = mcp_http_request(
+            mcp_url=self.mcp_url,
+            token=self.token,
+            payload=payload,
+            session_id=self.session_id,
+            protocol_version=self.protocol_version,
+        )
+        if response_session_id:
+            self.session_id = response_session_id
+        if notification:
+            return None
+        if response is None:
+            raise ToolError(f"Granola MCP returned no response for {method}")
+        error = response.get("error")
+        if isinstance(error, dict):
+            code = str(error.get("code") or "").strip()
+            message = str(error.get("message") or "").strip()
+            detail = ": ".join(part for part in (code, message) if part)
+            raise ToolError(
+                f"Granola MCP {method} failed" + (f": {detail}" if detail else "")
+            )
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise ToolError(f"Granola MCP returned an invalid result for {method}")
+        return result
+
+    def initialize(self) -> None:
+        if self.initialized:
+            return
+        result = self._request(
+            "initialize",
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "gotta",
+                    "version": "local",
+                },
+            },
+        )
+        if not isinstance(result, dict):
+            raise ToolError("Granola MCP initialization returned no result")
+        self.protocol_version = str(
+            result.get("protocolVersion") or MCP_PROTOCOL_VERSION
+        ).strip()
+        self._request("notifications/initialized", notification=True)
+        self.initialized = True
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self.initialize()
+        result = self._request(
+            "tools/call",
+            {
+                "name": name,
+                "arguments": arguments,
+            },
+        )
+        if not isinstance(result, dict):
+            raise ToolError(f"Granola MCP tool {name} returned no result")
+        if result.get("isError"):
+            detail = mcp_tool_text(result).strip()
+            raise ToolError(
+                f"Granola MCP tool {name} failed" + (f": {detail}" if detail else "")
+            )
+        return result
+
+
+def call_mcp_tool(
+    mcp_url: str,
+    token: str,
+    name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    return GranolaMcpClient(mcp_url, token).call_tool(name, arguments)
+
+
+def mcp_tool_text(result: dict[str, Any]) -> str:
+    content = result.get("content")
+    if not isinstance(content, list):
+        raise ToolError("Granola MCP tool result is missing content")
+    chunks = [
+        str(item.get("text") or "")
+        for item in content
+        if isinstance(item, dict)
+        and item.get("type") == "text"
+        and str(item.get("text") or "").strip()
+    ]
+    if not chunks:
+        raise ToolError("Granola MCP tool result does not contain text")
+    return "\n".join(chunks)
+
+
+def _mcp_xml_root(text: str) -> ET.Element:
+    start = text.find("<meetings_data")
+    end_tag = "</meetings_data>"
+    end = text.rfind(end_tag)
+    if start < 0 or end < start:
+        raise ToolError("Granola MCP response is missing meetings data")
+    fragment = text[start : end + len(end_tag)]
+    try:
+        return ET.fromstring(fragment)
+    except ET.ParseError as exc:
+        raise ToolError("Granola MCP returned invalid meetings data") from exc
+
+
+def _mcp_meeting_timestamp(raw: str) -> str:
+    value = raw.strip()
+    match = MCP_MEETING_DATE_RE.fullmatch(value)
+    if not match:
+        return value
+    parts = match.groupdict()
+    local_text = (
+        f"{parts['month']} {parts['day']} {parts['year']} "
+        f"{parts['time']} {parts['ampm']}"
+    )
+    timezone_offset = MCP_TIMEZONE_OFFSETS.get(parts["timezone"].upper())
+    if timezone_offset is not None:
+        try:
+            parsed = dt.datetime.strptime(local_text, "%b %d %Y %I:%M %p")
+        except ValueError:
+            return value
+        parsed = parsed.replace(tzinfo=dt.timezone(dt.timedelta(hours=timezone_offset)))
+        return parsed.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    normalized = (
+        f"{parts['day']} {parts['month']} {parts['year']} "
+        f"{parts['time']} {parts['ampm']} {parts['timezone']}"
+    )
+    try:
+        parsed = parsedate_to_datetime(normalized)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is None:
+        try:
+            parsed = dt.datetime.strptime(local_text, "%b %d %Y %I:%M %p")
+        except ValueError:
+            return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _mcp_participants(raw: str) -> list[dict[str, str]]:
+    people: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"(?P<label>[^,\n]+?)\s*<(?P<email>[^<>]+)>", raw):
+        email = match.group("email").strip()
+        label = re.sub(
+            r"\s*\(note creator\)\s*",
+            " ",
+            match.group("label"),
+            flags=re.IGNORECASE,
+        ).strip()
+        name = re.split(r"\s+from\s+", label, maxsplit=1, flags=re.IGNORECASE)[0]
+        key = email.casefold() or name.casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        person = {"email": email}
+        if name:
+            person["name"] = name
+        people.append(person)
+    return people
+
+
+def normalize_mcp_meeting(meeting: ET.Element) -> dict[str, Any]:
+    meeting_id = str(meeting.attrib.get("id") or "").strip()
+    title = str(meeting.attrib.get("title") or "Untitled").strip()
+    raw_date = str(meeting.attrib.get("date") or "").strip()
+    timestamp = _mcp_meeting_timestamp(raw_date)
+    participants_element = meeting.find("known_participants")
+    participants = (
+        "".join(participants_element.itertext()).strip()
+        if participants_element is not None
+        else ""
+    )
+    summary_element = meeting.find("summary")
+    summary = (
+        "".join(summary_element.itertext()).strip()
+        if summary_element is not None
+        else ""
+    )
+    normalized: dict[str, Any] = {
+        "id": meeting_id,
+        "title": title,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "meeting_date": raw_date,
+        "people": _mcp_participants(participants),
+        "notes_markdown": summary,
+        "web_url": f"https://notes.granola.ai/d/{meeting_id}" if meeting_id else "",
+        "_granola_api": "mcp",
+    }
+    for key in (
+        "captured_by_me",
+        "listed_as_participant",
+        "is_workspace_visible",
+    ):
+        if key in meeting.attrib:
+            normalized[key] = str(meeting.attrib[key]).strip().lower() == "true"
+    return normalized
+
+
+def parse_mcp_meetings(text: str) -> list[dict[str, Any]]:
+    root = _mcp_xml_root(text)
+    return [normalize_mcp_meeting(meeting) for meeting in root.findall("meeting")]
+
+
+def _mcp_list_arguments(
+    *,
+    created_after: str,
+    created_before: str,
+) -> dict[str, Any]:
+    if not created_after and not created_before:
+        return {"time_range": "last_30_days"}
+    start = (
+        (dt.date.fromisoformat(created_after[:10]) - dt.timedelta(days=1)).isoformat()
+        if created_after
+        else "1970-01-01"
+    )
+    end = (
+        (dt.date.fromisoformat(created_before[:10]) + dt.timedelta(days=1)).isoformat()
+        if created_before
+        else (utc_now().date() + dt.timedelta(days=1)).isoformat()
+    )
+    return {
+        "time_range": "custom",
+        "custom_start": start,
+        "custom_end": end,
+    }
+
+
+def fetch_mcp_documents(
+    mcp_url: str,
+    token: str,
+    limit: int | None = None,
+    *,
+    created_after: str = "",
+    created_before: str = "",
+) -> list[dict[str, Any]]:
+    result = call_mcp_tool(
+        mcp_url,
+        token,
+        "list_meetings",
+        _mcp_list_arguments(
+            created_after=created_after,
+            created_before=created_before,
+        ),
+    )
+    documents = parse_mcp_meetings(mcp_tool_text(result))
+    return documents if limit is None else documents[:limit]
+
+
+def fetch_mcp_meetings(
+    mcp_url: str,
+    token: str,
+    meeting_ids: list[str],
+) -> list[dict[str, Any]]:
+    if not meeting_ids:
+        return []
+    if len(meeting_ids) > 10:
+        raise ToolError("Granola MCP can fetch at most 10 meetings per request")
+    result = call_mcp_tool(
+        mcp_url,
+        token,
+        "get_meetings",
+        {"meeting_ids": meeting_ids},
+    )
+    return parse_mcp_meetings(mcp_tool_text(result))
+
+
+def fetch_mcp_document(
+    mcp_url: str,
+    token: str,
+    document_id: str,
+) -> dict[str, Any]:
+    documents = fetch_mcp_meetings(mcp_url, token, [document_id])
+    for document in documents:
+        if str(document.get("id") or "") == document_id:
+            return document
+    raise ToolError(f"Granola MCP could not find meeting {document_id!r}")
+
+
+def _mcp_transcript_payload(text: str) -> dict[str, Any]:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < start:
+        raise ToolError("Granola MCP transcript response is missing JSON data")
+    try:
+        payload = json.loads(text[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ToolError("Granola MCP returned an invalid transcript payload") from exc
+    if not isinstance(payload, dict):
+        raise ToolError("Granola MCP returned an unexpected transcript payload")
+    return payload
+
+
+def normalize_mcp_transcript(
+    document_id: str,
+    transcript: str,
+) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    current_speaker = ""
+    current_lines: list[str] = []
+
+    def append_segment() -> None:
+        if not current_speaker or not any(line.strip() for line in current_lines):
+            return
+        index = len(segments) + 1
+        segments.append(
+            {
+                "id": f"{document_id}:{index}",
+                "document_id": document_id,
+                "speaker": {"name": current_speaker},
+                "source": "speaker",
+                "text": "\n".join(current_lines).strip(),
+                "is_final": True,
+                "start_timestamp": "",
+                "end_timestamp": "",
+            }
+        )
+
+    for line in transcript.splitlines():
+        match = re.match(r"^(?P<speaker>[^:\n]{1,80}):\s*(?P<text>.*)$", line)
+        if match:
+            append_segment()
+            current_speaker = match.group("speaker").strip()
+            current_lines = [match.group("text")]
+        elif current_speaker:
+            current_lines.append(line)
+    append_segment()
+    if not segments and transcript.strip():
+        segments.append(
+            {
+                "id": f"{document_id}:1",
+                "document_id": document_id,
+                "speaker": {"name": "Unknown"},
+                "source": "speaker",
+                "text": transcript.strip(),
+                "is_final": True,
+                "start_timestamp": "",
+                "end_timestamp": "",
+            }
+        )
+    return segments
+
+
+def fetch_mcp_transcript(
+    mcp_url: str,
+    token: str,
+    document_id: str,
+) -> list[dict[str, Any]]:
+    result = call_mcp_tool(
+        mcp_url,
+        token,
+        "get_meeting_transcript",
+        {"meeting_id": document_id},
+    )
+    payload = _mcp_transcript_payload(mcp_tool_text(result))
+    transcript = str(payload.get("transcript") or "")
+    return normalize_mcp_transcript(document_id, transcript)
 
 
 def _workos_token_blob_was_string(wrapper: dict[str, Any]) -> bool:
@@ -1005,7 +2002,14 @@ def extract_people(document: dict[str, Any]) -> list[str]:
             value = item.strip()
         elif isinstance(item, dict):
             value = ""
-            for key in ("name", "display_name", "displayName", "full_name", "fullName"):
+            for key in (
+                "name",
+                "display_name",
+                "displayName",
+                "full_name",
+                "fullName",
+                "email",
+            ):
                 candidate = str(item.get(key) or "").strip()
                 if candidate:
                     value = candidate
@@ -1025,6 +2029,14 @@ def best_note_body(document: dict[str, Any]) -> RenderedNote:
     notes_plain = str(document.get("notes_plain") or "").strip()
     if notes_plain:
         return RenderedNote(notes_plain + "\n", "notes_plain")
+
+    summary_markdown = str(document.get("summary_markdown") or "").strip()
+    if summary_markdown:
+        return RenderedNote(summary_markdown + "\n", "summary_markdown")
+
+    summary_text = str(document.get("summary_text") or "").strip()
+    if summary_text:
+        return RenderedNote(summary_text + "\n", "summary_text")
 
     notes = document.get("notes")
     if document_has_text(notes):
@@ -1061,7 +2073,13 @@ def best_note_body(document: dict[str, Any]) -> RenderedNote:
 def searchable_document_text(document: dict[str, Any]) -> str:
     chunks: list[str] = []
     chunks.extend(extract_people(document))
-    for field in ("notes_markdown", "notes_plain", "content"):
+    for field in (
+        "notes_markdown",
+        "notes_plain",
+        "summary_markdown",
+        "summary_text",
+        "content",
+    ):
         value = str(document.get(field) or "").strip()
         if value:
             chunks.append(value)
@@ -1231,9 +2249,7 @@ def transcript_match_excerpt(segment: dict[str, Any], query: str) -> str:
 
 def search_transcripts(
     *,
-    api_url: str,
-    transcript_api_url: str,
-    token: str,
+    session: GranolaSession,
     query: str,
     documents: list[dict[str, Any]],
     limit: int,
@@ -1252,7 +2268,7 @@ def search_transcripts(
         if not document_id:
             continue
         scanned += 1
-        segments = fetch_transcript(transcript_api_url, token, document_id)
+        segments = _fetch_session_transcript(session, document_id)
         matches = filter_transcript_segments(segments, query_text)
         if not matches:
             continue
@@ -1314,6 +2330,12 @@ def format_markdown_document(document: dict[str, Any], note: RenderedNote) -> st
 
 
 def _transcript_speaker(segment: dict[str, Any]) -> str:
+    speaker = segment.get("speaker")
+    if isinstance(speaker, dict):
+        for key in ("name", "diarization_label"):
+            value = str(speaker.get(key) or "").strip()
+            if value:
+                return value
     source = str(segment.get("source") or "").strip().lower()
     if source == "system":
         return "System"
@@ -1536,21 +2558,251 @@ def render_transcript_search_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def granola_status_payload(supabase_path: Path, api_url: str) -> dict[str, Any]:
+def _load_session(args: argparse.Namespace) -> GranolaSession:
+    oauth_state = load_mcp_oauth_state()
+    if oauth_state and str(oauth_state.get("access_token") or "").strip():
+        return GranolaSession(
+            mode="mcp_oauth",
+            token=ensure_mcp_access_token(mcp_url=args.mcp_url),
+            documents_url=args.mcp_url,
+            transcript_url=args.mcp_url,
+        )
+    try:
+        token = ensure_access_token(args.supabase, args.refresh_api_url)
+    except ToolError as exc:
+        encrypted_path = args.supabase.with_name(f"{args.supabase.name}.enc")
+        if encrypted_path.exists() and not args.supabase.exists():
+            raise ToolError(
+                _encrypted_session_unavailable_message(args.supabase)
+            ) from exc
+        if not args.supabase.exists():
+            raise ToolError(
+                f"Granola authentication is not configured; {_mcp_login_setup_step()}."
+            ) from exc
+        raise
+    return GranolaSession(
+        mode="desktop_session",
+        token=token,
+        documents_url=args.api_url,
+        transcript_url=args.transcript_api_url,
+    )
+
+
+def _fetch_session_document(
+    session: GranolaSession,
+    document_id: str,
+) -> dict[str, Any]:
+    if session.mode == "mcp_oauth":
+        return fetch_mcp_document(
+            session.documents_url,
+            session.token,
+            document_id,
+        )
+    documents = fetch_documents(session.documents_url, session.token, limit=None)
+    return select_document(documents, document_id)
+
+
+def _hydrate_session_documents(
+    session: GranolaSession,
+    documents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if session.mode != "mcp_oauth":
+        return documents
+    document_ids = [
+        str(document.get("id") or "").strip()
+        for document in documents
+        if str(document.get("id") or "").strip()
+    ]
+    detailed_by_id: dict[str, dict[str, Any]] = {}
+    for index in range(0, len(document_ids), 10):
+        for document in fetch_mcp_meetings(
+            session.documents_url,
+            session.token,
+            document_ids[index : index + 10],
+        ):
+            document_id = str(document.get("id") or "").strip()
+            if document_id:
+                detailed_by_id[document_id] = document
+    return [
+        detailed_by_id[document_id]
+        for document_id in document_ids
+        if document_id in detailed_by_id
+    ]
+
+
+def _fetch_session_documents(
+    session: GranolaSession,
+    *,
+    limit: int | None,
+    window: WindowSpec | None = None,
+    details: bool = False,
+) -> list[dict[str, Any]]:
+    if session.mode == "desktop_session":
+        return fetch_documents(session.documents_url, session.token, limit=limit)
+    created_after = (
+        window.start.isoformat().replace("+00:00", "Z")
+        if window and window.start
+        else ""
+    )
+    created_before = (
+        window.end.isoformat().replace("+00:00", "Z") if window and window.end else ""
+    )
+    documents = fetch_mcp_documents(
+        session.documents_url,
+        session.token,
+        limit=limit,
+        created_after=created_after,
+        created_before=created_before,
+    )
+    if not details:
+        return documents
+    return _hydrate_session_documents(session, documents)
+
+
+def _fetch_session_transcript(
+    session: GranolaSession, document_id: str
+) -> list[dict[str, Any]]:
+    if session.mode == "desktop_session":
+        return fetch_transcript(session.transcript_url, session.token, document_id)
+    return fetch_mcp_transcript(
+        session.transcript_url,
+        session.token,
+        document_id,
+    )
+
+
+def _load_selected_document(
+    args: argparse.Namespace,
+) -> tuple[GranolaSession, dict[str, Any]]:
+    session = _load_session(args)
+    selector = args.selector.strip()
+    direct_id = session.mode == "mcp_oauth" and LEGACY_DOCUMENT_ID_RE.fullmatch(
+        selector
+    )
+    if direct_id:
+        return session, _fetch_session_document(session, selector)
+    documents = _fetch_session_documents(session, limit=None)
+    selected = select_document(documents, selector)
+    if session.mode == "mcp_oauth":
+        selected = _fetch_session_document(
+            session,
+            str(selected.get("id") or ""),
+        )
+    return session, selected
+
+
+def _load_selected_document_transcript(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    session = _load_session(args)
+    selector = args.selector.strip()
+    if session.mode == "mcp_oauth":
+        if LEGACY_DOCUMENT_ID_RE.fullmatch(selector):
+            document_id = selector
+        else:
+            summaries = _fetch_session_documents(session, limit=None)
+            document_id = str(select_document(summaries, selector).get("id") or "")
+        document = _fetch_session_document(session, document_id)
+        return document, _fetch_session_transcript(session, document_id)
+    documents = _fetch_session_documents(session, limit=None)
+    document = select_document(documents, selector)
+    return document, _fetch_session_transcript(session, str(document.get("id") or ""))
+
+
+def granola_status_payload(
+    supabase_path: Path,
+    api_url: str,
+    *,
+    mcp_url: str = DEFAULT_MCP_URL,
+) -> dict[str, Any]:
+    oauth_state: dict[str, Any] | None = None
+    oauth_error = ""
+    try:
+        oauth_state = load_mcp_oauth_state()
+    except ToolError as exc:
+        oauth_error = str(exc)
+    mcp_access_token_present = bool(
+        oauth_state and str(oauth_state.get("access_token") or "").strip()
+    )
+    auth_mode = (
+        "mcp_oauth"
+        if mcp_access_token_present or oauth_error
+        else "desktop_session"
+        if supabase_path.exists()
+        else "none"
+    )
+    oauth_expires_at = oauth_state.get("expires_at") if oauth_state else None
+    oauth_expires_at_text = ""
+    if isinstance(oauth_expires_at, int | float):
+        oauth_expires_at_text = (
+            dt.datetime.fromtimestamp(float(oauth_expires_at), dt.timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
     payload: dict[str, Any] = {
         "surface": "granola",
         "supabaseFile": str(supabase_path),
-        "apiUrl": api_url,
+        "apiUrl": mcp_url if mcp_access_token_present else api_url,
+        "authMode": auth_mode,
+        "mcpUrl": mcp_url,
+        "mcpOAuthFile": str(MCP_OAUTH_FILE),
+        "mcpOAuthFilePresent": MCP_OAUTH_FILE.exists(),
+        "mcpClientRegistered": bool(
+            oauth_state and str(oauth_state.get("client_id") or "").strip()
+        ),
+        "mcpOAuthConfigured": mcp_access_token_present,
+        "mcpRefreshTokenPresent": bool(
+            oauth_state and str(oauth_state.get("refresh_token") or "").strip()
+        ),
+        "mcpTokenExpiresAt": oauth_expires_at_text,
+        "mcpTokenExpired": bool(
+            oauth_state
+            and mcp_access_token_present
+            and mcp_oauth_token_is_expired(oauth_state, skew_seconds=0)
+        ),
         "localSessionPresent": supabase_path.exists(),
         "sessionStatus": "missing",
         "documentAccess": False,
-        "nextStep": (
-            "open Granola and sign in locally; gotta reads the local Granola session "
-            "from supabase.json"
-        ),
+        "nextStep": _mcp_login_setup_step(),
     }
     payload.update(encrypted_session_metadata(supabase_path))
+    if oauth_error:
+        payload["sessionStatus"] = "invalid"
+        payload["error"] = oauth_error
+        payload["nextStep"] = (
+            f"remove or repair {display_path(MCP_OAUTH_FILE)}, then "
+            f"{_mcp_login_setup_step()}"
+        )
+        return payload
+    if mcp_access_token_present:
+        try:
+            token = ensure_mcp_access_token(mcp_url=mcp_url)
+            documents = fetch_mcp_documents(mcp_url, token, limit=1)
+        except ToolError as exc:
+            payload["sessionStatus"] = "invalid"
+            payload["error"] = str(exc)
+            payload["nextStep"] = _mcp_login_setup_step()
+            return payload
+        refreshed_state = load_mcp_oauth_state() or {}
+        refreshed_expires_at = refreshed_state.get("expires_at")
+        if isinstance(refreshed_expires_at, int | float):
+            payload["mcpTokenExpiresAt"] = (
+                dt.datetime.fromtimestamp(float(refreshed_expires_at), dt.timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        payload["mcpTokenExpired"] = mcp_oauth_token_is_expired(
+            refreshed_state,
+            skew_seconds=0,
+        )
+        payload["sessionStatus"] = "ready"
+        payload["documentAccess"] = True
+        payload["sampleDocumentCount"] = len(documents)
+        payload["nextStep"] = "ready"
+        return payload
     if not supabase_path.exists():
+        if payload.get("encryptedSessionPresent"):
+            payload["nextStep"] = _encrypted_session_unavailable_message(supabase_path)
         return payload
     try:
         token = load_access_token(supabase_path)
@@ -1601,20 +2853,36 @@ def granola_status_payload(supabase_path: Path, api_url: str) -> dict[str, Any]:
 
 
 def _load_recent_documents(
-    args: argparse.Namespace, *, limit: int | None
+    args: argparse.Namespace,
+    *,
+    limit: int | None,
+    window: WindowSpec | None = None,
+    details: bool = False,
 ) -> list[dict[str, Any]]:
-    token = ensure_access_token(args.supabase, args.refresh_api_url)
-    return fetch_documents(args.api_url, token, limit=limit)
+    session = _load_session(args)
+    return _fetch_session_documents(
+        session,
+        limit=limit,
+        window=window,
+        details=details,
+    )
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    payload = granola_status_payload(args.supabase, args.api_url)
+    payload = granola_status_payload(
+        args.supabase,
+        args.api_url,
+        mcp_url=args.mcp_url,
+    )
     if args.output == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     lines = [
         "surface\tgranola",
         f"supabase_file\t{payload['supabaseFile']}",
+        f"auth_mode\t{payload.get('authMode') or ''}",
+        f"mcp_oauth_configured\t{str(bool(payload.get('mcpOAuthConfigured'))).lower()}",
+        f"mcp_refresh_token_present\t{str(bool(payload.get('mcpRefreshTokenPresent'))).lower()}",
         f"session_status\t{payload['sessionStatus']}",
         f"local_session_present\t{str(bool(payload.get('localSessionPresent'))).lower()}",
         f"encrypted_session_present\t{str(bool(payload.get('encryptedSessionPresent'))).lower()}",
@@ -1628,29 +2896,39 @@ def cmd_status(args: argparse.Namespace) -> int:
         lines.append(
             f"access_token_expired\t{str(bool(payload.get('accessTokenExpired'))).lower()}"
         )
+    if payload.get("mcpTokenExpiresAt"):
+        lines.append(f"mcp_token_expires_at\t{payload['mcpTokenExpiresAt']}")
+    if payload.get("mcpOAuthConfigured"):
+        lines.append(
+            f"mcp_token_expired\t{str(bool(payload.get('mcpTokenExpired'))).lower()}"
+        )
     if payload.get("error"):
         lines.append(f"error\t{payload['error']}")
     print("\n".join(lines))
     return 0
 
 
-def cmd_auth_refresh(args: argparse.Namespace) -> int:
-    payload = refresh_session_payload(
-        supabase_path=args.supabase,
-        refresh_api_url=args.refresh_api_url,
-        force=args.force,
-    )
-    if args.output == "json":
-        print(json.dumps(payload, indent=2, sort_keys=True))
+def _print_auth_result(payload: dict[str, Any]) -> int:
+    if payload.get("output") == "json":
+        output = {key: value for key, value in payload.items() if key != "output"}
+        print(json.dumps(output, indent=2, sort_keys=True))
         return 0
     lines = [
         "surface\tgranola",
-        "command\tauth refresh",
+        f"command\t{payload.get('command') or ''}",
+        f"auth_mode\t{payload.get('authMode') or ''}",
         f"status\t{payload.get('status') or 'unknown'}",
-        f"refreshed\t{str(bool(payload.get('refreshed'))).lower()}",
-        f"forced\t{str(bool(payload.get('forced'))).lower()}",
-        f"access_token_expired\t{str(bool(payload.get('accessTokenExpired'))).lower()}",
     ]
+    for key, label in (
+        ("authorized", "authorized"),
+        ("loggedOut", "logged_out"),
+        ("refreshed", "refreshed"),
+        ("forced", "forced"),
+        ("accessTokenExpired", "access_token_expired"),
+        ("refreshTokenPresent", "refresh_token_present"),
+    ):
+        if key in payload:
+            lines.append(f"{label}\t{str(bool(payload.get(key))).lower()}")
     if payload.get("accessTokenExpiresAt"):
         lines.append(f"access_token_expires_at\t{payload['accessTokenExpiresAt']}")
     if payload.get("reason"):
@@ -1658,6 +2936,107 @@ def cmd_auth_refresh(args: argparse.Namespace) -> int:
     lines.append(f"next_step\t{payload.get('nextStep') or ''}")
     print("\n".join(lines))
     return 0
+
+
+def cmd_auth_login(args: argparse.Namespace) -> int:
+    state = run_mcp_oauth_login(
+        mcp_url=args.mcp_url,
+        issuer=args.oauth_issuer,
+        open_browser=not args.no_browser,
+    )
+    access_token = str(state.get("access_token") or "").strip()
+    documents = fetch_mcp_documents(args.mcp_url, access_token, limit=1)
+    expires_at = state.get("expires_at")
+    expires_at_text = ""
+    if isinstance(expires_at, int | float):
+        expires_at_text = (
+            dt.datetime.fromtimestamp(float(expires_at), dt.timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    return _print_auth_result(
+        {
+            "surface": "granola",
+            "command": "auth login",
+            "authMode": "mcp_oauth",
+            "status": "authorized",
+            "authorized": True,
+            "refreshTokenPresent": bool(str(state.get("refresh_token") or "").strip()),
+            "accessTokenExpiresAt": expires_at_text,
+            "sampleDocumentCount": len(documents),
+            "nextStep": "ready",
+            "output": args.output,
+        }
+    )
+
+
+def cmd_auth_logout(args: argparse.Namespace) -> int:
+    removed = clear_mcp_oauth_tokens()
+    return _print_auth_result(
+        {
+            "surface": "granola",
+            "command": "auth logout",
+            "authMode": "mcp_oauth",
+            "status": "logged_out" if removed else "not_configured",
+            "loggedOut": removed,
+            "nextStep": _mcp_login_setup_step(),
+            "output": args.output,
+        }
+    )
+
+
+def cmd_auth_refresh(args: argparse.Namespace) -> int:
+    oauth_state = load_mcp_oauth_state()
+    if oauth_state and str(oauth_state.get("access_token") or "").strip():
+        expired = mcp_oauth_token_is_expired(oauth_state, skew_seconds=0)
+        if not args.force and not expired:
+            payload = {
+                "surface": "granola",
+                "command": "auth refresh",
+                "authMode": "mcp_oauth",
+                "status": "skipped",
+                "refreshed": False,
+                "forced": False,
+                "accessTokenExpired": False,
+                "reason": "browser authorization already has a non-expired access token",
+                "nextStep": "ready",
+            }
+        else:
+            refreshed = refresh_mcp_oauth_state(
+                oauth_state,
+                mcp_url=args.mcp_url,
+            )
+            expires_at = refreshed.get("expires_at")
+            expires_at_text = ""
+            if isinstance(expires_at, int | float):
+                expires_at_text = (
+                    dt.datetime.fromtimestamp(float(expires_at), dt.timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+            payload = {
+                "surface": "granola",
+                "command": "auth refresh",
+                "authMode": "mcp_oauth",
+                "status": "refreshed",
+                "refreshed": True,
+                "forced": args.force,
+                "accessTokenExpired": False,
+                "accessTokenExpiresAt": expires_at_text,
+                "nextStep": "ready",
+            }
+    else:
+        encrypted_path = args.supabase.with_name(f"{args.supabase.name}.enc")
+        if encrypted_path.exists() and not args.supabase.exists():
+            raise ToolError(_encrypted_session_unavailable_message(args.supabase))
+        payload = refresh_session_payload(
+            supabase_path=args.supabase,
+            refresh_api_url=args.refresh_api_url,
+            force=args.force,
+        )
+        payload["authMode"] = "desktop_session"
+    payload["output"] = args.output
+    return _print_auth_result(payload)
 
 
 def _resolve_note_window(args: argparse.Namespace) -> WindowSpec:
@@ -1684,7 +3063,9 @@ def _resolve_transcript_search_window(args: argparse.Namespace) -> WindowSpec:
 def cmd_list(args: argparse.Namespace) -> int:
     window = _resolve_note_window(args)
     documents = sort_documents(
-        filter_documents_by_window(_load_recent_documents(args, limit=None), window),
+        filter_documents_by_window(
+            _load_recent_documents(args, limit=None, window=window), window
+        ),
         sort_by=args.sort,
         order=args.order,
     )[args.offset : args.offset + args.limit]
@@ -1719,9 +3100,14 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    token = ensure_access_token(args.supabase, args.refresh_api_url)
-    documents = fetch_documents(args.api_url, token)
     window = _resolve_note_window(args)
+    session = _load_session(args)
+    documents = _fetch_session_documents(
+        session,
+        limit=None,
+        window=window,
+        details=session.mode == "mcp_oauth" and args.mode != "title",
+    )
     payload = search_documents(
         documents,
         args.query,
@@ -1737,8 +3123,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_get(args: argparse.Namespace) -> int:
-    documents = _load_recent_documents(args, limit=None)
-    document = select_document(documents, args.selector)
+    _, document = _load_selected_document(args)
     if args.output == "json":
         print(json.dumps(document, indent=2, sort_keys=True))
         return 0
@@ -1761,8 +3146,7 @@ def _capture_meta(document: dict[str, Any]) -> dict[str, object]:
 def capture(argv: list[str], _options: object) -> Capture:
     args = _parse_cli(argv)
     if args.command == "get":
-        documents = _load_recent_documents(args, limit=None)
-        document = select_document(documents, args.selector)
+        _, document = _load_selected_document(args)
         selector = args.selector.strip()
         base = (
             selector
@@ -1776,12 +3160,7 @@ def capture(argv: list[str], _options: object) -> Capture:
             metadata=_capture_meta(document),
         )
     if args.command == "transcript":
-        token = ensure_access_token(args.supabase, args.refresh_api_url)
-        documents = fetch_documents(args.api_url, token, limit=None)
-        document = select_document(documents, args.selector)
-        segments = fetch_transcript(
-            args.transcript_api_url, token, str(document.get("id") or "")
-        )
+        document, segments = _load_selected_document_transcript(args)
         filtered_segments = filter_transcript_segments(segments, args.query)
         payload = transcript_payload(document, filtered_segments)
         if args.query:
@@ -1955,12 +3334,7 @@ def project(argv: list[str], capture: Capture) -> Projection:
 
 
 def cmd_transcript(args: argparse.Namespace) -> int:
-    token = ensure_access_token(args.supabase, args.refresh_api_url)
-    documents = fetch_documents(args.api_url, token, limit=None)
-    document = select_document(documents, args.selector)
-    segments = fetch_transcript(
-        args.transcript_api_url, token, str(document.get("id") or "")
-    )
+    document, segments = _load_selected_document_transcript(args)
     filtered_segments = filter_transcript_segments(segments, args.query)
     payload = transcript_payload(document, filtered_segments)
     if args.query:
@@ -1998,13 +3372,11 @@ def cmd_transcript(args: argparse.Namespace) -> int:
 
 
 def cmd_search_transcript(args: argparse.Namespace) -> int:
-    token = ensure_access_token(args.supabase, args.refresh_api_url)
-    documents = fetch_documents(args.api_url, token, limit=None)
     window = _resolve_transcript_search_window(args)
+    session = _load_session(args)
+    documents = _fetch_session_documents(session, limit=None, window=window)
     payload = search_transcripts(
-        api_url=args.api_url,
-        transcript_api_url=args.transcript_api_url,
-        token=token,
+        session=session,
         query=args.query,
         documents=documents,
         limit=args.limit,
@@ -2026,11 +3398,21 @@ def _export_filename(document: dict[str, Any]) -> str:
 
 def cmd_export(args: argparse.Namespace) -> int:
     window = _resolve_note_window(args)
+    session = _load_session(args)
     documents = sort_documents(
-        filter_documents_by_window(_load_recent_documents(args, limit=None), window),
+        filter_documents_by_window(
+            _fetch_session_documents(
+                session,
+                limit=None,
+                window=window,
+            ),
+            window,
+        ),
         sort_by=args.sort,
         order=args.order,
     )[args.offset : args.offset + args.limit]
+    if session.mode == "mcp_oauth":
+        documents = _hydrate_session_documents(session, documents)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     exported = 0
     for document in documents:
@@ -2084,8 +3466,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gotta granola",
         description=(
-            "Read-only Granola note retrieval through the local desktop session and "
-            "Granola's documents API."
+            "Read-only Granola note retrieval through browser-authorized MCP, "
+            "with legacy local-session compatibility."
         ),
     )
     parser.add_argument(
@@ -2109,17 +3491,46 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_REFRESH_API_URL,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--mcp-url",
+        default=DEFAULT_MCP_URL,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--oauth-issuer",
+        default=DEFAULT_MCP_OAUTH_ISSUER,
+        help=argparse.SUPPRESS,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("status", help="inspect local Granola session readiness")
+    p = sub.add_parser("status", help="inspect Granola authentication readiness")
     p.add_argument("--output", choices=["summary", "json"], default="summary")
     p.set_defaults(func=cmd_status)
 
-    auth = sub.add_parser("auth", help="manage local Granola auth")
+    auth = sub.add_parser("auth", help="manage Granola authentication")
     auth_sub = auth.add_subparsers(dest="auth_command", required=True)
     p = auth_sub.add_parser(
+        "login",
+        help="authorize Granola in a browser without an API key",
+    )
+    p.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="print the verification URL without opening it automatically",
+    )
+    p.add_argument("--output", choices=["summary", "json"], default="summary")
+    p.set_defaults(func=cmd_auth_login)
+
+    p = auth_sub.add_parser(
+        "logout",
+        help="remove cached Granola browser tokens",
+    )
+    p.add_argument("--output", choices=["summary", "json"], default="summary")
+    p.set_defaults(func=cmd_auth_logout)
+
+    p = auth_sub.add_parser(
         "refresh",
-        help="refresh the local Granola access token with the cached refresh token",
+        help="refresh cached browser or legacy Granola access",
     )
     p.add_argument(
         "--force",
@@ -2239,6 +3650,8 @@ def main(argv: list[str]) -> int:
         return int(args.func(args))
     except BrokenPipeError:
         return 0
+    except KeyboardInterrupt:
+        return die("Granola command canceled.", code=130)
     except ToolError as exc:
         return die(str(exc), code=1)
 

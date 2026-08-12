@@ -226,6 +226,22 @@ can also use a generic Slack link when one local workspace is already
 unambiguous. Ordinary Slack `--workspace` flags stay per-command; the low-level
 exact auth surface remains `gotta slack auth --workspace <workspace>`.
 
+The Granola plugin uses browser authorization:
+
+```bash
+gotta granola auth login
+gotta granola status
+```
+
+The login command dynamically registers a local public OAuth client, opens the
+device-authorization page, and stores the resulting access and refresh tokens
+in gotta's private state directory. Ordinary Granola commands refresh that
+session automatically. MCP access follows the account and workspace policy.
+
+The older plaintext desktop-session integration remains as a compatibility
+fallback. When only encrypted desktop-session state is present, use browser
+authorization instead of attempting to decrypt application-protected data.
+
 Durable OAuth state lands under gotta's OS-native state directory:
 
 - macOS: `~/Library/Application Support/gotta/auth/`
@@ -362,6 +378,8 @@ gotta grafana query --dashboard 'https://grafana.example.com/d/demo-dashboard-ui
 gotta grafana query --datasource prom-main 'rate(http_requests_total[5m])'
 gotta confluence search "queue architecture"
 gotta gdocs search "incident response"
+gotta granola auth login
+gotta granola status
 gotta granola list --time-range last_30_days --limit 5
 gotta granola transcript 11111111-1111-1111-1111-111111111111 --query latency
 gotta granola search-transcript latency --time-range last_30_days
@@ -398,10 +416,10 @@ Jira issues, Google Docs and Drive files, shared-drive documents, Grafana
 dashboards, Confluence pages, and Granola notes all become reopenable session
 artifacts rather than transient terminal output.
 
-Granola extends that same model to personal notes and transcripts through the
-local desktop session and Granola's APIs, so meeting notes and transcripts
-participate in the same durable evidence graph as repository, ticket, and chat
-artifacts.
+Granola extends that same model to personal notes and transcripts through
+browser-authorized MCP, with legacy local-session compatibility, so meeting
+notes and transcripts participate in the same durable evidence graph as
+repository, ticket, and chat artifacts.
 
 Once that context is grounded, the same native surfaces support follow-on
 action. The goal is not only to recover information, but also to preserve
